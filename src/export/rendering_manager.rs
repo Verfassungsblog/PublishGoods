@@ -186,6 +186,7 @@ impl RenderingManager{
         loop {
             let export_server_data = rendering_manager.settings.export_servers.get(next_rendering_server as usize).unwrap();
 
+            println!("Connection to Server.");
             match Self::connect_to_server(rendering_manager.clone(), &export_server_data).await {
                 Ok(res) => {
                     tls_stream = res;
@@ -218,6 +219,8 @@ impl RenderingManager{
             }
         }
 
+        println!("Connected, sending request to server.");
+
         Self::send_to_server(tls_stream, request, rendering_manager.clone()).await?;
         Ok(())
     }
@@ -246,6 +249,7 @@ impl RenderingManager{
         if let Err(_) = send_message(&mut tls_stream, Message::RenderingRequest(request)).await{
             return Err(RenderingError::CommunicationError)
         }
+        println!("Request sent to server.");
 
         // Update status
         if let Some(status) = rendering_manager.requests_archive.write().unwrap().get_mut(&request_id){
@@ -254,6 +258,7 @@ impl RenderingManager{
         // From here we get new status updates from the rendering server
 
         loop {
+            println!("Waiting for response from server.");
             match read_message(&mut tls_stream).await {
                 Ok(msg) => match msg {
                     Message::TemplateDataRequest(req) => {
