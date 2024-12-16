@@ -220,6 +220,7 @@ impl RenderingManager{
         }
 
         println!("Connected, sending request to server.");
+        println!("Request: {}", serde_json::to_string(&request).unwrap());
 
         Self::send_to_server(tls_stream, request, rendering_manager.clone()).await?;
         Ok(())
