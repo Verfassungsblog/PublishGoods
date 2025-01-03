@@ -372,7 +372,9 @@ export interface PatchSection{
 
 export interface PatchSectionMetadata{
     title?: string;
+    toc_title_override?: string|null;
     subtitle?: string|null;
+    toc_subtitle_override?: string|null;
     authors?: string[];
     editors?: string[];
     web_url?: string|null;
@@ -435,7 +437,9 @@ enum BlockType {
 
 type SectionMetadata = {
     title: string,
+    toc_title_override: string|null,
     subtitle: string | null,
+    toc_subtitle_override: string|null,
     authors: string[],
     editors: string[],
     web_url: string | null,

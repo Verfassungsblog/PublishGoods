@@ -15,11 +15,11 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectDataV3};
+use crate::data_storage::{DataStorage, ProjectDataV4};
 use crate::projects::{BlockData, NewContentBlock, Section, SectionOrToc};
 use crate::utils::csl::CslData;
 
-pub async fn prepare_project(project_data: ProjectDataV3, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
+pub async fn prepare_project(project_data: ProjectDataV4, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata{
@@ -116,7 +116,7 @@ pub async fn prepare_project(project_data: ProjectDataV3, data_storage: Arc<Data
     })
 }
 
-pub fn render_citations(project: &ProjectDataV3, csl_data: Arc<CslData>) -> HashMap<String, String>{
+pub fn render_citations(project: &ProjectDataV4, csl_data: Arc<CslData>) -> HashMap<String, String>{
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();
@@ -252,7 +252,9 @@ pub async fn render_section(section: Section, data_storage: Arc<DataStorage>, ci
 
     let metadata = PreparedSectionMetadata{
         title: hyphenate_text(section.metadata.title.clone(), &dict),
+        toc_title_override: section.metadata.toc_title_override,
         subtitle,
+        toc_subtitle_override: section.metadata.toc_subtitle_override,
         authors,
         editors,
         web_url: section.metadata.web_url,

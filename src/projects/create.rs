@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::collections::BTreeMap;
-use crate::data_storage::{ProjectDataV3, ProjectTemplateV2};
+use crate::data_storage::{ProjectDataV4, ProjectTemplateV2};
 use std::sync::Arc;
 use rocket::http::Status;
 use rocket::response::Redirect;
@@ -43,7 +43,7 @@ pub async fn process_create_project(_session: Session, data: rocket::form::Form<
         return Err(Status::BadRequest)
     }
 
-    let project_data = ProjectDataV3 {
+    let project_data = ProjectDataV4 {
         name: data.project_name.clone(),
         description: data.project_description.clone(),
         template_id,

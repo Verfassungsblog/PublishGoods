@@ -6,7 +6,6 @@ use crate::data_storage::ProjectStorage;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 
-
 #[get("/projects/<project_id>")]
 pub async fn show_editor(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Result<Template, Status> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {

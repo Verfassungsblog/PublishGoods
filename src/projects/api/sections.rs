@@ -33,7 +33,9 @@ pub struct APISectionResult{
 /// API version for [`SectionMetadata`] with optional expansion of authors and editors
 pub struct APISectionMetadataResult{
     pub title: String,
+    pub toc_title_override: Option<String>,
     pub subtitle: Option<String>,
+    pub toc_subtitle_override: Option<String>,
     pub authors: Vec<uuid::Uuid>,
     pub authors_expanded: Option<Vec<Person>>,
     pub editors: Vec<uuid::Uuid>,
@@ -187,7 +189,9 @@ pub async fn get_section(
             
             let metadata_res = APISectionMetadataResult{
                 title: section.metadata.title,
+                toc_title_override: section.metadata.toc_title_override,
                 subtitle: section.metadata.subtitle,
+                toc_subtitle_override: section.metadata.toc_subtitle_override,
                 authors: section.metadata.authors,
                 authors_expanded,
                 editors: section.metadata.editors,
@@ -326,7 +330,11 @@ pub struct PatchSection{
 pub struct PatchSectionMetadata {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
+    pub toc_title_override: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     pub subtitle: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
+    pub toc_subtitle_override: Option<Option<String>>,
     #[bincode(with_serde)]
     pub authors: Option<Vec<uuid::Uuid>>,
     #[bincode(with_serde)]
@@ -352,8 +360,16 @@ impl Patch<PatchSectionMetadata, SectionMetadata> for SectionMetadata{
             new_metadata.title = title;
         }
 
+        if let Some(toc_title_override) = patch.toc_title_override{
+            new_metadata.toc_title_override = toc_title_override;
+        }
+
         if let Some(subtitle) = patch.subtitle{
             new_metadata.subtitle = subtitle;
+        }
+
+        if let Some(toc_subtitle_override) = patch.toc_subtitle_override{
+            new_metadata.toc_subtitle_override = toc_subtitle_override;
         }
 
         if let Some(authors) = patch.authors{

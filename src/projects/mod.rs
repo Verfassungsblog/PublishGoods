@@ -324,7 +324,9 @@ pub enum SectionLevel{
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct SectionMetadata{
     pub title: String,
+    pub toc_title_override: Option<String>,
     pub subtitle: Option<String>,
+    pub toc_subtitle_override: Option<String>,
     #[bincode(with_serde)]
     pub authors: Vec<uuid::Uuid>,
     #[bincode(with_serde)]

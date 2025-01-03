@@ -96,25 +96,25 @@ async fn rocket() -> _ {
     }
     std::fs::create_dir(temp_dir).unwrap();
 
-    println!("Loading data storage...");
+    info!("Loading data storage...");
     let data_storage = Arc::new(data_storage::DataStorage::load_from_disk(&settings).await.unwrap());
-    println!("Loading project storage...");
+    info!("Loading project storage...");
     let project_storage = Arc::new(data_storage::ProjectStorage::new());
     project_storage.load_from_directory(&settings).await.unwrap();
 
-    println!("Loaded Projects:");
+    debug!("Loaded Projects:");
     for project in project_storage.projects.read().unwrap().iter() {
-        println!("Project: {:?}", project.1.name);
+        debug!("Project: {:?}", project.1.name);
     };
 
-    println!("Loading Citation Locale Files & Styles...");
+    info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings_cpy));
 
-    println!("Starting auto-save worker...");
+    info!("Starting auto-save worker...");
     // Start seperate thread for auto-saving
     data_storage::save_data_worker(data_storage.clone(), project_storage.clone(), settings.clone()).await;
 
-    println!("Starting cleanup worker...");
+    info!("Starting cleanup worker...");
     cleaner::worker();
 
     let root_ca = Arc::new(load_root_ca(settings.ca_cert_path.clone()));
@@ -126,13 +126,13 @@ async fn rocket() -> _ {
     let client_config = ClientConfig::builder_with_protocol_versions(&[&tokio_rustls::rustls::version::TLS13])
         .with_root_certificates(root_ca).with_client_auth_cert(client_cert, client_key2).expect("Couldn't build Client Config. Check Certs & Key!");
 
-    println!("Starting rendering worker...");
+    info!("Starting rendering worker...");
     let rendering_manager = export::rendering_manager::RenderingManager::start(settings.clone(), data_storage.clone(), project_storage.clone(), csl_data.clone(), Arc::new(client_config));
 
-    println!("Starting import processing worker...");
+    info!("Starting import processing worker...");
     let import_manager = import::processing::ImportProcessor::start(settings.clone(), project_storage.clone());
 
-    println!("Starting web server...");
+    info!("Starting web server...");
     rocket::build()
         .register("/", catchers![forward_to_login])
         .attach(Template::fairing())

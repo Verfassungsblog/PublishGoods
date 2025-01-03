@@ -211,9 +211,19 @@ let metadata_change_handler = async function () {
         metadata.title = title;
     }
 
+    let toc_title_override = (document.getElementById("section_metadata_toc_title_override") as HTMLInputElement)?.value || null;
+    if (toc_title_override !== section_data.metadata.title_toc_override) {
+        metadata.toc_title_override = toc_title_override;
+    }
+
     let subtitle = document.getElementById("section_metadata_subtitle")?.innerText || null;
     if (subtitle !== section_data.metadata.subtitle) {
         metadata.subtitle = subtitle;
+    }
+
+    let toc_subtitle_override = (document.getElementById("section_metadata_toc_subtitle_override") as HTMLInputElement)?.value || null;
+    if (toc_subtitle_override !== section_data.metadata.subtitle_toc_override) {
+        metadata.toc_subtitle_override = toc_subtitle_override;
     }
 
     let web_url = (document.getElementById("section_metadata_web_url") as HTMLInputElement)?.value || null;

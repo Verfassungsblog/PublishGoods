@@ -18,9 +18,9 @@ zotero_translation_server = "https://translation-server.anghenfil.de"
 # mTLS CA Cert
 ca_cert_path = "certs/root.crt"
 # mTLS Cert
-client_cert_path = "certs/client.crt"
+client_cert_path = "certs/client2.crt"
 # mTLS Cert key
-client_key_path = "certs/client.key"
+client_key_path = "certs/client2.key"
 # mTLS revocation list
 revocation_list_path = "certs/crl.der"
 

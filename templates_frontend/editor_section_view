@@ -11,8 +11,12 @@
     <span class="text-center d-block fw-bold">Section Metadata</span>
     <label>Title</label>
     <h1 contenteditable="true" id="section_metadata_title" class="quickchange">{{metadata.title}}</h1>
+    <label for="section_metadata_toc_title_override">Title override in TOC</label>
+    <input class="form-control quickchange" id="section_metadata_toc_title_override" value="{{metadata.toc_title_override}}">
     <label>Subtitle</label>
     <h2 contenteditable="true" id="section_metadata_subtitle"  class="quickchange">{{metadata.subtitle}}</h2>
+    <label for="section_metadata_toc_subtitle_override">Subtitle override in TOC</label></label>
+    <input class="form-control quickchange" id="section_metadata_toc_subtitle_override" value="{{metadata.toc_subtitle_override}}">
     <label>Authors</label>
     <div id="section_metadata_authors_div">
         <div id="section_metadata_authors_first_dropzone" class="first_dropzone">
