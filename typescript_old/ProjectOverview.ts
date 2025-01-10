@@ -1,4 +1,5 @@
 /// <reference path="Editor-old.ts" />
+
 namespace Editor{
     export namespace ProjectOverview{
         export function show_overview() {
@@ -23,6 +24,7 @@ namespace Editor{
                 // @ts-ignore
                 data["settings"] = values[1].data || null;
                 data["templates"] = values[4]["data"] || null;
+                data["project_id"] = globalThis.project_id;
 
                 let current_template = values[5]["data"];
                 console.log("Current template is: "+current_template);
@@ -207,12 +209,143 @@ namespace Editor{
                 for(let button of document.getElementsByClassName("project_metadata_identifier_remove_btn")){
                     button.addEventListener("click", remove_identifier_btn_handler);
                 }
+
+                // Add listeners for cover & backcover upload
+                add_cover_upload_listeners();
+
             }, function(error){
                 // @ts-ignore
                 Tools.stop_loading_spinner();
                 alert("Failed to load project");
                 console.log(error);
             });
+        }
+
+        function add_cover_upload_listeners(){
+            let cover_image_input  = document.getElementById("project_settings_cover_image") as HTMLInputElement;
+            let cover_image_delete_btn  = document.getElementById("project_settings_delete_cover_image");
+            let backcover_image_input = document.getElementById("project_settings_backcover_image") as HTMLInputElement;
+            let backcover_image_delete_btn = document.getElementById("project_settings_delete_backcover_image");
+
+            // @ts-ignore
+            async function upload_image_handler(e: Event){
+                let input = e.target as HTMLInputElement;
+
+                // Check if there is a file
+                if(input.files){
+                    let file = input.files[0];
+
+                    try{
+                        let res = await upload_image(file);
+                        if(res.success !== 1){
+                            throw new Error(`Failed to upload cover image`);
+                        }
+                        let cover_image = res.file;
+                        input.setAttribute("data-cover-image-path", cover_image.filename);
+
+                        await update_settings();
+
+                        show_overview();
+                    }catch (e){
+                        console.error(e);
+                        Tools.show_alert("Failed to upload cover image.", "danger");
+                    }
+                }
+            }
+
+            // @ts-ignore
+            async function delete_image_handler(e: Event){
+                let btn = e.target as HTMLInputElement;
+                let input = btn.parentElement.getElementsByTagName("input")[0] as HTMLInputElement;
+
+                try{
+                    await delete_image(input.getAttribute("data-cover-image-path"));
+                }catch(e){
+                    if(e instanceof FileDeleteErrorNotFound){
+                        console.log("File to be deleted not found. Just removing the path from the project settings");
+                    }else{
+                        console.error(e);
+                        Tools.show_alert("Failed to delete image.", "danger");
+                        return;
+                    }
+                }
+                input.setAttribute("data-cover-image-path", "");
+
+                await update_settings();
+                show_overview();
+            }
+
+            // Add input listeners
+
+            cover_image_input.addEventListener("change", upload_image_handler);
+            backcover_image_input.addEventListener("change", upload_image_handler);
+            if(cover_image_delete_btn){
+                cover_image_delete_btn.addEventListener("click", delete_image_handler);
+            }
+            if(backcover_image_delete_btn){
+                backcover_image_delete_btn.addEventListener("click", delete_image_handler);
+            }
+        }
+
+        interface ImageUploadResponse{
+            success: number,
+            file?: UploadedImage
+        }
+
+        interface UploadedImage{
+            url: string,
+            filename: string,
+        }
+
+        // @ts-ignore
+        async function upload_image(file: File): Promise<ImageUploadResponse> {
+            let formdata = new FormData();
+            formdata.append("image", file);
+
+            const response = await fetch(`/api/projects/${globalThis.project_id}/uploads`, {
+                method: 'POST',
+                body: formdata
+            });
+            if(!response.ok){
+                throw new Error(`Failed to upload file`);
+            }else{
+                return response.json();
+            }
+        }
+
+        class FileDeleteErrorNotFound extends Error{
+            constructor(message: string){
+                super(message);
+                this.name = "FileDeleteErrorNotFound";
+                this.stack = (<any>new Error()).stack;
+            }
+        }
+
+        // @ts-ignore
+        async function delete_image(filename: string): Promise<any>{
+            const response = await fetch(`/api/projects/${globalThis.project_id}/uploads/${filename}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            if(response.ok){
+                let response_data = await response.json();
+                if(response_data.hasOwnProperty("error")){
+                    // Check if the error is NotFound
+                    if(response_data["error"] === "NotFound") {
+                        throw new FileDeleteErrorNotFound(`Failed to delete project upload: File not found`);
+                    }else{
+                        throw new Error(`Failed to delete project upload: ${response_data["error"]}`);
+                    }
+                }
+            }else{
+                if(response.status === 404){
+                    throw new FileDeleteErrorNotFound(`Failed to delete project upload: File not found`);
+                }else{
+                    throw new Error(`Failed to delete project upload.`);
+                }
+            }
         }
 
         // @ts-ignore
@@ -830,6 +963,8 @@ namespace Editor{
             }else{
                 data["csl_style"] = csl_style;
             }
+            data["cover_image_path"] = (<HTMLInputElement>document.getElementById("project_settings_cover_image")).getAttribute("data-cover-image-path") || null;
+            data["backcover_image_path"] = (<HTMLInputElement>document.getElementById("project_settings_backcover_image")).getAttribute("data-cover-image-path") || null;
 
             try {
                 Tools.start_loading_spinner();

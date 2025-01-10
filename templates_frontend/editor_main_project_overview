@@ -24,6 +24,24 @@
             {{/each}}
         </select>
     </div>
+    <div class="form-group">
+        <label>Cover Image (optional)</label>
+    {{#if settings.cover_image_path}}
+        <br>
+        <img src="/api/projects/{{project_id}}/uploads/{{settings.cover_image_path}}" class="img-thumbnail" style="max-width: 200px;"><br>
+        <button class="btn btn-sm btn-warning mt-3" id="project_settings_delete_cover_image">Delete Cover Image</button>
+    {{/if}}
+        <input type="file" class="form-control form-control-sm {{#if settings.cover_image_path}}hide{{/if}}" id="project_settings_cover_image" accept="image/*" data-cover-image-path="{{settings.cover_image_path}}">
+    </div>
+    <div class="form-group">
+        <label>Backcover Image (optional)</label>
+        {{#if settings.backcover_image_path}}
+        <br>
+        <img src="/api/projects/{{project_id}}/uploads/{{settings.backcover_image_path}}" class="img-thumbnail" style="max-width: 200px;"><br>
+        <button class="btn btn-sm btn-warning mt-3" id="project_settings_delete_backcover_image">Delete Backcover Image</button>
+        {{/if}}
+        <input type="file" class="form-control form-control-sm {{#if settings.backcover_image_path}}hide{{/if}}" id="project_settings_backcover_image" accept="image/*" data-cover-image-path="{{settings.backcover_image_path}}">
+    </div>
     <!-- Delete Button -->
     <button class="btn btn-sm btn-danger mt-3" id="project_settings_delete">Delete Project</button>
 </div>
