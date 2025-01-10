@@ -1211,7 +1211,7 @@ pub struct UploadedImage {
 /// Endpoint for EditorJS image upload
 /// POST /api/projects/<project_id>/uploads
 #[post("/api/projects/<project_id>/uploads", data = "<form>")]
-pub async fn upload_to_project(project_id: String, form: Form<ImageUpload<'_>>, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ImageUploadResponse> {
+pub async fn upload_to_project(project_id: String, form: Form<ImageUpload<'_>>, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>,  _session: Session) -> Json<ImageUploadResponse> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -1267,6 +1267,33 @@ pub async fn upload_to_project(project_id: String, form: Form<ImageUpload<'_>>, 
         Err(e) => {
             eprintln!("Couldn't save image: {}", e);
             Json(ImageUploadResponse::default())
+        }
+    }
+}
+
+/// Delete a uploaded file
+/// DELETE /api/projects/<project_id>/uploads/<filename>
+#[delete("/api/projects/<project_id>/uploads/<filename>")]
+pub async fn delete_project_upload(project_id: String, filename: String, settings: &State<Settings>, _session: Session) -> Json<ApiResult<()>> {
+    let project_id = match uuid::Uuid::parse_str(&project_id) {
+        Ok(project_id) => project_id,
+        Err(e) => {
+            eprintln!("Couldn't parse project id: {}", e);
+            return ApiResult::new_error(ApiError::BadRequest("Couldn't parse project id".to_string()));
+        },
+    };
+
+    // Create projects upload directory if it doesn't exist
+    match tokio::fs::remove_file(format!("{}/projects/{}/uploads/{}", settings.data_path, project_id, filename)).await{
+        Ok(_) => {
+            ApiResult::new_data(())
+        },
+        Err(e) => {
+            eprintln!("Couldn't delete image: {}", e);
+            match e.kind(){
+                std::io::ErrorKind::NotFound => ApiResult::new_error(ApiError::NotFound),
+                _ => ApiResult::new_error(ApiError::InternalServerError)
+            }
         }
     }
 }
