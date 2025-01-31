@@ -2063,9 +2063,9 @@ impl From<NumericDelimiter> for MyNumericDelimiter {
 pub struct MyDate {
     /// The year (1 B.C.E. is represented as 0 and so forth).
     pub year: i32,
-    /// The optional month (0-11).
+    /// The optional month (1-12).
     pub month: Option<u8>,
-    /// The optional day (0-30).
+    /// The optional day (1-31).
     pub day: Option<u8>,
     /// Whether the date is approximate.
     pub approximate: bool,
@@ -2073,10 +2073,19 @@ pub struct MyDate {
 
 impl From<Date> for MyDate {
     fn from(value: Date) -> Self {
+        // Convert 0-based to 1-based
+        let month = match value.month {
+            Some(month) => Some(month+1),
+            None => None,
+        };
+        let day = match value.day {
+            Some(day) => Some(day+1),
+            None => None,
+        };
         MyDate {
             year: value.year,
-            month: value.month,
-            day: value.day,
+            month,
+            day,
             approximate: value.approximate,
         }
     }
@@ -2084,10 +2093,20 @@ impl From<Date> for MyDate {
 
 impl From<MyDate> for Date {
     fn from(value: MyDate) -> Self {
+        // Convert 1-based to 0-based
+        let month = match value.month {
+            Some(month) => Some(month-1),
+            None => None,
+        };
+        let day = match value.day {
+            Some(day) => Some(day-1),
+            None => None,
+        };
+
         Date {
             year: value.year,
-            month: value.month,
-            day: value.day,
+            month,
+            day,
             approximate: value.approximate,
         }
     }
