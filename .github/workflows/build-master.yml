@@ -40,9 +40,10 @@ jobs:
         cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
+        tar -vczf ../verfassungsbooks-bundled.tar.gz *
     - uses: actions/upload-artifact@v4
       with:
         name: verfassungsbooks-server
-        path: packaged/
+        path: verfassungsbooks-bundled.tar.gz
         
       
