@@ -1,0 +1,28 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: [Build Master]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: verfassungsbooks-server
+          path: dest
+      - name: List dest
+        run: ls -R dest
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -t ed25519 editor-staging.verfassungsblog.de >> ~/.ssh/known_hosts
+      - name: Send to staging server
+        run: scp verfassungsbooks-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de
