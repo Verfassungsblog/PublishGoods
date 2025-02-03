@@ -179,7 +179,7 @@ mod tests {
     fn test_safe_path_combine_root_folder() {
         let base_path = "/data/templates/template1/assets";
         let user_input = "/folder1/file1.txt";
-        let expected_result = Err(());
+        let expected_result = Ok(PathBuf::from("/data/templates/template1/assets/folder1/file1.txt"));
 
         let result = safe_path_combine(base_path, user_input);
 

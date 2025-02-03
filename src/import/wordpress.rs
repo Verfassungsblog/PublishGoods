@@ -258,14 +258,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_import_single_post() {
-        let api = WordpressAPI::new("https://verfassungsblog.de".to_string());
+        let api = WordpressAPI::new("verfassungsblog.de".to_string());
         let post = api.get_post(79100).await.unwrap();
         println!("{:?}", post);
     }
 
     #[tokio::test]
     async fn test_import_posts() {
-        let api = WordpressAPI::new("https://verfassungsblog.de".to_string());
+        let api = WordpressAPI::new("verfassungsblog.de".to_string());
         let posts = api.get_posts(None, None, None, None, None, None, None, None).await.unwrap();
         println!("{:?}", posts);
     }

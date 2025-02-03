@@ -642,6 +642,11 @@ pub fn test_deserialize_and_serialize_content_block(){
         "data": {
             "text": "Test",
             "level": 1
+        },
+        "tunes": {
+            "block_style_tune": {
+                "css_classes": "test"
+            }
         }
     }"#;
     let content_block: NewContentBlockEditorJSFormat = serde_json::from_str(json).unwrap();
