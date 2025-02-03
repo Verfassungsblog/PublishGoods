@@ -12,7 +12,7 @@ build = "build.rs"
 [dependencies]
 vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", branch="master"}
 #vb-exchange = { path = "../Verfassungsbooks-Exchange-Lib" } <-- use this if testing locally
-rocket = { version = "=0.5.0", features = ["secrets", "json", "tls"] }
+rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.14"
 serde = { version = "1.0.197", features = ["rc", "derive"] }
