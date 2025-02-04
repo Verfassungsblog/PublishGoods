@@ -3,8 +3,6 @@ name: Build Master & Deploy to staging
 on:
   push:
     branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
 
 permissions:
   contents: write
