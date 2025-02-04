@@ -15,7 +15,7 @@ use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::wordpress::{WordpressAPI, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, Section, SectionMetadata, SectionOrToc};
+use crate::projects::{BlockData, NewContentBlock, SectionMetadataV2, SectionOrTocV2, SectionV2};
 use crate::utils::block_id_generator::generate_id;
 
 pub struct ImportProcessor{
@@ -310,13 +310,13 @@ impl ImportProcessor{
         }
 
 
-        let section = Section{
+        let section = SectionV2 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadata {
+            metadata: SectionMetadataV2 {
                 title: post.title.rendered.clone(),
                 toc_title_override: None,
                 subtitle,
@@ -412,7 +412,7 @@ impl ImportProcessor{
             }
     }
 
-    async fn import_html_from_wp(&self, mut section: Section, input: String, project_data: Arc<RwLock<ProjectDataV4>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
+    async fn import_html_from_wp(&self, mut section: SectionV2, input: String, project_data: Arc<RwLock<ProjectDataV4>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -623,7 +623,7 @@ impl ImportProcessor{
             }
         }
 
-        project_data.write().unwrap().sections.push(SectionOrToc::Section(section));
+        project_data.write().unwrap().sections.push(SectionOrTocV2::Section(section));
         Ok(())
 
     }
@@ -640,13 +640,13 @@ impl ImportProcessor{
             return Err(ImportError::HtmlConversionFailed)
         } //TODO support a full html document
         
-        let mut section = Section{
+        let mut section = SectionV2 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadata {
+            metadata: SectionMetadataV2 {
                 title: "Imported Section".to_string(),
                 toc_title_override: None,
                 subtitle: None,
@@ -856,7 +856,7 @@ impl ImportProcessor{
             }
         }
 
-        project_data.write().unwrap().sections.push(SectionOrToc::Section(section));
+        project_data.write().unwrap().sections.push(SectionOrTocV2::Section(section));
         Ok(())
     }
 

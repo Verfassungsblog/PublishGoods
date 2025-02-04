@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use bincode::{Encode, Decode};
 use hayagriva::types::EntryType;
 use vb_exchange::projects::*;
-use crate::projects::{ProjectMetadata, Section, SectionOrToc};
+use crate::projects::{ProjectMetadata, SectionOrTocV2, SectionOrTocV1, SectionV2};
 use crate::projects::api::ApiError;
 use crate::settings::Settings;
 use reqwest::Url;
@@ -850,7 +850,7 @@ pub struct OldProjectData {
     pub last_interaction: u64,
     pub metadata: Option<ProjectMetadata>,
     pub settings: Option<ProjectSettingsV2>,
-    pub sections: Vec<SectionOrToc>,
+    pub sections: Vec<SectionOrTocV1>,
     #[bincode(with_serde)]
     pub bibliography: HashMap<String, OldBibEntry>
 }
@@ -865,7 +865,7 @@ pub struct ProjectDataV2 {
     pub last_interaction: u64,
     pub metadata: Option<ProjectMetadata>,
     pub settings: Option<ProjectSettingsV2>,
-    pub sections: Vec<SectionOrToc>,
+    pub sections: Vec<SectionOrTocV1>,
     #[bincode(with_serde)]
     pub bibliography: HashMap<String, BibEntryV2>
 }
@@ -879,7 +879,7 @@ pub struct ProjectDataV3 {
     pub last_interaction: u64,
     pub metadata: Option<ProjectMetadata>,
     pub settings: Option<ProjectSettingsV3>,
-    pub sections: Vec<SectionOrToc>,
+    pub sections: Vec<SectionOrTocV1>,
     #[bincode(with_serde)]
     pub bibliography: HashMap<String, BibEntryV2>
 }
@@ -893,7 +893,7 @@ pub struct ProjectDataV4 {
     pub last_interaction: u64,
     pub metadata: Option<ProjectMetadata>,
     pub settings: Option<ProjectSettingsV4>,
-    pub sections: Vec<SectionOrToc>,
+    pub sections: Vec<SectionOrTocV2>,
     #[bincode(with_serde)]
     pub bibliography: HashMap<String, BibEntryV2> //TODO: add prefix & suffix support
 }
@@ -960,7 +960,7 @@ impl From<ProjectDataV3> for ProjectDataV4{
             last_interaction: value.last_interaction,
             metadata: value.metadata,
             settings,
-            sections: value.sections,
+            sections: value.sections.iter().map(|section|section.clone().into()).collect(),
             bibliography: value.bibliography,
         }
     }
@@ -1653,9 +1653,9 @@ impl BibEntryV2 {
 
 impl ProjectDataV4 {
     // TODO migrate to using path instead of the id and searching for it
-    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<Section> {
+    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<SectionV2> {
         let pos = self.sections.iter().position(|section| match section {
-            SectionOrToc::Section(section) => section.id == Some(*section_to_remove_id),
+            SectionOrTocV2::Section(section) => section.id == Some(*section_to_remove_id),
             _ => false,
         });
 
@@ -1663,7 +1663,7 @@ impl ProjectDataV4 {
             Some(pos) => self.sections.remove(pos).into_section(),
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrToc::Section(section) = section {
+                    if let SectionOrTocV2::Section(section) = section {
                         if let Some(removed) = section.remove_child_section(section_to_remove_id) {
                             return Some(removed);
                         }
@@ -1673,9 +1673,9 @@ impl ProjectDataV4 {
             }
         }
     }
-    pub fn insert_section_as_first_child(&mut self, parent_section_id: &uuid::Uuid, section_to_insert: Section) -> Result<(), ()> {
+    pub fn insert_section_as_first_child(&mut self, parent_section_id: &uuid::Uuid, section_to_insert: SectionV2) -> Result<(), ()> {
         for section in &mut self.sections {
-            if let SectionOrToc::Section(section) = section {
+            if let SectionOrTocV2::Section(section) = section {
                 // Check if this is the parent section
                 if section.id == Some(*parent_section_id) {
                     section.sub_sections.insert(0, section_to_insert);
@@ -1690,20 +1690,20 @@ impl ProjectDataV4 {
         }
         Err(())
     }
-    pub fn insert_section_after(&mut self, previous_element: &uuid::Uuid, section_to_insert: Section) -> Result<(), ()> {
+    pub fn insert_section_after(&mut self, previous_element: &uuid::Uuid, section_to_insert: SectionV2) -> Result<(), ()> {
         let pos = self.sections.iter().position(|section| match section {
-            SectionOrToc::Section(section) => section.id == Some(*previous_element),
+            SectionOrTocV2::Section(section) => section.id == Some(*previous_element),
             _ => false,
         });
 
         match pos {
             Some(pos) => {
-                self.sections.insert(pos + 1, SectionOrToc::Section(section_to_insert));
+                self.sections.insert(pos + 1, SectionOrTocV2::Section(section_to_insert));
                 Ok(())
             }
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrToc::Section(section) = section {
+                    if let SectionOrTocV2::Section(section) = section {
                         if let Some(_) = section.insert_child_section_after(previous_element, &section_to_insert) {
                             return Ok(());
                         }
@@ -1718,12 +1718,12 @@ impl ProjectDataV4 {
 pub fn get_section_by_path_mut<'a>(
     project: &'a mut RwLockWriteGuard<ProjectDataV4>,
     path: &Vec<uuid::Uuid>
-) -> Result<&'a mut Section, ApiError> {
+) -> Result<&'a mut SectionV2, ApiError> {
 
     // Find first section
     let first_section_opt = project.sections.iter_mut()
         .find_map(|section| {
-            if let SectionOrToc::Section(section) = section {
+            if let SectionOrTocV2::Section(section) = section {
                 if section.id.unwrap_or_default() == path[0] {
                     Some(section)
                 } else {
@@ -1766,12 +1766,12 @@ pub fn get_section_by_path_mut<'a>(
     Ok(current_section)
 }
 
-pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV4>, path: &Vec<uuid::Uuid>) -> Result<&'a Section, ApiError>{
-    let mut first_section : Option<&Section> = None;
+pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV4>, path: &Vec<uuid::Uuid>) -> Result<&'a SectionV2, ApiError>{
+    let mut first_section : Option<&SectionV2> = None;
 
     // Find first section
     for section in project.sections.iter(){
-        if let SectionOrToc::Section(section) = section{
+        if let SectionOrTocV2::Section(section) = section{
             if section.id.unwrap_or_default() == path[0]{
                 first_section = Some(section);
             }
@@ -1779,7 +1779,7 @@ pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV4>, path
     }
 
     // Return error if no first section found
-    let first_section: &Section = match first_section{
+    let first_section: &SectionV2 = match first_section{
         Some(first_section) => first_section,
         None => {
             println!("Couldn't find section with id {}", path[0]);
@@ -1787,7 +1787,7 @@ pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV4>, path
         }
     };
 
-    let mut current_section: &Section = first_section;
+    let mut current_section: &SectionV2 = first_section;
 
     // Skip first element, because we already found it
     for part in path.iter().skip(1){

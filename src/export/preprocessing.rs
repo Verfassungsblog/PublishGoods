@@ -16,7 +16,7 @@ use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
 use crate::data_storage::{DataStorage, ProjectDataV4};
-use crate::projects::{BlockData, NewContentBlock, Section, SectionOrToc};
+use crate::projects::{BlockData, NewContentBlock, SectionV2, SectionOrTocV2};
 use crate::utils::csl::CslData;
 
 pub async fn prepare_project(project_data: ProjectDataV4, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
@@ -64,7 +64,7 @@ pub async fn prepare_project(project_data: ProjectDataV4, data_storage: Arc<Data
 
     let mut data = vec![];
     for section in project_data.sections{
-        if let SectionOrToc::Section(section) = section{
+        if let SectionOrTocV2::Section(section) = section{
             if let Some(id) = section.id{
                 // Check if only specified sections should be included
                 match &sections_to_include{
@@ -194,7 +194,7 @@ pub fn render_citations(project: &ProjectDataV4, csl_data: Arc<CslData>) -> Hash
 }
 
 #[async_recursion]
-pub async fn render_section(section: Section, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid) -> PreparedSection{
+pub async fn render_section(section: SectionV2, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid) -> PreparedSection{
     let published = match section.metadata.published{
         Some(date) => Some(date.format("%d.%m.%Y").to_string()),
         None => None

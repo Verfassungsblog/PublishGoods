@@ -5,17 +5,48 @@ use serde::{Serialize, Deserialize};
 use vb_exchange::projects::*;
 
 /// Enum to differentiate between real sections and the position of the table of contents
+//TODO: remove
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum SectionOrToc{
-    Section(Section),
+pub enum SectionOrTocV1 {
+    Section(SectionV1),
     Toc,
 }
 
-impl SectionOrToc{
-    pub fn into_section(self) -> Option<Section> {
+
+
+impl SectionOrTocV1 {
+    pub fn into_section(self) -> Option<SectionV1> {
         match self {
-            SectionOrToc::Section(section) => Some(section),
-            SectionOrToc::Toc => None,
+            SectionOrTocV1::Section(section) => Some(section),
+            SectionOrTocV1::Toc => None,
+        }
+    }
+}
+
+impl From<SectionOrTocV1> for SectionOrTocV2{
+    fn from(value: SectionOrTocV1) -> Self {
+        match value{
+            SectionOrTocV1::Section(section) => SectionOrTocV2::Section(section.into()),
+            SectionOrTocV1::Toc => SectionOrTocV2::Toc,
+        }
+    }
+}
+
+/// Enum to differentiate between real sections and the position of the table of contents
+//TODO: remove
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub enum SectionOrTocV2 {
+    Section(SectionV2),
+    Toc,
+}
+
+
+
+impl SectionOrTocV2 {
+    pub fn into_section(self) -> Option<SectionV2> {
+        match self {
+            SectionOrTocV2::Section(section) => Some(section),
+            SectionOrTocV2::Toc => None,
         }
     }
 }
@@ -67,9 +98,11 @@ pub struct ProjectMetadata{
 }
 
 
+
+
 /// Struct holds all data for a section (e.g. chapter, part, ...)
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Section{
+pub struct SectionV1 {
     /// Unique id of the section
     /// Only None if the section is not yet saved in the database
     #[bincode(with_serde)]
@@ -77,29 +110,61 @@ pub struct Section{
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Vec<Section>,
+    pub sub_sections: Vec<SectionV1>,
     // Holds all content blocks
     pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
     pub visible_in_toc: bool,
     /// Metadata of the section
-    pub metadata: SectionMetadata,
+    pub metadata: SectionMetadataV1,
 }
 
-impl Section{
-    pub fn clone_without_contentblocks(&self) -> Section {
+impl From<SectionV1> for SectionV2{
+    fn from(value: SectionV1) -> Self {
+        SectionV2{
+            id: value.id,
+            css_classes: value.css_classes,
+            sub_sections: value.sub_sections.into_iter().map(|s| s.into()).collect(),
+            children: value.children,
+            visible_in_toc: value.visible_in_toc,
+            metadata: value.metadata.into(),
+        }
+    }
+}
+
+/// Struct holds all data for a section (e.g. chapter, part, ...)
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct SectionV2 {
+    /// Unique id of the section
+    /// Only None if the section is not yet saved in the database
+    #[bincode(with_serde)]
+    pub id: Option<uuid::Uuid>,
+    /// Additional classes to style the Section
+    pub css_classes: Vec<String>,
+    /// Holds all subsections
+    pub sub_sections: Vec<SectionV2>,
+    // Holds all content blocks
+    pub children: Vec<NewContentBlock>,
+    /// If true, the section is visible in the table of contents
+    pub visible_in_toc: bool,
+    /// Metadata of the section
+    pub metadata: SectionMetadataV2,
+}
+
+impl SectionV2 {
+    pub fn clone_without_contentblocks(&self) -> SectionV2 {
         let mut new_section = self.clone();
         new_section.children = vec![];
         new_section
     }
 
-    pub fn clone_without_subsections(&self) -> Section {
+    pub fn clone_without_subsections(&self) -> SectionV2 {
         let mut new_section = self.clone();
         new_section.sub_sections = vec![];
         new_section
     }
 
-    pub fn insert_child_section_as_child(&mut self, parent_section_id: &uuid::Uuid, new_section: &Section) -> Option<()>{
+    pub fn insert_child_section_as_child(&mut self, parent_section_id: &uuid::Uuid, new_section: &SectionV2) -> Option<()>{
         for section in self.sub_sections.iter_mut(){
                     if section.id == Some(*parent_section_id){
                         section.sub_sections.push(new_section.clone());
@@ -116,7 +181,7 @@ impl Section{
         None
     }
 
-    pub fn insert_child_section_after(&mut self, section_id: &uuid::Uuid, new_section: &Section) -> Option<()>{
+    pub fn insert_child_section_after(&mut self, section_id: &uuid::Uuid, new_section: &SectionV2) -> Option<()>{
         for (i, section) in self.sub_sections.iter_mut().enumerate(){
                     if section.id == Some(*section_id){
                         self.sub_sections.insert(i+1,new_section.clone());
@@ -133,7 +198,7 @@ impl Section{
         None
     }
 
-    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<Section>{
+    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<SectionV2>{
         let mut index = None;
         for (i, section) in self.sub_sections.iter_mut().enumerate(){
                     if section.id == Some(*section_id){
@@ -322,7 +387,43 @@ pub enum SectionLevel{
 
 /// Struct holds all metadata of a section
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct SectionMetadata{
+pub struct SectionMetadataV1{
+    pub title: String,
+    pub subtitle: Option<String>,
+    #[bincode(with_serde)]
+    pub authors: Vec<uuid::Uuid>,
+    #[bincode(with_serde)]
+    pub editors: Vec<uuid::Uuid>,
+    pub web_url: Option<String>,
+    pub identifiers: Vec<Identifier>,
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDateTime>,
+    #[bincode(with_serde)]
+    pub last_changed: Option<NaiveDateTime>,
+    pub lang: Option<Language>,
+}
+
+impl From<SectionMetadataV1> for SectionMetadataV2{
+    fn from(value: SectionMetadataV1) -> Self {
+        SectionMetadataV2{
+            title: value.title,
+            toc_title_override: None,
+            subtitle: value.subtitle,
+            toc_subtitle_override: None,
+            authors: value.authors,
+            editors: value.editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            last_changed: value.last_changed,
+            lang: value.lang,
+        }
+    }
+}
+
+/// Struct holds all metadata of a section
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct SectionMetadataV2 {
     pub title: String,
     pub toc_title_override: Option<String>,
     pub subtitle: Option<String>,

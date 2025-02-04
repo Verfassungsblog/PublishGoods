@@ -7,20 +7,20 @@ use rocket::State;
 use vb_exchange::projects::{Identifier, Language, Person};
 use crate::data_storage::{DataStorage, ProjectStorage};
 use crate::projects::api::{ApiError, ApiResult, Patch};
-use crate::projects::{NewContentBlock, Section, SectionMetadata};
+use crate::projects::{NewContentBlock, SectionMetadataV2, SectionV2};
 use crate::projects::api::ApiError::InternalServerError;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::utils::dedup::dedup_vec;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`Section`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`SectionV2`] with optional expansion of sub_sections and some metadata fields
 pub struct APISectionResult{
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Option<Vec<Section>>,
+    pub sub_sections: Option<Vec<SectionV2>>,
     // Holds all content blocks
     pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
@@ -30,7 +30,7 @@ pub struct APISectionResult{
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API version for [`SectionMetadata`] with optional expansion of authors and editors
+/// API version for [`SectionMetadataV2`] with optional expansion of authors and editors
 pub struct APISectionMetadataResult{
     pub title: String,
     pub toc_title_override: Option<String>,
@@ -352,8 +352,8 @@ pub struct PatchSectionMetadata {
     pub lang: Option<Option<Language>>,
 }
 
-impl Patch<PatchSectionMetadata, SectionMetadata> for SectionMetadata{
-    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadata{
+impl Patch<PatchSectionMetadata, SectionMetadataV2> for SectionMetadataV2 {
+    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV2 {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title{
@@ -405,8 +405,8 @@ impl Patch<PatchSectionMetadata, SectionMetadata> for SectionMetadata{
 }
 
 // Implement patch for PatchSection
-impl Patch<PatchSection, Section> for Section{
-    fn patch(&mut self, patch: PatchSection) -> Section{
+impl Patch<PatchSection, SectionV2> for SectionV2 {
+    fn patch(&mut self, patch: PatchSection) -> SectionV2 {
         let mut new_section = self.clone();
 
         if let Some(id) = patch.id{

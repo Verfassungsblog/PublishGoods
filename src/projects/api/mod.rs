@@ -1,6 +1,6 @@
 use crate::data_storage::{DataStorage, ProjectTemplateV2};
-use crate::projects::{SectionMetadata, NewContentBlock, NewContentBlockEditorJSFormat};
-use crate::projects::SectionOrToc;
+use crate::projects::{SectionMetadataV2, NewContentBlock, NewContentBlockEditorJSFormat};
+use crate::projects::SectionOrTocV2;
 use rocket::serde::json::Json;
 use std::sync::Arc;
 use bincode::{Decode, Encode};
@@ -12,7 +12,7 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use vb_exchange::projects::ProjectSettingsV4;
 use crate::data_storage::ProjectStorage;
-use crate::projects::{Identifier, Keyword, Language, License, ProjectMetadata, Section};
+use crate::projects::{Identifier, Keyword, Language, License, ProjectMetadata, SectionV1};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 
@@ -866,7 +866,7 @@ pub async fn update_identifier_in_project(project_id: String, identifier_id: Str
 /// Returns a list of all contents (sections or toc placeholder) in the project
 /// Strips out the inner content of ContentBlocks
 #[get("/api/projects/<project_id>/contents")]
-pub async fn get_project_contents(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<SectionOrToc>>> {
+pub async fn get_project_contents(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<SectionOrTocV2>>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -890,11 +890,11 @@ pub async fn get_project_contents(project_id: String, _session: Session, setting
     let mut contents = Vec::new();
     for entry in project.sections.iter(){
         match entry{
-            SectionOrToc::Toc => {
+            SectionOrTocV2::Toc => {
                 contents.push(entry.clone());
             },
-            SectionOrToc::Section(section) => {
-                contents.push(SectionOrToc::Section(section.clone_without_contentblocks()));
+            SectionOrTocV2::Section(section) => {
+                contents.push(SectionOrTocV2::Section(section.clone_without_contentblocks()));
             }
         }
     }
@@ -905,7 +905,7 @@ pub async fn get_project_contents(project_id: String, _session: Session, setting
 /// POST /api/projects/<project_id>/contents
 /// Add a new section or toc placeholder to the project
 #[post("/api/projects/<project_id>/contents", data = "<content>")]
-pub async fn add_content(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, content: Json<SectionOrToc>) -> Json<ApiResult<SectionOrToc>>{
+pub async fn add_content(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, content: Json<SectionOrTocV2>) -> Json<ApiResult<SectionOrTocV2>>{
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -917,12 +917,12 @@ pub async fn add_content(project_id: String, _session: Session, settings: &State
     // Check if Section or Toc, generate uuid if section
     let mut content = content.into_inner();
     match &mut content{
-        SectionOrToc::Section(section) => {
+        SectionOrTocV2::Section(section) => {
             if let None = section.id{
                 section.id = Some(uuid::Uuid::new_v4());
             }
         },
-        SectionOrToc::Toc => {},
+        SectionOrTocV2::Toc => {},
     }
 
     let project_storage = Arc::clone(project_storage);
@@ -998,7 +998,7 @@ pub async fn move_content_after(project_id: String, content_id: String, after_id
         Err(_) => {
             println!("Couldn't find content with id {}", after_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrToc::Section(content));
+            project.sections.push(SectionOrTocV2::Section(content));
             ApiResult::new_error(ApiError::NotFound)
         }
     }
@@ -1061,7 +1061,7 @@ pub async fn move_content_child_of(project_id: String, content_id: String, paren
         Err(_) => {
             println!("Couldn't find content with id {}", parent_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrToc::Section(content));
+            project.sections.push(SectionOrTocV2::Section(content));
             ApiResult::new_error(ApiError::NotFound)
         }
     }
