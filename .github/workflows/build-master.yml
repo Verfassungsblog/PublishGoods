@@ -43,6 +43,9 @@ jobs:
       with:
         name: verfassungsbooks-server
         path: verfassungsbooks-bundled.tar.gz
+    - uses: softprops/action-gh-release@v2
+      with:
+        files: verfassungsbooks-bundled.tar.gz
   deploy:
     needs: build
     runs-on: ubuntu-latest
