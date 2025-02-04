@@ -69,7 +69,7 @@ jobs:
           scp -i ~/.ssh/prod_ssh_key -r verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data data
           scp -i ~/.ssh/staging_ssh_key -r data verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data
       - name: Upload artifact to staging server
-        run: scp dest/verfassungsbooks-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-bundled.tar.gz
+        run: scp -i ~/.ssh/staging_ssh_key dest/verfassungsbooks-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-bundled.tar.gz
       - name: Start update and start staging server
         run: |
           ssh -i ~/.ssh/staging_ssh_key -t verfassungsbooks@editor-staging.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh verfassungsbooks-bundled.tar.gz verfassungsbooks-server"
