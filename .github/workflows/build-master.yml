@@ -57,9 +57,22 @@ jobs:
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/staging_ssh_key
+          echo "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/prod_ssh_key
+          chmod 600 ~/.ssh/*
           ssh-keyscan -t ed25519 editor-staging.verfassungsblog.de >> ~/.ssh/known_hosts
-      - name: Send to staging server
+          ssh-keyscan -t ed25519 editor.verfassungsblog.de >> ~/.ssh/known_hosts
+          eval `ssh-agent`
+          ssh-add ~/.ssh/prod_ssh_key
+          ssh-add ~/.ssh/staging_ssh_key
+      - name: Cleanup staging server files, Copy data directory from production server
+        run: | 
+          ssh -t verfassungsbooks@editor-staging.verfassungsblog.de "systemctl stop verfassungsbooks-server"
+          ssh -t verfassungsbooks@editor-staging.verfassungsblog.de "rm -R /home/verfassungsbooks/verfassungsbooks-server/data"
+          scp -R verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data
+      - name: Upload artifact to staging server
         run: scp dest/verfassungsbooks-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-bundled.tar.gz
-      
+      - name: Start update and start staging server
+        run: |
+          ssh -t verfassungsbooks@editor-staging.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh verfassungsbooks-bundled.tar.gz verfassungsbooks-server"
+          ssh -t verfassungsbooks@editor-staging.verfassungsblog.de "systemctl start verfassungsbooks-server"
