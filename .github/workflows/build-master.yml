@@ -3,8 +3,6 @@ name: Build Master & Deploy to staging
 on:
   push:
     branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
 
 permissions:
   contents: write
@@ -49,8 +47,8 @@ jobs:
     - uses: softprops/action-gh-release@v2
       with:
         files: verfassungsbooks-bundled.tar.gz
-        name: "$git_branch-$git_hash"
-        tag_name: "$git_branch-$git_hash"
+        name: "${{env.git_branch}}-${{env.git_hash}}"
+        tag_name: "${{env.git_branch}}-${{env.git_hash}}"
   deploy:
     needs: build
     runs-on: ubuntu-latest
