@@ -65,7 +65,7 @@ jobs:
       - name: Cleanup staging server files, Copy data directory from production server
         run: | 
           ssh -i ~/.ssh/staging_ssh_key -t verfassungsbooks@editor-staging.verfassungsblog.de "sudo systemctl stop verfassungsbooks-server.service"
-          ssh -i ~/.ssh/staging_ssh_key -t verfassungsbooks@editor-staging.verfassungsblog.de "rm -R /home/verfassungsbooks/verfassungsbooks-server/data || true"
+          ssh -i ~/.ssh/staging_ssh_key -t verfassungsbooks@editor-staging.verfassungsblog.de "rm -Rf /home/verfassungsbooks/verfassungsbooks-server/data"
           scp -i ~/.ssh/prod_ssh_key -r verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data data
           scp -i ~/.ssh/staging_ssh_key -r data verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data
       - name: Upload artifact to staging server
