@@ -1,0 +1,41 @@
+name: Build & Test
+
+on: push
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup
+      run: npm install -g handlebars typescript webpack webpack-cli && cd typescript && npm install
+    - name: Create version.txt
+      run: |
+        git_hash=$(git rev-parse --short "$GITHUB_SHA")
+        git_branch=${GITHUB_REF#refs/heads/}
+        echo "$git_branch-$git_hash" > version.txt
+    - name: Build
+      run: cargo build --release --verbose
+    - name: Run tests
+      run: cargo test --release --verbose
+    - name: Package artifact
+      run: |
+        mkdir packaged
+        cp target/release/Verfassungsbooks packaged/ 
+        mkdir packaged/config && mkdir packaged/data 
+        cp -R data/csl_locales packaged/data/ 
+        cp -R data/csl_styles packaged/data/ 
+        cp -R templates packaged/templates 
+        cp config/default.toml packaged/config/ 
+        cp Rocket.toml packaged/ 
+        cp version.txt packaged/ 
+        cp -R static packaged/static 
+        cd packaged
+        tar -vczf ../verfassungsbooks-bundled.tar.gz *
+    - uses: actions/upload-artifact@v4
+      with:
+        name: verfassungsbooks-server
+        path: verfassungsbooks-bundled.tar.gz
