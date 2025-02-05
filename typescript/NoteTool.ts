@@ -16,7 +16,6 @@ export class NoteTool{
         this.state = false;
         this.api = api;
 
-        //TODO: Add the event listeners earlier, so that the notes are clickable from the start.
         NoteTool.add_all_show_note_settings_listeners();
     }
 
@@ -59,14 +58,24 @@ export class NoteTool{
             "<textarea id='note-content' class='form-control form-control-sm mt-1'>"+note_content+"</textarea>" +
             "<div style='display: flex; justify-content: space-between'><button id='note-delete' class='btn btn-sm btn-danger mt-1'>Delete Note</button><button id='note-abort' class='btn btn-sm btn-secondary mt-1'>Cancel</button><button id='note-save' class='btn btn-sm btn-primary mt-1'>Save</button></div>" +
             "</div>";
-        toolbar.insertAdjacentHTML('afterend', settings_dialog_html);
+        document.body.insertAdjacentHTML('afterbegin', settings_dialog_html);
 
-        let settings_dialog: HTMLElement = toolbar.parentElement.querySelector('.note-settings');
+        let settings_dialog: HTMLElement = document.getElementsByClassName('note-settings')[0] as HTMLElement;
 
-        settings_dialog.style.left = toolbar.style.left;
+        let dest = note.getBoundingClientRect();
+
+        // Check if the dialog would be outside the viewport
+        let dest_left ;
+        if(dest.left + settings_dialog.offsetWidth > window.innerWidth){
+            dest_left =  window.innerWidth - settings_dialog.offsetWidth;
+        }else{
+            dest_left = dest.left;
+        }
+
+        settings_dialog.style.left = dest_left + 'px';
         // Add the same position as the toolbar but add 40px to the top
-        let currentTop = parseInt(toolbar.style.top, 10);
-        settings_dialog.style.top = (currentTop + 40) + 'px';
+        settings_dialog.style.top = (dest.bottom + 40) + 'px';
+
 
 
         document.getElementById('note-save').addEventListener('click', () => {
