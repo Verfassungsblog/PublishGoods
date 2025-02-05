@@ -18,7 +18,7 @@ config = "0.14"
 serde = { version = "1.0.197", features = ["rc", "derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 rand = "0.8.5"
-rocket_dyn_templates = { version = "=0.1.0", features = ["handlebars"] }
+rocket_dyn_templates = { version = "=0.2.0", features = ["handlebars"] }
 argon2 = "0.5.2"
 uuid = { version = "1.6.1", features = ["serde", "v4"] }
 chrono = { version = "0.4.31", features = ["serde"] }
