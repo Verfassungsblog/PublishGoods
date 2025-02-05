@@ -12,13 +12,13 @@ build = "build.rs"
 [dependencies]
 vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", branch="master"}
 #vb-exchange = { path = "../Verfassungsbooks-Exchange-Lib" } <-- use this if testing locally
-rocket = { version = "=0.5.0", features = ["secrets", "json", "tls"] }
+rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.14"
 serde = { version = "1.0.197", features = ["rc", "derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 rand = "0.8.5"
-rocket_dyn_templates = { version = "=0.1.0", features = ["handlebars"] }
+rocket_dyn_templates = { version = "=0.2.0", features = ["handlebars"] }
 argon2 = "0.5.2"
 uuid = { version = "1.6.1", features = ["serde", "v4"] }
 chrono = { version = "0.4.31", features = ["serde"] }
