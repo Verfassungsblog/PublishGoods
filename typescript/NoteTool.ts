@@ -108,7 +108,7 @@ export class NoteTool{
     render(){
         this.button = document.createElement('button');
         this.button.type = 'button';
-        this.button.textContent = 'Note';
+        this.button.innerText = '¹';
         this.button.classList.add("ce-inline-tool");
 
         return this.button;
