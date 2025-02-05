@@ -27,6 +27,7 @@
     "@editorjs/list": "^1.9.0",
     "@editorjs/quote": "^2.6.0",
     "@editorjs/raw": "^2.5.0",
+    "@sotaproject/strikethrough": "^1.0.1",
     "codemirror": "^6.0.1",
     "editorjs-undo": "^2.0.26",
     "handlebars": "^4.7.8",

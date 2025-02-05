@@ -7,6 +7,7 @@ const Quote:any = require('@editorjs/quote');
 const Undo: any = require('editorjs-undo');
 const ImageTool: any = require('@editorjs/image');
 const List: any = require("@editorjs/list");
+const Strikethrough: any = require("@sotaproject/strikethrough");
 import * as API from "./api_requests";
 import * as Tools from "./tools";
 import {CustomStyleTool} from "./CustomStyleTool";
@@ -47,6 +48,7 @@ export async function show_editor(){
                     class: Quote,
                     inlineToolbar: true,
                 },
+                strikethrough: Strikethrough,
                 custom_style_tool: CustomStyleTool,
                 citation: CitationTool,
                 image: {
