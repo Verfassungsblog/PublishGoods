@@ -81,8 +81,9 @@ export async function show_editor(){
 
         document.getElementById("section_content_blocks_inner").addEventListener("input", typing_handler);
 
-        // Make all existing notes clickable
+        // Make all existing notes and citations clickable
         NoteTool.add_all_show_note_settings_listeners();
+        CitationTool.add_all_show_note_settings_listeners();
     }catch(e){
         console.error(e);
         Tools.show_alert("Couldn't load content.", "danger");
