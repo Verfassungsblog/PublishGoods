@@ -1,5 +1,5 @@
 use crate::data_storage::{DataStorage, ProjectTemplateV2};
-use crate::projects::{SectionMetadataV2, NewContentBlock, NewContentBlockEditorJSFormat};
+use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat};
 use crate::projects::SectionOrTocV2;
 use rocket::serde::json::Json;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use vb_exchange::projects::ProjectSettingsV4;
 use crate::data_storage::ProjectStorage;
-use crate::projects::{Identifier, Keyword, Language, License, ProjectMetadata, SectionV1};
+use crate::projects::{Identifier, Keyword, Language, License, ProjectMetadata};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 
