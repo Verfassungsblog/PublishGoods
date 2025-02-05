@@ -139,4 +139,8 @@ export class CustomStyleTool{
             }
         };
     }
+
+    static get title(){
+        return 'Custom Style';
+    }
 }
