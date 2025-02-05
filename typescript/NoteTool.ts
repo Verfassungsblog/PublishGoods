@@ -40,9 +40,6 @@ export class NoteTool{
         let note_type = note.getAttribute("note-type");
         let note_content = note.getAttribute("note-content");
 
-
-        let toolbar = document.getElementsByClassName('ce-inline-toolbar')[0] as HTMLElement;
-
         let settings_dialog_html = "" +
             "<div class='note-settings'>" +
             "<label>Modify Note:</label>" +
