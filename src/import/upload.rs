@@ -33,13 +33,13 @@ struct WordpressImport{
 
 #[post("/api/import/upload", data = "<upload>")]
 pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Session, settings: &State<Settings>, _project_storage: &State<Arc<ProjectStorage>>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<uuid::Uuid>>{
-    println!("Uploading files to project {}", upload.project_id);
+    debug!("Uploading files to project {}", upload.project_id);
 
     let mut file_paths: VecDeque<(String, ContentType)> = VecDeque::new();
 
     // Persisting the files to disk
     for file in upload.files.iter_mut(){
-        println!("Processing file {}", file.name().unwrap());
+        debug!("Processing file {}", file.name().unwrap());
 
         let path = format!("{}/temp/{}", settings.data_path, Uuid::new_v4());
         file.copy_to(path.clone()).await.unwrap();
