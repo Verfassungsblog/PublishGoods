@@ -17,22 +17,21 @@ async fn send_translation_request(link: &str, settings: &Settings) -> Option<ser
     let client = match reqwest::ClientBuilder::new().timeout(std::time::Duration::from_secs(2)).build(){
         Ok(client) => client,
         Err(e) => {
-            eprintln!("Error creating client: {}", e);
+            error!("Error creating client: {}", e);
             return None;
         }
     };
     let res = match client.post(&target).body(link.to_string()).header("Content-Type", "text/plain").send().await{
         Ok(res) => res,
         Err(e) => {
-            eprintln!("Error sending translation request: {}", e);
+            error!("Error sending translation request: {}", e);
             return None;
         }
     };
     match res.json::<serde_json::Value>().await{
         Ok(text) => Some(text),
         Err(e) => {
-            eprintln!("Error reading translation response: {}", e);
-            eprintln!("Error: {}", e);
+            error!("Error reading translation response: {}", e);
             None
         }
     }
@@ -44,22 +43,21 @@ async fn send_export_translation_request(entry: serde_json::Value, settings: &Se
     let client = match reqwest::ClientBuilder::new().timeout(std::time::Duration::from_secs(2)).build(){
         Ok(client) => client,
         Err(e) => {
-            eprintln!("Error creating client: {}", e);
+            error!("Error creating client: {}", e);
             return None;
         }
     };
     let res = match client.post(&target).json(&entry).header("Content-Type", "application/json").send().await{
         Ok(res) => res,
         Err(e) => {
-            eprintln!("Error sending translation request: {}", e);
+            error!("Error sending translation request: {}", e);
             return None;
         }
     };
     let res = match res.text().await{
         Ok(text) => text,
         Err(e) => {
-            eprintln!("Error reading translation response: {}", e);
-            eprintln!("Error: {}", e);
+            error!("Error reading translation response: {}", e);
             return None
         }
     };
@@ -68,7 +66,7 @@ async fn send_export_translation_request(entry: serde_json::Value, settings: &Se
     let bibliography = match bibliography{
         Ok(bib) => bib,
         Err(e) => {
-            eprintln!("Error parsing bibliography: {:?}", e);
+            error!("Error parsing bibliography: {:?}", e);
             return None
         }
     };

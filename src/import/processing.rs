@@ -83,7 +83,7 @@ impl ImportProcessor{
                 // Check if there are any new jobs
                 let job_queue_len = processor_clone.job_queue.read().unwrap().len();
                 if job_queue_len > 0 && processor_clone.settings.max_import_threads > running_threads.load(std::sync::atomic::Ordering::Relaxed){
-                    println!("Starting new import job..."); //TODO: new thread
+                    debug!("Starting new import job..."); //TODO: new thread
 
                     let proc_clone = processor_clone.clone();
                     let running_threads_cpy = running_threads.clone();
@@ -101,7 +101,7 @@ impl ImportProcessor{
                         let job = Arc::new(RwLock::new(job));
                         proc_clone.job_archive.write().unwrap().insert(job.read().unwrap().id, job.clone());
                         proc_clone.process_job(job, proc_clone.project_storage.clone()).await;
-                        println!("Job finished");
+                        debug!("Job finished");
                         running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                     });
                 }else{
@@ -123,10 +123,10 @@ impl ImportProcessor{
         if let Some(bib_file) = bib_file{
             match self.import_bib_entries(project_id, bib_file, &self.settings).await{
                 Ok(_) => {
-                    println!("Bib entries imported successfully");
+                    debug!("Bib entries imported successfully");
                 }
                 Err(e) => {
-                    println!("Error importing bib entries: {:?}", e);
+                    warn!("Error importing bib entries: {:?}", e);
                     job.write().unwrap().status = ImportStatus::Failed;
                     return;
                 }
@@ -146,7 +146,7 @@ impl ImportProcessor{
             };
 
             if files_to_process_len > 0 {
-                println!("Checking remaining files... {} remaining", files_to_process_len);
+                debug!("Checking remaining files... {} remaining", files_to_process_len);
                 let res = job.write().unwrap().files_to_process.as_mut().unwrap().pop_front();
                 let (file, content_type) = match res {
                     Some(f) => f,
@@ -163,25 +163,25 @@ impl ImportProcessor{
 
                 match self.convert_file(&file, content_type, project, endnotes).await {
                     Ok(_) => {
-                        println!("File processed successfully");
+                        debug!("File processed successfully");
                         // Remove file from temp directory
                         let res = tokio::fs::remove_file(file).await;
                         if let Err(e) = res {
-                            println!("Error removing file from temp directory: {:?}", e);
+                            error!("Error removing file from temp directory: {:?}", e);
                         }
                     }
                     Err(e) => {
-                        println!("Error processing file: {:?}", e);
+                        warn!("Error processing file: {:?}", e);
                         job.write().unwrap().status = ImportStatus::Failed;
                         // Remove files from temp directory
                         let res = tokio::fs::remove_file(file).await;
                         if let Err(e) = res {
-                            println!("Error removing file from temp directory: {:?}", e);
+                            error!("Error removing file from temp directory: {:?}", e);
                         }
                         for (file, _) in files_to_process_cpy.iter() {
                             let res = tokio::fs::remove_file(file).await;
                             if let Err(e) = res {
-                                println!("Error removing file from temp directory: {:?}", e);
+                                error!("Error removing file from temp directory: {:?}", e);
                             }
                         }
                         break;
@@ -199,10 +199,10 @@ impl ImportProcessor{
                 if let Some(url) = res{
                     match self.import_by_url(&url, project, endnotes, shift_headings_up, convert_links).await{
                         Ok(_) => {
-                            println!("Wordpress Post processed successfully");
+                            debug!("Wordpress Post processed successfully");
                         }
                         Err(e) => {
-                            println!("Error processing wordpress post: {:?}", e);
+                            warn!("Error processing wordpress post: {:?}", e);
                             job.write().unwrap().status = ImportStatus::Failed;
                             break;
                         }
@@ -236,7 +236,7 @@ impl ImportProcessor{
         let slug = path.split("/").last().unwrap_or("");
 
         if path.starts_with("/category/"){
-            println!("Found category link. Trying to import all posts within category");
+            debug!("Found category link. Trying to import all posts within category");
             let category = match api.get_categories(None, None, None, None, None, Some(slug.to_string()), None, None, None).await{
                 Ok(categories) => categories,
                 Err(e) => return Err(ImportError::WordPressApiError(e))
@@ -263,7 +263,7 @@ impl ImportProcessor{
                 self.import_single_post(post.slug.clone(), project.clone(), endnotes, shift_headings_up, convert_links, &api).await?;
             }
         }else{
-            println!("Found non-category link. Trying to import single post");
+            debug!("Found non-category link. Trying to import single post");
             self.import_single_post(slug.to_string(), project, endnotes, shift_headings_up, convert_links, &api).await?;
         }
         Ok(())
@@ -338,7 +338,7 @@ impl ImportProcessor{
         let mut file = match tokio::fs::File::open(file_path).await{
             Ok(file) => file,
             Err(e) => {
-                eprintln!("Couldn't open file to import: {}", e);
+                warn!("Couldn't open file to import: {}", e);
                 return Err(ImportError::InvalidFile)
             }
         };
@@ -346,43 +346,43 @@ impl ImportProcessor{
         let mut file_content = String::new();
         let mut marks: Vec<String> = vec![];
         if let Err(e) = file.read_to_string(&mut file_content).await{
-            eprintln!("Error reading file to import: {}", e);
+            warn!("Error reading file to import: {}", e);
             return Err(ImportError::InvalidFile);
         };
 
         match content_type.to_string().as_str() {
                     "text/x-tex" | "application/x-tex" => {
-                        println!("Processing LaTeX file");
+                        debug!("Processing LaTeX file");
                         (file_content, marks) = preprocess::latex(file_content);
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Latex)?;
                         file_content = postprocess::latex(file_content, marks);
                     },
                     "application/vnd.oasis.opendocument.text" => {
-                        println!("Processing ODT file");
+                        debug!("Processing ODT file");
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Other("ODT".to_string()))?;
                     },
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
-                        println!("Processing DOCX file");
+                        debug!("Processing DOCX file");
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Docx)?;
                     },
                     "application/msword" => {
-                        println!("Processing DOC file");
+                        debug!("Processing DOC file");
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Other("DOC".to_string()))?;
                     },
                     "application/epub+zip" => {
-                        println!("Processing EPUB file");
+                        debug!("Processing EPUB file");
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Epub)?;
                     },
                     "application/rtf" => {
-                        println!("Processing RTF file");
+                        debug!("Processing RTF file");
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Rtf)?;
                     },
                     "text/markdown" | "text/x-markdown" => {
-                        println!("Processing Markdown file");
+                        debug!("Processing Markdown file");
                         file_content = self.convert_with_pandoc(file_content, InputFormat::Markdown)?;
                     },
                     _ => {
-                        println!("Unsupported file type: {}", content_type);
+                        warn!("Unsupported file type: {}", content_type);
                         return Err(ImportError::UnsupportedFileType);
                     }
         }
@@ -406,7 +406,7 @@ impl ImportProcessor{
                     }
                 },
                 Err(e) => {
-                    println!("Couldn't convert import file with pandoc: {}", e);
+                    warn!("Couldn't convert import file with pandoc: {}", e);
                     Err(ImportError::PandocError)
                 }
             }
@@ -416,7 +416,7 @@ impl ImportProcessor{
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
-                eprintln!("Couldn't parse html from import after pandoc: {}", e);
+                error!("Couldn't parse html from import after pandoc: {}", e);
                 return Err(ImportError::HtmlConversionFailed)
             }
         };
@@ -590,7 +590,7 @@ impl ImportProcessor{
                             if el.classes.contains(&String::from("footnotes_reference_container")){
                                 continue
                             }else{
-                                println!("Warning: Unsupported div. Adding as paragraph");
+                                warn!("Warning: Unsupported div. Adding as paragraph");
                                 // Add as paragraph
                                 section.children.push(NewContentBlock{
                                     id: generate_id(&section),
@@ -604,7 +604,7 @@ impl ImportProcessor{
                             }
                         }
                         _ => {
-                            println!("Warning: Unsupported tag: {}", el.name);
+                            warn!("Warning: Unsupported tag: {}", el.name);
                             // Add as paragraph
                             section.children.push(NewContentBlock{
                                 id: generate_id(&section),
@@ -632,7 +632,7 @@ impl ImportProcessor{
         let dom = match Dom::parse(&input){
             Ok(dom) => dom,
             Err(e) => {
-                eprintln!("Couldn't parse html from import after pandoc: {}", e);
+                error!("Couldn't parse html from import after pandoc: {}", e);
                 return Err(ImportError::HtmlConversionFailed)
             }
         };
@@ -974,18 +974,18 @@ impl ImportProcessor{
         let mut bib_file = match tokio::fs::File::open(bib_file_path.clone()).await{
             Ok(bib_file) => bib_file,
             Err(e) => {
-                println!("Error opening bib file {}: {}", bib_file_path, e);
+                warn!("Error opening bib file {}: {}", bib_file_path, e);
                 return Err(ImportError::BibFileInvalid);
             }
         };
         if let Err(e) = bib_file.read_to_string(&mut bib_file_content).await{
-            println!("Error reading bib file: {}", e);
+            warn!("Error reading bib file: {}", e);
             return Err(ImportError::BibFileInvalid);
         }
         let bib = match io::from_biblatex_str(&bib_file_content){
             Ok(bib) => bib,
             Err(e) => {
-                println!("Error parsing bib file: {}", e.iter().map(|e| e.to_string()).collect::<Vec<String>>().join(", "));
+                warn!("Error parsing bib file: {}", e.iter().map(|e| e.to_string()).collect::<Vec<String>>().join(", "));
                 return Err(ImportError::BibFileInvalid);
             }
         };
@@ -1034,7 +1034,7 @@ mod postprocess{
             let num = match (&caps[1]).parse::<usize>() {
                 Ok(num) => num,
                 Err(e) => {
-                    println!("Warning: couldn't parse vb-cite- citation number: {}", e);
+                    warn!("Warning: couldn't parse vb-cite- citation number: {}", e);
                     return String::from("invalid-citation!");
                 }
             };
