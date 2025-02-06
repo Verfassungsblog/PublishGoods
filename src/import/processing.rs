@@ -837,7 +837,7 @@ impl ImportProcessor{
                             }
                         },
                         _ => {
-                            println!("Warning: Unsupported tag: {}", el.name);
+                            warn!("Warning: Unsupported tag: {}", el.name);
                             // Add as paragraph
                             section.children.push(NewContentBlock{
                                 id: generate_id(&section),
@@ -867,11 +867,11 @@ impl ImportProcessor{
         for node in ele.children{
             match node{
                 Node::Text(t) => {
-                    println!("Found Text: {}", t);
+                    debug!("Found Text: {}", t);
                     html.push_str(&t);
                 }
                 Node::Element(el) => {
-                    println!("Found Element: {}", el.name);
+                    debug!("Found Element: {}", el.name);
 
                     if el.name == "a"{
                         // For pandoc footnotes
@@ -887,7 +887,7 @@ impl ImportProcessor{
                                                         if let Some(footnotes) = footnotes{
                                                             let num = num.trim().to_string();
                                                             if let Some(footnote) = footnotes.get(&format!("fn{}", num)){
-                                                                println!("Found footnote: {}", footnote.clone());
+                                                                debug!("Found footnote: {}", footnote.clone());
                                                                 if endnotes {
                                                                     html.push_str(&format!("<span class=\"note\" note-type=\"endnote\" note-content=\"{}\">E</span>", footnote.clone().replace("\"", "'")));
                                                                 }else{
@@ -912,7 +912,7 @@ impl ImportProcessor{
                                         let footnote_id = id.replace("tooltip", "reference");
                                         if let Some(footnotes) = footnotes{
                                             if let Some(footnote) = footnotes.get(&footnote_id){
-                                                println!("Found footnote: {}", footnote.clone());
+                                                debug!("Found footnote: {}", footnote.clone());
                                                 if endnotes {
                                                     html.push_str(&format!("<span class=\"note\" note-type=\"endnote\" note-content=\"{}\">E</span>", footnote.clone().replace("\"", "'")));
                                                 }else{
@@ -930,7 +930,7 @@ impl ImportProcessor{
                         if convert_links && footnotes.is_some(){
                             if let Some(href) = el.attributes.get("href"){
                                 if let Some(href) = href{
-                                    println!("Trying to get citation for link: {}", href);
+                                    debug!("Trying to get citation for link: {}", href);
                                     if let Some(citation) = crate::import::link_converter::get_translation(href, &self.settings).await{
                                         let key = citation.key.clone();
 
