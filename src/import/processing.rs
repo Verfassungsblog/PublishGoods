@@ -10,12 +10,12 @@ use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
-use crate::data_storage::{BibEntryV2, ProjectDataV4, ProjectStorage};
+use crate::data_storage::{BibEntryV2, ProjectDataV5, ProjectStorage};
 use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::wordpress::{WordpressAPI, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, SectionMetadataV2, SectionOrTocV2, SectionV2};
+use crate::projects::{BlockData, NewContentBlock, SectionMetadataV3, SectionOrTocV2, SectionOrTocV3, SectionV3};
 use crate::utils::block_id_generator::generate_id;
 
 pub struct ImportProcessor{
@@ -217,7 +217,7 @@ impl ImportProcessor{
         }
     }
 
-    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectDataV4>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
+    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
         let url = if url.ends_with("/"){
             url[..url.len()-1].to_string()
         }else{
@@ -269,7 +269,7 @@ impl ImportProcessor{
         Ok(())
     }
 
-    async fn import_single_post(&self, slug: String, project: Arc<RwLock<ProjectDataV4>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, api: &WordpressAPI) -> Result<(), ImportError>{
+    async fn import_single_post(&self, slug: String, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, api: &WordpressAPI) -> Result<(), ImportError>{
         let posts = match api.get_posts(None, None, None, None, None, Some(slug.to_string()), None, None).await{
             Ok(posts) => posts,
             Err(e) => return Err(ImportError::WordPressApiError(e))
@@ -310,13 +310,13 @@ impl ImportProcessor{
         }
 
 
-        let section = SectionV2 {
+        let section = SectionV3 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV2 {
+            metadata: SectionMetadataV3 {
                 title: post.title.rendered.clone(),
                 toc_title_override: None,
                 subtitle,
@@ -325,7 +325,7 @@ impl ImportProcessor{
                 editors: vec![],
                 web_url: Some(post.link.clone()),
                 identifiers,
-                published: Some(post.date),
+                published: Some(post.date.date()),
                 last_changed: Some(post.modified),
                 lang: None,
             },
@@ -334,7 +334,7 @@ impl ImportProcessor{
         self.import_html_from_wp(section, post.content.rendered.clone(), project, endnotes, shift_headings_up, convert_links).await
     }
 
-    async fn convert_file(&self, file_path: &str, content_type: ContentType, project: Arc<RwLock<ProjectDataV4>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn convert_file(&self, file_path: &str, content_type: ContentType, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool) -> Result<(), ImportError>{
         let mut file = match tokio::fs::File::open(file_path).await{
             Ok(file) => file,
             Err(e) => {
@@ -412,7 +412,7 @@ impl ImportProcessor{
             }
     }
 
-    async fn import_html_from_wp(&self, mut section: SectionV2, input: String, project_data: Arc<RwLock<ProjectDataV4>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
+    async fn import_html_from_wp(&self, mut section: SectionV3, input: String, project_data: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -623,12 +623,12 @@ impl ImportProcessor{
             }
         }
 
-        project_data.write().unwrap().sections.push(SectionOrTocV2::Section(section));
+        project_data.write().unwrap().sections.push(SectionOrTocV3::Section(section));
         Ok(())
 
     }
 
-    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectDataV4>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectDataV5>>, endnotes: bool) -> Result<(), ImportError>{
         let dom = match Dom::parse(&input){
             Ok(dom) => dom,
             Err(e) => {
@@ -640,13 +640,13 @@ impl ImportProcessor{
             return Err(ImportError::HtmlConversionFailed)
         } //TODO support a full html document
         
-        let mut section = SectionV2 {
+        let mut section = SectionV3 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV2 {
+            metadata: SectionMetadataV3 {
                 title: "Imported Section".to_string(),
                 toc_title_override: None,
                 subtitle: None,
@@ -856,13 +856,13 @@ impl ImportProcessor{
             }
         }
 
-        project_data.write().unwrap().sections.push(SectionOrTocV2::Section(section));
+        project_data.write().unwrap().sections.push(SectionOrTocV3::Section(section));
         Ok(())
     }
 
     //TODO: maybe also copy classes and ids from the html
     #[async_recursion]
-    async fn dom_to_html(&self, ele: html_parser::Element, footnotes: Option<&HashMap<String, String>>, endnotes: bool, convert_links: bool, project_data: Arc<RwLock<ProjectDataV4>>) -> String{
+    async fn dom_to_html(&self, ele: html_parser::Element, footnotes: Option<&HashMap<String, String>>, endnotes: bool, convert_links: bool, project_data: Arc<RwLock<ProjectDataV5>>) -> String{
         let mut html = String::new();
         for node in ele.children{
             match node{

@@ -1,26 +1,26 @@
 use std::sync::Arc;
 use bincode::{Decode, Encode};
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 use rocket::serde::{Deserialize, Serialize};
 use rocket::serde::json::Json;
 use rocket::State;
 use vb_exchange::projects::{Identifier, Language, Person};
 use crate::data_storage::{DataStorage, ProjectStorage};
 use crate::projects::api::{ApiError, ApiResult, Patch};
-use crate::projects::{NewContentBlock, SectionMetadataV2, SectionV2};
+use crate::projects::{NewContentBlock, SectionMetadataV3, SectionV3};
 use crate::projects::api::ApiError::InternalServerError;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::utils::dedup::dedup_vec;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`SectionV2`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`SectionV3`] with optional expansion of sub_sections and some metadata fields
 pub struct APISectionResult{
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Option<Vec<SectionV2>>,
+    pub sub_sections: Option<Vec<SectionV3>>,
     // Holds all content blocks
     pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
@@ -30,7 +30,7 @@ pub struct APISectionResult{
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API version for [`SectionMetadataV2`] with optional expansion of authors and editors
+/// API version for [`SectionMetadataV3`] with optional expansion of authors and editors
 pub struct APISectionMetadataResult{
     pub title: String,
     pub toc_title_override: Option<String>,
@@ -42,7 +42,7 @@ pub struct APISectionMetadataResult{
     pub editors_expanded: Option<Vec<Person>>,
     pub web_url: Option<String>,
     pub identifiers: Vec<Identifier>,
-    pub published: Option<NaiveDateTime>,
+    pub published: Option<NaiveDate>,
     pub last_changed: Option<NaiveDateTime>,
     pub lang: Option<Language>,
 }
@@ -344,7 +344,7 @@ pub struct PatchSectionMetadata {
     pub identifiers: Option<Vec<Identifier>>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     #[bincode(with_serde)]
-    pub published: Option<Option<NaiveDateTime>>,
+    pub published: Option<Option<String>>,
     #[bincode(with_serde)]
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     pub last_changed: Option<Option<NaiveDateTime>>,
@@ -352,8 +352,8 @@ pub struct PatchSectionMetadata {
     pub lang: Option<Option<Language>>,
 }
 
-impl Patch<PatchSectionMetadata, SectionMetadataV2> for SectionMetadataV2 {
-    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV2 {
+impl Patch<PatchSectionMetadata, SectionMetadataV3> for SectionMetadataV3 {
+    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV3 {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title{
@@ -389,7 +389,17 @@ impl Patch<PatchSectionMetadata, SectionMetadataV2> for SectionMetadataV2 {
         }
 
         if let Some(published) = patch.published{
-            new_metadata.published = published;
+            match published{
+                Some(published) => {
+                    match NaiveDate::parse_from_str(&published, "%Y-%m-%d"){
+                        Ok(published) => new_metadata.published = Some(published),
+                        Err(e) => {
+                            println!("Couldn't parse published date: {}", e);
+                        }
+                    }
+                },
+                None => new_metadata.published = None
+            }
         }
 
         if let Some(last_changed) = patch.last_changed{
@@ -405,8 +415,8 @@ impl Patch<PatchSectionMetadata, SectionMetadataV2> for SectionMetadataV2 {
 }
 
 // Implement patch for PatchSection
-impl Patch<PatchSection, SectionV2> for SectionV2 {
-    fn patch(&mut self, patch: PatchSection) -> SectionV2 {
+impl Patch<PatchSection, SectionV3> for SectionV3 {
+    fn patch(&mut self, patch: PatchSection) -> SectionV3 {
         let mut new_section = self.clone();
 
         if let Some(id) = patch.id{
