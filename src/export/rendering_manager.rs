@@ -65,7 +65,7 @@ impl RenderingManager{
 
                 let rendering_requests_len = rendering_manager_cpy.rendering_queue.read().unwrap().len();
                 if rendering_requests_len > 0 && rendering_manager_cpy.settings.max_connections_to_rendering_server > running_threads.load(std::sync::atomic::Ordering::Relaxed){
-                    println!("Starting new thread to prepare & send rendering data");
+                    debug!("Starting new thread to prepare & send rendering data");
                     {
                         let mut rendering_queue = rendering_manager_cpy.rendering_queue.write().unwrap();
 
@@ -75,7 +75,7 @@ impl RenderingManager{
                             None => continue
                         };
 
-                        println!("Found a new rendering request.");
+                        debug!("Found a new rendering request.");
 
                         // Update status
                         if let Some(status) = rendering_manager_cpy.requests_archive.write().unwrap().get_mut(&request.request_id){
@@ -94,7 +94,7 @@ impl RenderingManager{
                             match Self::prepare_and_send_to_server(Arc::clone(&rendering_manager_cpy2), request).await{
                                 Ok(_) => {}
                                 Err(e) => {
-                                    eprintln!("Couldn't render project: {:?}", e);
+                                    error!("Couldn't render project: {:?}", e);
                                     // Update status:
                                     if let Some(status) = rendering_manager_cpy2.requests_archive.write().unwrap().get_mut(&request_id_cpy){
                                         *status = RenderingStatus::Failed(e)
@@ -166,7 +166,7 @@ impl RenderingManager{
         // Send to server
         let num_of_rendering_servers = rendering_manager.settings.export_servers.len();
         if num_of_rendering_servers == 0{
-            eprintln!("Error: No rendering servers configured.");
+            error!("Error: No rendering servers configured.");
             return Err(RenderingError::Other("No rendering server configured".to_string()))
         }
 
@@ -180,13 +180,13 @@ impl RenderingManager{
 
         rendering_manager.next_rendering_server_to_use.fetch_add(1, Ordering::SeqCst);
 
-        println!("Using rendering server no {}", next_rendering_server);
+        debug!("Using rendering server no {}", next_rendering_server);
 
         let tls_stream;
         loop {
             let export_server_data = rendering_manager.settings.export_servers.get(next_rendering_server as usize).unwrap();
 
-            println!("Connection to Server.");
+            debug!("Connection to Server.");
             match Self::connect_to_server(rendering_manager.clone(), &export_server_data).await {
                 Ok(res) => {
                     tls_stream = res;
@@ -195,7 +195,7 @@ impl RenderingManager{
                 Err(e) => {
                     match e{
                         RenderingError::ConnectionToRenderingServerFailed => {
-                            eprintln!("Warning: Couldn't connect to rendering server no. {}. Trying next available.", next_rendering_server+1);
+                            error!("Warning: Couldn't connect to rendering server no. {}. Trying next available.", next_rendering_server+1);
                             // Connection failed, try another server.
 
                             next_rendering_server = next_rendering_server+1;
@@ -207,7 +207,7 @@ impl RenderingManager{
 
                             // Fail after we tried all other remaining servers
                             if next_rendering_server == first_tried_server{
-                                eprintln!("Couldn't find any working rendering servers.");
+                                error!("Couldn't find any working rendering servers.");
                                 return Err(e);
                             }
                         },
@@ -219,8 +219,7 @@ impl RenderingManager{
             }
         }
 
-        println!("Connected, sending request to server.");
-        println!("Request: {}", serde_json::to_string(&request).unwrap());
+        debug!("Connected, sending request to server.");
 
         Self::send_to_server(tls_stream, request, rendering_manager.clone()).await?;
         Ok(())
@@ -231,7 +230,7 @@ impl RenderingManager{
         let stream = match TcpStream::connect(format!("{}:{}", export_server.hostname, export_server.port)).await{
             Ok(res) => res,
             Err(e) => {
-                eprintln!("Couldn't connect to export server: {}", e);
+                error!("Couldn't connect to export server: {}", e);
                 return Err(RenderingError::ConnectionToRenderingServerFailed)
             }
         };
@@ -240,7 +239,7 @@ impl RenderingManager{
         match connector.connect(domain, stream).await{
             Ok(res) => Ok(res.into()),
             Err(e) => {
-                eprintln!("Couldn't initiate tls stream: {}", e);
+                error!("Couldn't initiate tls stream: {}", e);
                 return Err(RenderingError::ConnectionToRenderingServerFailed)
             }
         }
@@ -250,7 +249,7 @@ impl RenderingManager{
         if let Err(_) = send_message(&mut tls_stream, Message::RenderingRequest(request)).await{
             return Err(RenderingError::CommunicationError)
         }
-        println!("Request sent to server.");
+        debug!("Request sent to server.");
 
         // Update status
         if let Some(status) = rendering_manager.requests_archive.write().unwrap().get_mut(&request_id){
@@ -259,11 +258,11 @@ impl RenderingManager{
         // From here we get new status updates from the rendering server
 
         loop {
-            println!("Waiting for response from server.");
+            debug!("Waiting for response from server.");
             match read_message(&mut tls_stream).await {
                 Ok(msg) => match msg {
                     Message::TemplateDataRequest(req) => {
-                        println!("Template Data requested: Template {} with version {}.", req.template_id, req.template_version_id);
+                        debug!("Template Data requested: Template {} with version {}.", req.template_id, req.template_version_id);
                         // Update status
                         if let Some(status) = rendering_manager.requests_archive.write().unwrap().get_mut(&request_id){
                             *status = RenderingStatus::TransmittingTemplate
@@ -272,14 +271,14 @@ impl RenderingManager{
                         let template_files = match TemplateContents::from_path(PathBuf::from(format!("data/templates/{}/", req.template_id))).await{
                             Ok(res) => res,
                             Err(e) => {
-                                eprintln!("Couldn't package template contents: {}", e);
+                                error!("Couldn't package template contents: {}", e);
                                 return Err(RenderingError::TemplateNotFound)
                             }
                         };
 
                         let export_formats : HashMap<String, ExportFormat> = match rendering_manager.data_storage.data.read().unwrap().templates.get(&req.template_id){
                             None => {
-                                eprintln!("Couldn't find template {} requested from rendering server.", req.template_id);
+                                error!("Couldn't find template {} requested from rendering server.", req.template_id);
                                 return Err(RenderingError::TemplateNotFound)
                             }
                             Some(template) => {
@@ -299,7 +298,7 @@ impl RenderingManager{
                         }
                     },
                     Message::CommunicationError(err) => {
-                        eprintln!("Communication error: {:?}", err);
+                        error!("Communication error: {:?}", err);
                         return Err(RenderingError::CommunicationError)
                     },
                     Message::RenderingRequestStatus(status) => {
@@ -308,7 +307,7 @@ impl RenderingManager{
                                 // Finished, update status and save files to file system, generate zip if necessary
                                 let res_dir = PathBuf::from(format!("data/temp/{}", uuid::Uuid::new_v4()));
                                 if let Err(e) = tokio::fs::create_dir(&res_dir).await{
-                                    eprintln!("Couldn't create dir: {}", e);
+                                    error!("Couldn't create dir: {}", e);
                                 }
 
 
@@ -318,7 +317,7 @@ impl RenderingManager{
                                     for file in res.files.clone(){
                                         let file_path = res_dir.join(file.name);
                                         if let Err(e) = tokio::fs::write(&file_path, file.content).await{
-                                            eprintln!("Couldn't save rendering result to file: {}", e);
+                                            error!("Couldn't save rendering result to file: {}", e);
                                             return Err(RenderingError::Other("Couldn't save rendering output.".to_string()))
                                         }
                                     }
@@ -334,13 +333,13 @@ impl RenderingManager{
                                                     rendering_manager.requests_archive.write().unwrap().insert(request_id.clone(), RenderingStatus::SavedOnLocal(res_path, res_dir));
                                                 },
                                                 Err(e) => {
-                                                    eprintln!("IO error creating result zip: {}", e);
+                                                    error!("IO error creating result zip: {}", e);
                                                     rendering_manager.requests_archive.write().unwrap().insert(request_id.clone(), RenderingStatus::Failed(RenderingError::Other("IO Error".to_string())));
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("Join error: {}", e);
+                                            error!("Join error: {}", e);
                                             rendering_manager.requests_archive.write().unwrap().insert(request_id.clone(), RenderingStatus::Failed(RenderingError::Other("Join Error".to_string())));
                                         }
                                     }
@@ -348,7 +347,7 @@ impl RenderingManager{
                                     if let Some(file) = res.files.pop() {
                                         let file_path = res_dir.join(file.name);
                                         if let Err(e) = tokio::fs::write(&file_path, file.content).await{
-                                            eprintln!("Couldn't save rendering result to file: {}", e);
+                                            error!("Couldn't save rendering result to file: {}", e);
                                             return Err(RenderingError::Other("Couldn't save rendering output.".to_string()))
                                         }
                                         rendering_manager.requests_archive.write().unwrap().insert(request_id.clone(), RenderingStatus::SavedOnLocal(file_path, res_dir));
