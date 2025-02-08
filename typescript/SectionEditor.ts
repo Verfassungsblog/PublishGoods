@@ -206,6 +206,11 @@ let metadata_change_handler = async function () {
         metadata.lang = lang;
     }
 
+    let published = (document.getElementById("section_metadata_published") as HTMLInputElement)?.value || null;
+    if (published !== section_data.metadata.published) {
+        metadata.published = published;
+    }
+
     let title = document.getElementById("section_metadata_title")?.innerText || null;
     if (title !== section_data.metadata.title) {
         metadata.title = title;

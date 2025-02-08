@@ -1576,4 +1576,8 @@
         <label for="project_metadata_publisher">Publisher</label>
         <input type="text" class="form-control form-control-sm project_metadata_field" id="project_metadata_publisher" value="{{metadata.publisher}}">
     </div>
+    <div class="form-group">
+        <label for="project_metadata_published">Publish Date</label>
+        <input type="date" class="form-control form-control-sm project_metadata_field" id="project_metadata_published" value="{{metadata.published}}">
+    </div>
 </div>

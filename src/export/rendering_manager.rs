@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::{TlsConnector, TlsStream};
-use crate::data_storage::{DataStorage, ProjectDataV4, ProjectStorage};
+use crate::data_storage::{DataStorage, ProjectDataV5, ProjectStorage};
 use crate::settings::{ExportServer, Settings};
 use crate::utils::csl::CslData;
 use vb_exchange::{RenderingStatus, RenderingRequest, RenderingError, send_message, Message, read_message, CommunicationError, TemplateDataResult, TemplateContents, FilesOnMemoryOrHarddrive};
@@ -114,7 +114,7 @@ impl RenderingManager{
         rendering_manager.clone()
     }
     async fn prepare_and_send_to_server(rendering_manager: Arc<RenderingManager>, request: LocalRenderingRequest) -> Result<(), RenderingError>{
-        let project_data: ProjectDataV4 = match rendering_manager.project_storage.get_project(&request.project_id, &rendering_manager.settings).await{
+        let project_data: ProjectDataV5 = match rendering_manager.project_storage.get_project(&request.project_id, &rendering_manager.settings).await{
             Ok(project) => {
                 project.read().unwrap().clone()
             },

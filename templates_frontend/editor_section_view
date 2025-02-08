@@ -72,6 +72,8 @@
         <option value="DE" {{#if metadata.langval.DE}}selected{{/if}}>German</option>
         <option value="EN" {{#if metadata.langval.EN}}selected{{/if}}>English</option>
     </select>
+    <label>Publish Date</label>
+    <input type="date" class="form-control form-control-sm quickchange" value="{{metadata.published}}" id="section_metadata_published">
     <label>Danger Zone: Delete Section & all Contents</label><br>
     <button class="btn btn-sm btn-danger" id="section_delete">Delete Section</button>
     <div class="section_metadata_panel_ctl">

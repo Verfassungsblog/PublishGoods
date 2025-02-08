@@ -995,7 +995,7 @@ namespace Editor{
             data["title"] = (<HTMLInputElement>document.getElementById("project_metadata_title")).value || null;
             data["subtitle"] = (<HTMLInputElement>document.getElementById("project_metadata_subtitle")).value || null;
             data["web_url"] = (<HTMLInputElement>document.getElementById("project_metadata_web_url")).value || null;
-            data["published"] = null;
+            data["published"] = (<HTMLInputElement>document.getElementById("project_metadata_published")).value || null;
             data["languages"] = null;
 
             // Check which languages are checked
