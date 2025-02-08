@@ -51,11 +51,6 @@ pub async fn prepare_project(project_data: ProjectDataV4, data_storage: Arc<Data
         editors.push(person);
     }
 
-    let published = match metadata.published{
-        Some(date) => Some(date.format("%d.%m.%Y").to_string()),
-        None => None
-    };
-
     let license = if let Some(license) = metadata.license{
         Some(PreparedLicense::from(license))
     }else{
@@ -87,6 +82,11 @@ pub async fn prepare_project(project_data: ProjectDataV4, data_storage: Arc<Data
     // Sort authors and editors by last name
     authors.sort_by(|a, b| a.last_names.cmp(&b.last_names));
     editors.sort_by(|a, b| a.last_names.cmp(&b.last_names));
+
+    let published = match metadata.published{
+        Some(date) => Some(date.into()),
+        None => None
+    };
 
     let metadata = PreparedMetadata{
         title: metadata.title,
@@ -196,7 +196,7 @@ pub fn render_citations(project: &ProjectDataV4, csl_data: Arc<CslData>) -> Hash
 #[async_recursion]
 pub async fn render_section(section: SectionV2, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid) -> PreparedSection{
     let published = match section.metadata.published{
-        Some(date) => Some(date.format("%d.%m.%Y").to_string()),
+        Some(date) => Some(date.into()),
         None => None
     };
 
