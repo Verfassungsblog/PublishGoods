@@ -2145,11 +2145,23 @@ impl From<MyDate> for Date {
     fn from(value: MyDate) -> Self {
         // Convert 1-based to 0-based
         let month = match value.month {
-            Some(month) => Some(month-1),
+            Some(month) => {
+                if month == 0 {
+                    Some(month)
+                } else {
+                    Some(month-1)
+                }
+            },
             None => None,
         };
         let day = match value.day {
-            Some(day) => Some(day-1),
+            Some(day) => {
+                if day == 0 {
+                    Some(day)
+                } else {
+                    Some(day - 1)
+                }
+            },
             None => None,
         };
 
