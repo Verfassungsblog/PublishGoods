@@ -14,7 +14,7 @@ vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchan
 #vb-exchange = { path = "../Verfassungsbooks-Exchange-Lib" } <-- use this if testing locally
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
-config = "0.14"
+config = "0.15"
 serde = { version = "1.0.197", features = ["rc", "derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 rand = "0.8.5"
