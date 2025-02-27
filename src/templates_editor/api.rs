@@ -215,11 +215,9 @@ mod tests {
         println!("Filename: {}", filename);
 
         let mut path;
+        let mut i = 0;
 
         loop {
-            let mut i = 0;
-
-
             path = if i == 0 {
                 format!("data/templates/{}/assets/{}", template_id, filename)
             } else {
@@ -880,10 +878,9 @@ mod tests {
         let filename = sanitize_path(filename.dangerous_unsafe_unsanitized_raw().as_str());
 
         let mut path;
+        let mut i = 0;
 
         loop {
-            let mut i = 0;
-
 
             path = if i == 0 {
                 format!("data/templates/{}/formats/{}/{}", template_id, slug, filename)
