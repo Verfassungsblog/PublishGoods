@@ -284,7 +284,7 @@ impl DataStorage{
         let cpy = self.data.read().unwrap().clone();
         let path = format!("{}/data.2.bincode", settings.data_path);
 
-        match rocket::tokio::task::spawn_blocking(move || {
+        match tokio::task::spawn_blocking(move || {
             let mut file = match std::fs::File::create(path) {
                 Ok(file) => file,
                 Err(e) => {

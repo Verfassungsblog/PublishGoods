@@ -12,8 +12,6 @@ pub enum SectionOrTocV1 {
     Toc,
 }
 
-
-
 impl SectionOrTocV1 {
     pub fn into_section(self) -> Option<SectionV1> {
         match self {

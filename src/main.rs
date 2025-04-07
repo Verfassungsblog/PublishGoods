@@ -49,7 +49,6 @@ async fn rocket() -> _ {
     debug!("Initialized Logger, starting application.");
 
     let settings = Settings::new().unwrap();
-    let settings_cpy = settings.clone();
 
     //Check if data directory exists, if not create it
     if !std::path::Path::new(&format!("{}/projects", settings.data_path)).exists() {
@@ -108,7 +107,7 @@ async fn rocket() -> _ {
     };
 
     info!("Loading Citation Locale Files & Styles...");
-    let csl_data = Arc::new(CslData::new(&settings_cpy));
+    let csl_data = Arc::new(CslData::new(&settings));
 
     info!("Starting auto-save worker...");
     // Start seperate thread for auto-saving
