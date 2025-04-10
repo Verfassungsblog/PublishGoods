@@ -16,7 +16,7 @@
     <div class="card-body">
         <label>Name*</label>
         <input id="{{id}}_name"  class="form-control export_step_raw_name autosave" type="text" placeholder="e.g. HTML Rendering" value="{{name}}">
-        <label>Main Template File* - Use .html.hbs as file extension!</label>
+        <label>Main Template File* - Use .hbs.html as file extension!</label>
         <input id="{{id}}_entry_point" class="form-control export_step_raw_entry_point autosave" type="text" placeholder="e.g. main.hbs.html" value="{{data.Raw.entry_point}}">
         <label>Output File*</label>
         <input id="{{id}}_output_file" class="form-control export_step_raw_output_file autosave" type="text" placeholder="e.g. main.html" value="{{data.Raw.output_file}}">

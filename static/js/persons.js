@@ -60,6 +60,12 @@ var Tools;
         console.log("Navbar is null");
     }
 });
+// Register Handlebars helpers
+// @ts-ignore
+Handlebars.registerHelper("is", function (arg1, arg2, options) {
+    // @ts-ignore
+    return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
+});
 ///<reference path="./General.ts"/>
 var Persons;
 ///<reference path="./General.ts"/>
