@@ -51,3 +51,10 @@ document.getElementById("show_mobile_navbar")?.addEventListener("click", functio
         console.log("Navbar is null")
     }
 });
+
+// Register Handlebars helpers
+// @ts-ignore
+Handlebars.registerHelper("is", function(arg1: unknown, arg2: unknown, options: unknown){
+    // @ts-ignore
+    return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
+});

@@ -258,7 +258,8 @@ export async function send_import_from_wordpress(data: any) {
 export type ExportStepData =
     | { Raw: RawExportStep }
     | { Vivliostyle: VivliostyleExportStep }
-    | { Pandoc: PandocExportStep };
+    | { Pandoc: PandocExportStep }
+    | { Weasyprint: WeasyprintExportStep};
 
 export interface ExportStep {
     id: string;
@@ -276,6 +277,25 @@ export interface VivliostyleExportStep {
     press_ready: boolean;
     input_file: string;
     output_file: string;
+}
+
+export interface WeasyprintExportStep{
+    input_file: string;
+    output_file: string;
+    pdf_variant: PdfVariant;
+}
+
+export enum PdfVariant{
+    PDF = "PDF",
+    PDFA1B = "PDFA1B",
+    PDFA2B = "PDFA2B",
+    PDFA3B = "PDFA3B",
+    PDFA4B = "PDFA4B",
+    PDFA2U = "PDFA2U",
+    PDFA3U = "PDFA3U",
+    PDFA4U = "PDFA4U",
+    PDFUA1 = "PDFUA1",
+    DEBUG = "DEBUG",
 }
 
 export interface PandocExportStep {
