@@ -33,7 +33,7 @@ struct WordpressImport{
 
 #[post("/api/import/upload", data = "<upload>")]
 pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Session, settings: &State<Settings>, _project_storage: &State<Arc<ProjectStorage>>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<uuid::Uuid>>{
-    debug!("Uploading files to project {}", upload.project_id);
+    debug!("Uploading file for import for project {}", upload.project_id);
 
     let mut file_paths: VecDeque<(String, ContentType)> = VecDeque::new();
 

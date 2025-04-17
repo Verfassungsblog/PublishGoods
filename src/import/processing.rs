@@ -1,7 +1,7 @@
 use vb_exchange::projects::BlockType;
 use async_recursion::async_recursion;
 use std::collections::{HashMap, VecDeque};
-
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use hayagriva::{io};
 
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::data_storage::{BibEntryV2, ProjectDataV5, ProjectStorage};
 use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
+use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::wordpress::{WordpressAPI, WordpressAPIError};
 use crate::projects::{BlockData, NewContentBlock, SectionMetadataV3, SectionOrTocV2, SectionOrTocV3, SectionV3};
@@ -155,6 +156,7 @@ impl ImportProcessor{
                         break;
                     }
                 };
+                debug!("Processing file: {}", file);
 
                 let project_id = job.read().unwrap().project_id.clone();
                 let endnotes = job.read().unwrap().convert_footnotes_to_endnotes;
@@ -345,41 +347,41 @@ impl ImportProcessor{
 
         let mut file_content = String::new();
         let mut marks: Vec<String> = vec![];
-        if let Err(e) = file.read_to_string(&mut file_content).await{
-            warn!("Error reading file to import: {}", e);
-            return Err(ImportError::InvalidFile);
-        };
 
         match content_type.to_string().as_str() {
                     "text/x-tex" | "application/x-tex" => {
                         debug!("Processing LaTeX file");
+                        if let Err(e) = file.read_to_string(&mut file_content).await{
+                            warn!("Couldn't read file to import: {}", e);
+                            return Err(ImportError::InvalidFile)
+                        }
                         (file_content, marks) = preprocess::latex(file_content);
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Latex)?;
+                        file_content = self.convert_with_pandoc(InputKind::Pipe(file_content), InputFormat::Latex).await?;
                         file_content = postprocess::latex(file_content, marks);
                     },
                     "application/vnd.oasis.opendocument.text" => {
                         debug!("Processing ODT file");
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Other("ODT".to_string()))?;
+                        file_content = self.convert_with_pandoc(InputKind::Files(vec![PathBuf::from(file_path)]), InputFormat::Other("ODT".to_string())).await?;
                     },
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
                         debug!("Processing DOCX file");
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Docx)?;
+                        file_content = self.convert_with_pandoc(InputKind::Files(vec![PathBuf::from(file_path)]), InputFormat::Docx).await?;
                     },
                     "application/msword" => {
                         debug!("Processing DOC file");
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Other("DOC".to_string()))?;
+                        file_content = self.convert_with_pandoc(InputKind::Files(vec![PathBuf::from(file_path)]), InputFormat::Other("DOC".to_string())).await?;
                     },
                     "application/epub+zip" => {
                         debug!("Processing EPUB file");
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Epub)?;
+                        file_content = self.convert_with_pandoc(InputKind::Files(vec![PathBuf::from(file_path)]), InputFormat::Epub).await?;
                     },
                     "application/rtf" => {
                         debug!("Processing RTF file");
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Rtf)?;
+                        file_content = self.convert_with_pandoc(InputKind::Files(vec![PathBuf::from(file_path)]), InputFormat::Rtf).await?;
                     },
                     "text/markdown" | "text/x-markdown" => {
                         debug!("Processing Markdown file");
-                        file_content = self.convert_with_pandoc(file_content, InputFormat::Markdown)?;
+                        file_content = self.convert_with_pandoc(InputKind::Files(vec![PathBuf::from(file_path)]), InputFormat::Markdown).await?;
                     },
                     _ => {
                         warn!("Unsupported file type: {}", content_type);
@@ -391,22 +393,37 @@ impl ImportProcessor{
         Ok(())
     }
 
-    fn convert_with_pandoc(&self, input: String, input_format: InputFormat) -> Result<String, ImportError>{
-           let mut pandoc = pandoc::new();
-            pandoc.set_input(InputKind::Pipe(input));
-            pandoc.set_input_format(input_format, vec![]);
-            pandoc.set_output_format(OutputFormat::Html5, vec![]);
-            pandoc.set_output(OutputKind::Pipe);
-            match pandoc.execute(){
+    async fn convert_with_pandoc(&self, input: InputKind, input_format: InputFormat) -> Result<String, ImportError>{
+           let task = spawn_blocking({
+                move || {
+                    let mut pandoc = pandoc::new();
+
+                    pandoc.set_input(input);
+                    pandoc.set_input_format(input_format, vec![]);
+                    pandoc.set_output_format(OutputFormat::Html5, vec![]);
+                    pandoc.set_output(OutputKind::Pipe);
+                    pandoc.execute()
+                }
+            }).await;
+
+            match task{
                 Ok(res) => {
-                    match res{
-                        PandocOutput::ToFile(_) => Err(ImportError::PandocError),
-                        PandocOutput::ToBuffer(res) => Ok(res),
-                        PandocOutput::ToBufferRaw(_) => Err(ImportError::PandocError)
+                    match res {
+                        Ok(res) => {
+                            match res{
+                                PandocOutput::ToFile(_) => Err(ImportError::PandocError),
+                                PandocOutput::ToBuffer(res) => Ok(res),
+                                PandocOutput::ToBufferRaw(_) => Err(ImportError::PandocError)
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Couldn't convert import file with pandoc: {}", e);
+                            Err(ImportError::PandocError)
+                        }
                     }
-                },
+                }
                 Err(e) => {
-                    warn!("Couldn't convert import file with pandoc: {}", e);
+                    warn!("Couldn't run pandoc: {}", e);
                     Err(ImportError::PandocError)
                 }
             }
