@@ -1,8 +1,8 @@
 // Import API functions
-import {TemplateAPI, ProjectTemplateV2, ExportStep, RawExportStep} from "./api_requests";
+import {PdfVariant, ProjectTemplateV2, TemplateAPI} from "./api_requests";
 import * as Tools from "./tools";
 
-import {EditorView, basicSetup} from "codemirror"
+import {basicSetup, EditorView} from "codemirror"
 import {html} from "@codemirror/lang-html"
 
 let typing_timer: any | null = null;
@@ -354,6 +354,9 @@ function add_new_export_step() {
     } else if (export_step_type == "vivliostyle") {
         // @ts-ignore
         export_step_list.innerHTML += Handlebars.templates.template_editor_export_format_vivliostyle();
+    }else if (export_step_type == "weasyprint") {
+        // @ts-ignore
+        export_step_list.innerHTML += Handlebars.templates.template_editor_export_format_weasyprint();
     }
     add_export_step_listeners();
 }
@@ -529,6 +532,46 @@ async function save_export_steps() {
                 requests.push(template_api.create_export_step(template_data.id, current_export_format, export_step_data))
             }
 
+        }else if (type === "weasyprint") {
+            let name = (export_step.getElementsByClassName("export_step_weasyprint_name")[0] as HTMLInputElement).value || null;
+            let input_file = (export_step.getElementsByClassName("export_step_weasyprint_input_file")[0] as HTMLInputElement).value || null;
+            let output_file = (export_step.getElementsByClassName("export_step_weasyprint_output_file")[0] as HTMLInputElement).value || null;
+            let pdf_variant = (export_step.getElementsByClassName("export_step_weasyprint_pdf_variant")[0] as HTMLInputElement).value || null;
+
+            //Check if all required filled out
+            if (!name || !input_file || !output_file) {
+                console.log("Export step missing fields, not submitting (yet)");
+
+                if(id){ //If we are updating an entry, notify user:
+                    Tools.show_alert("Export Step can't be saved until you fill out all required fields!", "warning")
+                }
+
+                return;
+            }
+
+            console.log("PDF Variant: " + pdf_variant);
+            // Match pdf_variant
+            let parsed_pdf_variant = Object.values(PdfVariant).includes(pdf_variant as PdfVariant) ? (pdf_variant as PdfVariant) : PdfVariant.PDF;
+
+            console.log("Parsed PDF Variant: " + parsed_pdf_variant);
+
+            let export_step_data = {
+                id,
+                name,
+                data: {
+                    "Weasyprint": {
+                        input_file,
+                        output_file,
+                        pdf_variant: parsed_pdf_variant
+                    }
+                },
+                files_to_keep: [output_file]
+            }
+            if(id){
+                requests.push(template_api.update_export_step(template_data.id, current_export_format, export_step_data))
+            }else {
+                requests.push(template_api.create_export_step(template_data.id, current_export_format, export_step_data))
+            }
         }
 
         try {

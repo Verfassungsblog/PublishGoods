@@ -76,6 +76,9 @@
                     {{#if data.Pandoc}}
                     {{> template_editor_export_format_pandoc}}
                     {{/if}}
+                    {{#if data.Weasyprint}}
+                    {{> template_editor_export_format_weasyprint}}
+                    {{/if}}
                 {{/each}}
             </div>
             <hr>
@@ -85,6 +88,7 @@
                     <option value="raw">Raw Export Step (render template)</option>
                     <option value="pandoc">Pandoc Conversion</option>
                     <option value="vivliostyle">Vivliostyle (PDF generation)</option>
+                    <option value="weasyprint">Weasyprint (PDF generation)</option>
                 </select>
                 <button type="button" class="btn btn-success" id="add_export_step_btn">Add</button>
             </div>
