@@ -17,12 +17,22 @@ let project_api = ProjectAPI();
 let export_api = ExportAPI();
 let checker_timer: string | number | NodeJS.Timeout = null;
 
-export async function add_listeners(){
-    // @ts-ignore
-    console.log("Test! Project id:"+globalThis.project_id);
+let close_overlay = function(){
+    let overlay_wrapper = document.getElementById("overlay-wrapper");
+    let overlay_content = document.getElementById("inner_overlay");
+    overlay_wrapper.classList.add("hide");
+    overlay_content.innerHTML = "";
 
+}
+export async function add_listeners(){
+    document.getElementById("overlay_close_btn").addEventListener("click", close_overlay);
     document.getElementById("editor_render_project_btn").addEventListener("click", preview_project_listener);
     document.getElementById("editor_export_project_btn").addEventListener("click", export_project_listener);
+    addEventListener("keydown", function(e){
+        if(e.key === "Escape" && !document.getElementById("overlay-wrapper").classList.contains("hide")){
+            close_overlay();
+        }
+    });
 }
 
 async function preview_project_listener(){
