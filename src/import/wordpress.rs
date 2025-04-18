@@ -78,7 +78,7 @@ impl WordpressAPI {
         if let Some(categories_exclude) = categories_exclude {
             query.push(("categories_exclude".to_string(), categories_exclude.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
         }
-        println!("Query is: {:?}", query);
+        debug!("Query is: {:?}", query);
         let request = request.query(&query);
         match request.send().await{
             Ok(response) => {
@@ -88,14 +88,14 @@ impl WordpressAPI {
                 match response.json::<Vec<Post>>().await {
                     Ok(posts) => Ok(posts),
                     Err(e) => {
-                        eprintln!("Error parsing posts: {}", e);
+                        error!("Error parsing posts: {}", e);
                         Err(WordpressAPIError::SerdeParsingError)
                     }
                 }
             },
             Err(e) => {
-                eprintln!("Error fetching posts: {}", e);
-                return Err(WordpressAPIError::ReqwestError);
+                error!("Error fetching posts: {}", e);
+                Err(WordpressAPIError::ReqwestError)
             }
         }
     }
