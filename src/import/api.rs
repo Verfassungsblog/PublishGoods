@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::data_storage::ProjectStorage;
 use crate::import::processing::{ImportJob, ImportProcessor, ImportStatus, ImportStatusPoll};
+use crate::import::wordpress::{Category, WordpressAPI, WordpressAPIError};
 use crate::projects::api::{ApiError, ApiResult};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
@@ -106,6 +107,36 @@ pub async fn import_from_wordpress(job: Json<WordpressImport>, _session: Session
 
     import_processor.job_queue.write().unwrap().push_back(import_job);
     ApiResult::new_data(id)
+}
+
+/// Get wordpress categories
+#[get("/api/import/wordpress/categories?<base_url>&<page>&<per_page>")]
+pub async fn get_wordpress_categories(base_url: String, page: Option<usize>, per_page: Option<usize>, _session: Session, _settings: &State<Settings>) -> Json<ApiResult<Vec<Category>>>{
+    let wordpress_api = WordpressAPI::new(base_url.clone());
+
+    let categories = match wordpress_api.get_categories(page, per_page, None, None, None, None, Some(true), None, None).await{
+        Ok(categories) => categories,
+        Err(e) => {
+            return match e{
+                WordpressAPIError::SerdeParsingError => {
+                    ApiResult::new_error(ApiError::InternalServerError)
+                },
+                WordpressAPIError::ReqwestError => {
+                    ApiResult::new_error(ApiError::InternalServerError)
+                },
+                WordpressAPIError::InvalidURL => {
+                    info!("Invalid url for wordpress api: {}", base_url);
+                    ApiResult::new_error(ApiError::BadRequest("Invalid URL".to_string()))
+                },
+                WordpressAPIError::NotFound => {
+                    info!("No categories found for wordpress api: {}", base_url);
+                    ApiResult::new_data(vec![])
+                }
+            }
+        }
+    };
+
+    ApiResult::new_data(categories)
 }
 
 #[get("/api/import/status/<id>")]
