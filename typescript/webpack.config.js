@@ -12,7 +12,7 @@ module.exports = {
         export: './Export.ts',
         section_editor: './SectionEditor.ts'
     },
-    devtool: 'inline-source-map',
+    devtool: false,
     module: {
         rules: [
             {
@@ -28,5 +28,8 @@ module.exports = {
     output: {
         filename: '[name].js',
         path: path.resolve(__dirname, '../static/js'),
+    },
+    optimization: {
+        usedExports: true,
     },
 };
