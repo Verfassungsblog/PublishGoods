@@ -10,7 +10,7 @@ use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
-use crate::data_storage::{BibEntryV2, ProjectDataV5, ProjectStorage};
+use crate::data_storage::{BibEntryV2, ProjectDataV6, ProjectStorage};
 use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
@@ -219,7 +219,7 @@ impl ImportProcessor{
         }
     }
 
-    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
+    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectDataV6>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
         let url = if url.ends_with("/"){
             url[..url.len()-1].to_string()
         }else{
@@ -271,7 +271,7 @@ impl ImportProcessor{
         Ok(())
     }
 
-    async fn import_single_post(&self, slug: String, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, api: &WordpressAPI) -> Result<(), ImportError>{
+    async fn import_single_post(&self, slug: String, project: Arc<RwLock<ProjectDataV6>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, api: &WordpressAPI) -> Result<(), ImportError>{
         let posts = match api.get_posts(None, None, None, None, None, Some(slug.to_string()), None, None).await{
             Ok(posts) => posts,
             Err(e) => return Err(ImportError::WordPressApiError(e))
@@ -336,7 +336,7 @@ impl ImportProcessor{
         self.import_html_from_wp(section, post.content.rendered.clone(), project, endnotes, shift_headings_up, convert_links).await
     }
 
-    async fn convert_file(&self, file_path: &str, content_type: ContentType, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn convert_file(&self, file_path: &str, content_type: ContentType, project: Arc<RwLock<ProjectDataV6>>, endnotes: bool) -> Result<(), ImportError>{
         let mut file = match tokio::fs::File::open(file_path).await{
             Ok(file) => file,
             Err(e) => {
@@ -429,7 +429,7 @@ impl ImportProcessor{
             }
     }
 
-    async fn import_html_from_wp(&self, mut section: SectionV3, input: String, project_data: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
+    async fn import_html_from_wp(&self, mut section: SectionV3, input: String, project_data: Arc<RwLock<ProjectDataV6>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -645,7 +645,7 @@ impl ImportProcessor{
 
     }
 
-    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectDataV5>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectDataV6>>, endnotes: bool) -> Result<(), ImportError>{
         let dom = match Dom::parse(&input){
             Ok(dom) => dom,
             Err(e) => {
@@ -879,7 +879,7 @@ impl ImportProcessor{
 
     //TODO: maybe also copy classes and ids from the html
     #[async_recursion]
-    async fn dom_to_html(&self, ele: html_parser::Element, footnotes: Option<&HashMap<String, String>>, endnotes: bool, convert_links: bool, project_data: Arc<RwLock<ProjectDataV5>>) -> String{
+    async fn dom_to_html(&self, ele: html_parser::Element, footnotes: Option<&HashMap<String, String>>, endnotes: bool, convert_links: bool, project_data: Arc<RwLock<ProjectDataV6>>) -> String{
         let mut html = String::new();
         for node in ele.children{
             match node{
