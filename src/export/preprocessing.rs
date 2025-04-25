@@ -15,11 +15,11 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectDataV5};
-use crate::projects::{BlockData, NewContentBlock, SectionV3, SectionOrTocV2, SectionOrTocV3};
+use crate::data_storage::{DataStorage, ProjectDataV6};
+use crate::projects::{BlockData, NewContentBlock, SectionV3, SectionOrTocV3};
 use crate::utils::csl::CslData;
 
-pub async fn prepare_project(project_data: ProjectDataV5, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
+pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata{
@@ -116,7 +116,7 @@ pub async fn prepare_project(project_data: ProjectDataV5, data_storage: Arc<Data
     })
 }
 
-pub fn render_citations(project: &ProjectDataV5, csl_data: Arc<CslData>) -> HashMap<String, String>{
+pub fn render_citations(project: &ProjectDataV6, csl_data: Arc<CslData>) -> HashMap<String, String>{
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();

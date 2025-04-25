@@ -10,7 +10,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", branch="fea-weasyprint"}
+vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", branch="fea-hyphenation-switch"}
 #vb-exchange = { path = "../Verfassungsbooks-Exchange-Lib" } <-- use this if testing locally
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
