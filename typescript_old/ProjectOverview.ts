@@ -56,8 +56,7 @@ namespace Editor{
                     for (let author of data["metadata"]["authors"]) {
                         promises.push(send_get_person_request(author));
                     }
-                    //TODO: implement sort feat
-
+                    //TODO: implement sort feature
                     Tools.start_loading_spinner();
 
                     try {
