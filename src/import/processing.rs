@@ -232,7 +232,10 @@ impl ImportProcessor{
             None => return Err(ImportError::WordPressApiError(WordpressAPIError::InvalidURL))
         };
 
-        let api = WordpressAPI::new(host.to_string());
+        let api = match WordpressAPI::new(host.to_string()){
+            Ok(api) => api,
+            Err(e) => return Err(ImportError::WordPressApiError(e))
+        };
         let path = parsed_url.path();
 
         let slug = path.split("/").last().unwrap_or("");

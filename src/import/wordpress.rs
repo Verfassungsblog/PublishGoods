@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use crate::main;
 
 /// Import from Wordpress API
 pub struct WordpressAPI{
@@ -7,6 +9,7 @@ pub struct WordpressAPI{
     password: Option<String>,
     // Timeout for API requests in milliseconds
     timeout: u64,
+    client: reqwest::Client,
 }
 
 #[derive(Debug)]
@@ -18,26 +21,28 @@ pub enum WordpressAPIError{
 }
 
 impl WordpressAPI {
-    pub fn new(base_url: String) -> Self {
-        WordpressAPI {
+    pub fn new(base_url: String) -> Result<Self, WordpressAPIError> {
+        Ok(WordpressAPI {
             base_url,
             username: None,
             password: None,
             timeout: 10000,
-        }
+            client: WordpressAPI::build_client(10000)?,
+        })
     }
 
-    pub fn new_authenticated(base_url: String, username: String, password: String) -> Self {
-        WordpressAPI {
+    pub fn new_authenticated(base_url: String, username: String, password: String) -> Result<Self, WordpressAPIError> {
+        Ok(WordpressAPI {
             base_url,
             username: Some(username),
             password: Some(password),
             timeout: 10000,
-        }
+            client: WordpressAPI::build_client(10000)?,
+        })
     }
 
-    fn build_client(&self) -> Result<reqwest::Client, WordpressAPIError>{
-        match reqwest::ClientBuilder::new().timeout(std::time::Duration::from_millis(self.timeout)).build() {
+    fn build_client(timeout: u64) -> Result<reqwest::Client, WordpressAPIError>{
+        match reqwest::ClientBuilder::new().timeout(std::time::Duration::from_millis(timeout)).build() {
             Ok(client) => Ok(client),
             Err(e) => {
                 eprintln!("Error building client: {}", e);
@@ -50,7 +55,7 @@ impl WordpressAPI {
     pub async fn get_posts(&self, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDateTime>, modified_after: Option<chrono::NaiveDateTime>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<Vec<Post>, WordpressAPIError>{
         let url = format!("https://{}/wp-json/wp/v2/posts", self.base_url);
 
-        let client = self.build_client()?;
+        let client = self.client.clone();
         let request = client.request(reqwest::Method::GET, &url);
 
         let mut query: Vec<(String, String)> = Vec::new();
@@ -102,7 +107,7 @@ impl WordpressAPI {
 
     pub async fn get_post(&self, id: usize) -> Result<Post, WordpressAPIError> {
         let url = format!("https://{}/wp-json/wp/v2/posts/{}", self.base_url, id);
-        let client = self.build_client()?;
+        let client = self.client.clone();
         let response = client.get(&url).send().await;
         match response {
             Ok(response) => {
@@ -122,8 +127,28 @@ impl WordpressAPI {
         }
     }
 
+    pub async fn get_category_tree(&self) -> Result<CategoryTree, WordpressAPIError> {
+        let mut categories = Vec::new();
+
+        println!("Fetching all categories from Wordpress API");
+
+        let mut page = 1;
+        loop {
+            println!("Fetching all categories from page {}", page);
+            let mut new_categories = self.get_categories(Some(page), Some(100), None, None, None, None, Some(true), None, None).await?;
+            if new_categories.is_empty() {
+                println!("No more categories found, stopping");
+                break;
+            }
+            categories.append(&mut new_categories);
+            page += 1;
+        }
+
+        Ok(CategoryTree::from(categories))
+    }
+
     pub async fn get_categories(&self, page: Option<usize>, per_page: Option<usize>, search: Option<String>, exclude: Option<Vec<usize>>, include: Option<Vec<usize>>, slug: Option<String>, hide_empty: Option<bool>, parent: Option<usize>, post: Option<usize>) -> Result<Vec<Category>, WordpressAPIError>{
-        let client = self.build_client()?;
+        let client = self.client.clone();
         let url = format!("https://{}/wp-json/wp/v2/categories", self.base_url);
         let request = client.request(reqwest::Method::GET, &url);
         let mut query: Vec<(String, String)> = Vec::new();
@@ -155,9 +180,13 @@ impl WordpressAPI {
             query.push(("post".to_string(), post.to_string()));
         }
         let request = request.query(&query);
+        let request_started = std::time::Instant::now();
         match request.send().await{
             Ok(response) => match response.json::<Vec<Category>>().await{
-                Ok(categories) => Ok(categories),
+                Ok(categories) => {
+                    println!("Fetched {} categories in {:?}", categories.len(), request_started.elapsed());
+                    Ok(categories)
+                },
                 Err(e) => {
                     eprintln!("Error parsing categories: {}", e);
                     Err(WordpressAPIError::SerdeParsingError)
@@ -171,7 +200,7 @@ impl WordpressAPI {
     }
 
     pub async fn get_category(&self, id: usize) -> Result<Category, WordpressAPIError>{
-        let client = self.build_client()?;
+        let client = self.client.clone();
         let url = format!("https://{}/wp-json/wp/v2/categories/{}", self.base_url, id);
         let response = client.get(&url).send().await;
         match response {
@@ -245,11 +274,86 @@ pub struct Post{
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category{
     pub id: usize,
+    /// The number of posts in this category
     pub count: usize,
     pub description: String,
     pub name: String,
     pub slug: String,
+    /// The parent category id
     pub parent: usize
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HierarchicalCategory{
+    pub id: usize,
+    pub count: usize,
+    pub description: String,
+    pub name: String,
+    pub slug: String,
+    pub parent: usize,
+    // HashMap with categories (ids as keys)
+    pub children: Vec<HierarchicalCategory>
+}
+
+impl From<Category> for HierarchicalCategory{
+    fn from(c: Category) -> HierarchicalCategory{
+        HierarchicalCategory{
+            id: c.id,
+            count: c.count,
+            description: c.description,
+            name: c.name,
+            slug: c.slug,
+            parent: c.parent,
+            children: Vec::new(),
+        }
+    }
+}
+
+impl HierarchicalCategory{
+    pub fn add_children(&mut self, categories: &mut Vec<Category>){
+        let mut i = 0;
+
+        loop{
+            let category = match categories.get(i){
+                Some(category) => category,
+                None => break,
+            };
+            if category.parent == self.id{
+                self.children.push(categories.remove(i).into());
+            }else{
+                i = i+1;
+            }
+        }
+
+        for child in self.children.iter_mut(){
+            child.add_children(categories);
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CategoryTree{
+    pub categories: Vec<HierarchicalCategory>
+}
+
+impl From<Vec<Category>> for CategoryTree {
+    fn from(mut categories: Vec<Category>) -> Self {
+        let mut main_category = HierarchicalCategory {
+            id: 0,
+            count: 0,
+            description: "".to_string(),
+            name: "".to_string(),
+            slug: "".to_string(),
+            parent: 0,
+            children: Vec::new(),
+        };
+
+        main_category.add_children(&mut categories);
+
+        CategoryTree {
+            categories: main_category.children
+        }
+    }
 }
 
 #[cfg(test)]
@@ -258,15 +362,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_import_single_post() {
-        let api = WordpressAPI::new("verfassungsblog.de".to_string());
+        let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
         let post = api.get_post(79100).await.unwrap();
         println!("{:?}", post);
     }
 
     #[tokio::test]
     async fn test_import_posts() {
-        let api = WordpressAPI::new("verfassungsblog.de".to_string());
+        let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
         let posts = api.get_posts(None, None, None, None, None, None, None, None).await.unwrap();
         println!("{:?}", posts);
+    }
+
+    #[tokio::test]
+    async fn test_get_category_tree(){
+        let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
+        let categories = api.get_category_tree().await.unwrap();
+        println!("Category tree: {:?}", categories.categories);
     }
 }

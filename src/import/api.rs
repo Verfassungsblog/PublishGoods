@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::data_storage::ProjectStorage;
 use crate::import::processing::{ImportJob, ImportProcessor, ImportStatus, ImportStatusPoll};
-use crate::import::wordpress::{Category, WordpressAPI, WordpressAPIError};
+use crate::import::wordpress::{Category, CategoryTree, WordpressAPI, WordpressAPIError};
 use crate::projects::api::{ApiError, ApiResult};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
@@ -110,11 +110,17 @@ pub async fn import_from_wordpress(job: Json<WordpressImport>, _session: Session
 }
 
 /// Get wordpress categories
-#[get("/api/import/wordpress/categories?<base_url>&<page>&<per_page>")]
-pub async fn get_wordpress_categories(base_url: String, page: Option<usize>, per_page: Option<usize>, _session: Session, _settings: &State<Settings>) -> Json<ApiResult<Vec<Category>>>{
-    let wordpress_api = WordpressAPI::new(base_url.clone());
+#[get("/api/import/wordpress/categories?<base_url>")]
+pub async fn get_wordpress_categories(base_url: String, _session: Session, _settings: &State<Settings>) -> Json<ApiResult<CategoryTree>>{
+    let wordpress_api = match WordpressAPI::new(base_url.clone()){
+        Ok(api) => api,
+        Err(e) => {
+            error!("{:?}", e);
+            return ApiResult::new_error(ApiError::InternalServerError)
+        }
+    };
 
-    let categories = match wordpress_api.get_categories(page, per_page, None, None, None, None, Some(true), None, None).await{
+    let categories = match wordpress_api.get_category_tree().await{
         Ok(categories) => categories,
         Err(e) => {
             return match e{
@@ -130,7 +136,7 @@ pub async fn get_wordpress_categories(base_url: String, page: Option<usize>, per
                 },
                 WordpressAPIError::NotFound => {
                     info!("No categories found for wordpress api: {}", base_url);
-                    ApiResult::new_data(vec![])
+                    ApiResult::new_data(vec![].into())
                 }
             }
         }
