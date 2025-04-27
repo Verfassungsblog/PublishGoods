@@ -1388,3 +1388,43 @@ function slugify(text: string): string {
         .replace(/[^a-z0-9 -]/g, '') // remove invalid characters
         .replace(/-+/g, '-'); // collapse multiple -'s
 }
+
+export interface HierarchicalCategory {
+    id: number;
+    count: number;
+    description: string;
+    name: string;
+    slug: string;
+    parent: number;
+    children: HierarchicalCategory[];
+}
+
+export interface CategoryTree {
+    categories: HierarchicalCategory[];
+}
+
+export function ImportAPI(){
+    async function load_category_tree(host: string){
+        const response = await fetch(`/api/import/wordpress/categories?base_url=${host}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to retrieve category tree: ${response.status}`);
+        }
+
+        const response_data: ApiResult<CategoryTree> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to retrieve category tree: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
+    return{
+        load_category_tree
+    }
+}

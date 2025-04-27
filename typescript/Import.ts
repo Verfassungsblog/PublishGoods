@@ -1,5 +1,6 @@
 import * as Tools from "./tools";
 import * as API from "./api_requests";
+import {CategoryTree} from "./api_requests";
 
 function import_btn_handler(){
     let overlay_wrapper = document.getElementById("overlay-wrapper");
@@ -18,7 +19,50 @@ function import_btn_handler(){
         document.getElementById("wizard-start").classList.add("hide");
         document.getElementById("wizard-wordpress-1").classList.remove("hide");
     });
+    document.getElementById("wizard-wp-filter-btn").addEventListener("click", function(){
+        document.getElementById("wizard-wordpress-1").classList.add("hide");
+        document.getElementById("wizard-wordpress-by-filter-1").classList.remove("hide");
+    });
+    document.getElementById("wizard-wp-links-btn").addEventListener("click", function(){
+        document.getElementById("wizard-wordpress-1").classList.add("hide");
+        document.getElementById("wizard-wordpress-by-links").classList.remove("hide");
+    });
+    document.getElementById("wizard-wordpress-host-next").addEventListener("click", wordpress_filter_load_categories)
     document.getElementById("wizard-wordpress-upload-btn").addEventListener("click", wordpress_import_handler);
+}
+
+async function wordpress_filter_load_categories(){
+    let host = (document.getElementById("wizard-wordpress-host") as HTMLInputElement).value || null;
+
+    if(!host){
+        return;
+    }
+
+    document.getElementById("wizard-wordpress-by-filter-1").classList.add("hide");
+    document.getElementById("wizard-wordpress-by-filter-2").classList.remove("hide");
+
+    // Load categories
+    let api = API.ImportAPI();
+
+    try{
+        let category_tree = await api.load_category_tree(host);
+        await wordpress_filter_show_filter_mask(category_tree);
+    }catch(e){
+        document.getElementById("overlay-wrapper").classList.add("hide");
+        Tools.show_alert(e, "danger");
+    }
+}
+
+async function wordpress_filter_show_filter_mask(category_tree: CategoryTree){
+    let filter_mask = document.getElementById("wizard-wordpress-by-filter-3");
+
+    document.getElementById("wizard-wordpress-by-filter-2").classList.add("hide");
+    filter_mask.classList.remove("hide");
+
+
+    // @ts-ignore
+    filter_mask.innerHTML = Handlebars.templates.editor_import_wizard_filter_mask(category_tree);
+
 }
 
 async function upload_files_handler(){
