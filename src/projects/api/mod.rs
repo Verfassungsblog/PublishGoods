@@ -17,6 +17,7 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 
 pub mod sections;
+pub mod bibliography;
 
 #[derive(Serialize, Deserialize)]
 pub struct ApiResult<T> {

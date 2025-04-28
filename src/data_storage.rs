@@ -958,6 +958,26 @@ pub struct ProjectDataV6 {
     pub bibliography: HashMap<String, BibEntryV2> //TODO: add prefix & suffix support
 }
 
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectBibliography{
+    pub entries: Vec<BibEntryOrFolder>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct BibFolder{
+    #[bincode(with_serde)]
+    pub uuid: uuid::Uuid,
+    pub name: String,
+    #[bincode(with_serde)]
+    pub children: Vec<uuid::Uuid>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub enum BibEntryOrFolder{
+    BibEntry(BibEntryV3),
+    Folder(BibFolder)
+}
+
 impl From<OldProjectData> for ProjectDataV2{
     fn from(value: OldProjectData) -> Self {
         ProjectDataV2{
@@ -1386,6 +1406,68 @@ pub struct BibEntryV2 {
     pub genre: Option<MyFormatString>,
     #[bincode(with_serde)]
     pub parents: Vec<BibEntryV2>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct BibEntryV3{
+    #[bincode(with_serde)]
+    pub uuid: uuid::Uuid,
+    #[bincode(with_serde)]
+    pub entry_type: EntryType,
+    #[bincode(with_serde)]
+    pub title: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub authors: Vec<MyPerson>,
+    #[bincode(with_serde)]
+    pub date: Option<MyDate>,
+    #[bincode(with_serde)]
+    pub editors: Vec<MyPerson>,
+    #[bincode(with_serde)]
+    pub affiliated: Vec<MyPersonsWithRoles>,
+    #[bincode(with_serde)]
+    pub publisher: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub location: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub organization: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub issue: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub volume: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub volume_total: Option<MyNumeric>,
+    #[bincode(with_serde)]
+    pub edition: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub page_range: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub page_total: Option<MyNumeric>,
+    #[bincode(with_serde)]
+    pub time_range: Option<MyMaybeTyped<MyDurationRange>>,
+    #[bincode(with_serde)]
+    pub runtime: Option<MyMaybeTyped<Duration>>,
+    #[bincode(with_serde)]
+    pub url: Option<MyQualifiedUrl>,
+    #[bincode(with_serde)]
+    pub serial_numbers: Option<BTreeMap<String, String>>,
+    #[bincode(with_serde)]
+    pub language: Option<String>,
+    #[bincode(with_serde)]
+    pub archive: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub archive_location: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub call_number: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub note: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub abstractt: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub annote: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub genre: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub children: Vec<uuid::Uuid>,
 }
 
 impl From<OldBibEntry> for BibEntryV2{
