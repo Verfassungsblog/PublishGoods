@@ -15,7 +15,7 @@ use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
-use crate::import::wordpress::{WordpressAPI, WordpressAPIError};
+use crate::import::wordpress::{PostData, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::{BlockData, NewContentBlock, SectionMetadataV3, SectionOrTocV2, SectionOrTocV3, SectionV3};
 use crate::utils::block_id_generator::generate_id;
 
@@ -240,7 +240,7 @@ impl ImportProcessor{
 
         let slug = path.split("/").last().unwrap_or("");
 
-        if path.starts_with("/category/"){
+        /*if path.starts_with("/category/"){
             debug!("Found category link. Trying to import all posts within category");
             let category = match api.get_categories(None, None, None, None, None, Some(slug.to_string()), None, None, None).await{
                 Ok(categories) => categories,
@@ -253,7 +253,7 @@ impl ImportProcessor{
             let mut posts = vec![];
             let mut page = 1;
             loop{
-                let mut new_posts = match api.get_posts(Some(page), None, None, None, None, None, Some(vec![category.id]), None).await{
+                let mut new_posts = match api.get_posts(WordpressAPIContext::default(), Some(page), None, None, None, None, None, Some(vec![category.id]), None).await{
                     Ok(posts) => posts,
                     Err(e) => return Err(ImportError::WordPressApiError(e))
                 };
@@ -268,15 +268,20 @@ impl ImportProcessor{
                 self.import_single_post(post.slug.clone(), project.clone(), endnotes, shift_headings_up, convert_links, &api).await?;
             }
         }else{
+        TODO: reimplement category link importing
+        */
             debug!("Found non-category link. Trying to import single post");
             self.import_single_post(slug.to_string(), project, endnotes, shift_headings_up, convert_links, &api).await?;
-        }
+        //}
         Ok(())
     }
 
     async fn import_single_post(&self, slug: String, project: Arc<RwLock<ProjectDataV5>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, api: &WordpressAPI) -> Result<(), ImportError>{
-        let posts = match api.get_posts(None, None, None, None, None, Some(slug.to_string()), None, None).await{
-            Ok(posts) => posts,
+        let posts = match api.get_posts(WordpressAPIContext::default(), None, None, None, None, None, None, None, Some(slug.to_string()), None, None).await{
+            Ok(posts) => match posts.data{
+                PostDataType::FullPosts(posts) => posts,
+                _ => return Err(ImportError::WordPressApiError(WordpressAPIError::InvalidURL))
+            },
             Err(e) => return Err(ImportError::WordPressApiError(e))
         };
         if posts.len()!= 1{

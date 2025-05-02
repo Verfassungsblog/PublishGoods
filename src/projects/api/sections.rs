@@ -47,8 +47,13 @@ pub struct APISectionMetadataResult{
     pub lang: Option<Language>,
 }
 
-/// GET /api/projects/<project_id>/sections/<content_id>?<expand>
+/// GET /api/projects/<project_id>/sections/<content_path>?<expand>
 ///
+/// Parameters:
+/// * project_id (string) - the projects uuid
+/// * content_path (string) - path to a specific section, split by ':'
+/// * expand (string, optional) - optionally expand one of these fields: authors, editors, subsections
+/// 
 /// By default strips out subsections & only returns id's for authors and editors.
 /// Use the optional expand query parameter to expand these fields
 /// E.g. ?expand=authors,editors,subsections will show the full data

@@ -1,0 +1,15 @@
+<div class="wizard-wp-category">
+    <div class="form-check">
+        <input disabled class="form-check-input" type="checkbox" id="wp-category-{{id}}">
+        <label class="form-check-label" for="wp-category-{{id}}">
+            {{name}}
+        </label>
+    </div>
+    {{#if children}}
+    <div class="wizard-wp-subcategories">
+{{#each children}}
+{{> editor_import_wizard_filter_mask_categories}}
+{{/each}}
+        </div>
+    {{/if}}
+</div>

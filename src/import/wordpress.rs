@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fmt::Display;
+use reqwest::header::{HeaderValue, ToStrError};
 use serde::{Deserialize, Serialize};
 use crate::main;
 
@@ -18,6 +20,61 @@ pub enum WordpressAPIError{
     ReqwestError,
     InvalidURL,
     NotFound,
+    UnexpectedResponse,
+    Unsupported(String)
+}
+
+#[derive(Debug)]
+pub enum PostDataType{
+    PostPreviews(Vec<PostPreview>),
+    FullPosts(Vec<Post>),
+}
+
+#[derive(Debug)]
+pub struct PostData{
+    pub number_of_records: usize,
+    pub total_pages: usize,
+    pub data: PostDataType,
+}
+
+#[derive(Debug, Default)]
+pub enum WordpressAPIContext{
+    #[default]
+    View,
+    Edit,
+    Embed
+}
+
+impl Display for WordpressAPIContext{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            WordpressAPIContext::View => {
+                String::from("view")
+            }
+            WordpressAPIContext::Edit => {
+                String::from("edit")
+            }
+            WordpressAPIContext::Embed => {
+                String::from("embed")
+            }
+        };
+        write!(f, "{}", str)
+    }
+}
+
+trait HeaderValueAsUsize{
+    fn try_into_usize(&self) -> Option<usize>;
+}
+impl HeaderValueAsUsize for HeaderValue{
+    fn try_into_usize(&self) -> Option<usize> {
+        if let Ok(val) = self.to_str(){
+            if let Ok(val) = val.parse::<usize>(){
+                return Some(val)
+            }
+        }
+
+        None
+    }
 }
 
 impl WordpressAPI {
@@ -51,14 +108,25 @@ impl WordpressAPI {
         }
     }
 
-
-    pub async fn get_posts(&self, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDateTime>, modified_after: Option<chrono::NaiveDateTime>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<Vec<Post>, WordpressAPIError>{
+    pub async fn get_posts(&self, context: WordpressAPIContext, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDateTime>, modified_after: Option<chrono::NaiveDateTime>, before: Option<chrono::NaiveDateTime>, modified_before: Option<chrono::NaiveDateTime>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<PostData, WordpressAPIError>{
         let url = format!("https://{}/wp-json/wp/v2/posts", self.base_url);
 
         let client = self.client.clone();
         let request = client.request(reqwest::Method::GET, &url);
 
         let mut query: Vec<(String, String)> = Vec::new();
+        match context{
+            WordpressAPIContext::View => {
+                query.push(("context".to_string(), "view".to_string()));
+            }
+            WordpressAPIContext::Edit => {
+                error!("edit api context isn't supported yet!");
+                return Err(WordpressAPIError::Unsupported(String::from("edit api context isn't supported yet!")));
+            }
+            WordpressAPIContext::Embed => {
+                query.push(("context".to_string(), "embed".to_string()));
+            }
+        }
         if let Some(page) = page {
             query.push(("page".to_string(), page.to_string()));
         }
@@ -88,15 +156,69 @@ impl WordpressAPI {
         match request.send().await{
             Ok(response) => {
                 if response.status() == 400 { // We will get a bad requests if no posts are found at this page
-                    return Ok(vec![]);
+                    return Err(WordpressAPIError::NotFound);
                 }
-                match response.json::<Vec<Post>>().await {
-                    Ok(posts) => Ok(posts),
-                    Err(e) => {
-                        error!("Error parsing posts: {}", e);
-                        Err(WordpressAPIError::SerdeParsingError)
+                let num_of_records: usize = match response.headers().get("X-WP-Total"){
+                    Some(num) => match num.try_into_usize(){
+                        Some(num) => num,
+                        None => {
+                            error!("Error parsing X-WP-Total as usize.");
+                            return Err(WordpressAPIError::UnexpectedResponse);
+                        }
+                    },
+                    None => {
+                        error!("X-WP-Total is missing in posts response");
+                        return Err(WordpressAPIError::UnexpectedResponse)
+                    }
+                };
+                let num_of_pages: usize = match response.headers().get("X-WP-TotalPages"){
+                    Some(num) => match num.try_into_usize(){
+                        Some(num) => num,
+                        None => {
+                            error!("Error parsing X-WP-TotalPages as usize.");
+                            return Err(WordpressAPIError::UnexpectedResponse);
+                        }
+                    },
+                    None => {
+                        error!("X-WP-TotalPages is missing in posts response");
+                        return Err(WordpressAPIError::UnexpectedResponse)
+                    }
+                };
+                match context{
+                    WordpressAPIContext::View => {
+                        match response.json::<Vec<Post>>().await {
+                            Ok(posts) => {
+                                Ok(PostData{
+                                    number_of_records: num_of_records,
+                                    total_pages: num_of_pages,
+                                    data: PostDataType::FullPosts(posts),
+                                })
+                            },
+                            Err(e) => {
+                                error!("Error parsing posts: {}", e);
+                                Err(WordpressAPIError::SerdeParsingError)
+                            }
+                        }
+                    }
+                    WordpressAPIContext::Edit => {
+                        error!("edit api context isn't supported yet!");
+                        Err(WordpressAPIError::Unsupported(String::from("edit api context isn't supported yet!")))
+                    }
+                    WordpressAPIContext::Embed => {
+                        match response.json::<Vec<PostPreview>>().await {
+                            Ok(posts) => Ok(PostData{
+                                number_of_records: num_of_records,
+                                total_pages: num_of_pages,
+                                data: PostDataType::PostPreviews(posts),
+                            }),
+                            Err(e) => {
+                                error!("Error parsing posts: {}", e);
+                                Err(WordpressAPIError::SerdeParsingError)
+                            }
+                        }
                     }
                 }
+
             },
             Err(e) => {
                 error!("Error fetching posts: {}", e);
@@ -271,6 +393,20 @@ pub struct Post{
     pub coauthors: Option<Vec<CoAuthor>>
 }
 
+/// Similar to ['Post'] but only with fields that are returned by the WordPress api if context=embed
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct PostPreview{
+    pub id: usize,
+    pub date: chrono::NaiveDateTime,
+    pub link: String,
+    pub slug: String,
+    #[serde(rename = "type")]
+    pub post_type: String,
+    pub title: RenderedContent,
+    pub author: usize,
+    pub excerpt: RenderedContent,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Category{
     pub id: usize,
@@ -370,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn test_import_posts() {
         let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
-        let posts = api.get_posts(None, None, None, None, None, None, None, None).await.unwrap();
+        let posts = api.get_posts(WordpressAPIContext::default(), None, None, None, None, None, None, None, None, None, None).await.unwrap();
         println!("{:?}", posts);
     }
 

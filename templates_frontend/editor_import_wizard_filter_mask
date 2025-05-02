@@ -1,11 +1,48 @@
-<div class="row">
-    <div class="col-6">
-        Include posts from categories
-        {{#each categories}}
-            {{name}}
-        {{/each}}
+<div id="wizard-filter-mask-wrapper">
+    <div class="wizard-column">
+        <div class="wizard-column-title">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="wizard-wordpress-filter-mask-include-categories-check">
+                <label class="form-check-label" for="wizard-wordpress-filter-mask-include-categories-check">
+                    Include Posts in Categories
+                </label>
+            </div>
+        </div>
+        <div class="wizard-column-content disabled">
+            {{#each categories}}
+            {{> editor_import_wizard_filter_mask_categories}}
+            {{/each}}
+        </div>
     </div>
-    <div class="col-6">
-        Exclude posts from categories
+    <div class="wizard-column">
+        <div class="wizard-column-title">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="wizard-wordpress-filter-mask-exclude-categories-check">
+                <label class="form-check-label" for="wizard-wordpress-filter-mask-exclude-categories-check">
+                    Exclude Posts in Categories
+                </label>
+            </div>
+        </div>
+        <div class="wizard-column-content disabled">
+            {{#each categories}}
+            {{> editor_import_wizard_filter_mask_categories}}
+            {{/each}}
+        </div>
+    </div>
+    <div class="wizard-column">
+        <div class="wizard-column-title">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="wizard-wordpress-filter-mask-time-frame">
+                <label class="form-check-label" for="wizard-wordpress-filter-mask-time-frame">
+                    Filter by Publish Date
+                </label>
+            </div>
+        </div>
+        <div class="wizard-column-content">
+            <label>Not before:</label>
+            <input class="form-control" type="date">
+            <label>Not after:</label>
+            <input class="form-control" type="date">
+        </div>
     </div>
 </div>

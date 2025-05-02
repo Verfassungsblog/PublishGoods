@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::data_storage::ProjectStorage;
 use crate::import::processing::{ImportJob, ImportProcessor, ImportStatus, ImportStatusPoll};
-use crate::import::wordpress::{Category, CategoryTree, WordpressAPI, WordpressAPIError};
+use crate::import::wordpress::{Category, CategoryTree, CoAuthor, PostAcf, PostData, PostDataType, PostPreview, RenderedContent, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::api::{ApiError, ApiResult};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
@@ -138,11 +138,79 @@ pub async fn get_wordpress_categories(base_url: String, _session: Session, _sett
                     info!("No categories found for wordpress api: {}", base_url);
                     ApiResult::new_data(vec![].into())
                 }
+                WordpressAPIError::Unsupported(e) => {
+                    ApiResult::new_error(ApiError::InternalServerError)
+                }
+                WordpressAPIError::UnexpectedResponse => {
+                    ApiResult::new_error(ApiError::InternalServerError)
+                }
             }
         }
     };
 
     ApiResult::new_data(categories)
+}
+
+/// Type for the ['get_wordpress_posts_preview'] API route.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct PreviewRequest{
+    base_url: String,
+    include_categories: Option<Vec<usize>>,
+    exclude_categories: Option<Vec<usize>>,
+    before: Option<chrono::NaiveDateTime>,
+    modified_before: Option<chrono::NaiveDateTime>,
+    after: Option<chrono::NaiveDateTime>,
+    modified_after: Option<chrono::NaiveDateTime>,
+    per_page: Option<usize>,
+    page: Option<usize>
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct PostPreviewReponse{
+    number_of_posts: usize,
+    previews: Vec<PostPreview>
+}
+
+/// POST /api/import/wordpress/posts-preview
+#[post("/api/import/wordpress/posts-preview", data = "<preview_request>")]
+pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, _session: Session) -> Json<ApiResult<PostPreviewReponse>>{
+    let preview_request = preview_request.into_inner();
+
+    let wordpress_api = match WordpressAPI::new(preview_request.base_url.clone()){
+        Ok(api) => api,
+        Err(e) => {
+            error!("{:?}", e);
+            return ApiResult::new_error(ApiError::InternalServerError)
+        }
+    };
+
+    let res = wordpress_api.get_posts(WordpressAPIContext::Embed, preview_request.page, preview_request.per_page, None, preview_request.after, preview_request.modified_after, preview_request.before, preview_request.modified_before, None, preview_request.include_categories, preview_request.exclude_categories).await;
+
+    match res{
+        Ok(res) => {
+            let data = match res.data{
+                PostDataType::PostPreviews(data) => data,
+                _ => return ApiResult::new_error(ApiError::InternalServerError),
+            };
+            
+            ApiResult::new_data(PostPreviewReponse{
+                number_of_posts: res.number_of_records,
+                previews: data,
+            })
+        }
+        Err(e) => {
+            warn!("WordpressAPIError occured getting posts preview: {:?}", e);
+            match e{
+                WordpressAPIError::InvalidURL => {ApiResult::new_error(ApiError::BadRequest("Invalid URL".to_string()))}
+                WordpressAPIError::NotFound => {
+                    ApiResult::new_error(ApiError::NotFound)
+                },
+                _ => {
+                    ApiResult::new_error(ApiError::InternalServerError)
+                }
+            }
+        }
+    }
 }
 
 #[get("/api/import/status/<id>")]
