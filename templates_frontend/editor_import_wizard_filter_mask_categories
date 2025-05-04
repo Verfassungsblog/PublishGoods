@@ -1,6 +1,6 @@
 <div class="wizard-wp-category">
     <div class="form-check">
-        <input disabled class="form-check-input" type="checkbox" id="wp-category-{{id}}">
+        <input disabled class="form-check-input" value="{{id}}" type="checkbox" id="wp-category-{{id}}">
         <label class="form-check-label" for="wp-category-{{id}}">
             {{name}}
         </label>

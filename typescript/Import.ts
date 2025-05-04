@@ -1,6 +1,6 @@
 import * as Tools from "./tools";
 import * as API from "./api_requests";
-import {CategoryTree} from "./api_requests";
+import {CategoryTree, ImportAPI, PreviewRequest} from "./api_requests";
 
 function import_btn_handler(){
     let overlay_wrapper = document.getElementById("overlay-wrapper");
@@ -46,23 +46,111 @@ async function wordpress_filter_load_categories(){
 
     try{
         let category_tree = await api.load_category_tree(host);
-        await wordpress_filter_show_filter_mask(category_tree);
+        await wordpress_filter_show_filter_mask(category_tree, host);
     }catch(e){
         document.getElementById("overlay-wrapper").classList.add("hide");
         Tools.show_alert(e, "danger");
     }
 }
 
-async function wordpress_filter_show_filter_mask(category_tree: CategoryTree){
+async function wordpress_filter_show_filter_mask(category_tree: CategoryTree, host: string){
     let filter_mask = document.getElementById("wizard-wordpress-by-filter-3");
 
     document.getElementById("wizard-wordpress-by-filter-2").classList.add("hide");
     filter_mask.classList.remove("hide");
 
-
     // @ts-ignore
     filter_mask.innerHTML = Handlebars.templates.editor_import_wizard_filter_mask(category_tree);
 
+    // Add listeners
+    let column_switches = document.getElementsByClassName("wizard-column-enabler") as HTMLCollectionOf<HTMLInputElement>;
+
+    /// Event listener for toggling the filter switches (e.g. Filter by Publish Date)
+    let toggle_wizard_column = async function(e: Event){
+        let target = e.target as HTMLInputElement;
+
+        let column_content = target.closest(".wizard-column").getElementsByClassName("wizard-column-content")[0];
+        let column_content_inputs = column_content.querySelectorAll("input");
+
+        if(target.checked){ // Enable column
+            column_content.classList.remove("disabled"); //Remove disabled class from column content
+            for(let input of Array.from(column_content_inputs)){
+                input.disabled = false;
+            }
+        }else{ // Disable column
+            column_content.classList.add("disabled"); //Add disabled class to column content
+            for(let input of Array.from(column_content_inputs)){
+                input.disabled = true;
+            }
+        }
+    }
+
+    /// Event listener for getting a preview of how many posts would be imported with the current filters
+    /// Triggered by changing any filter or toggling filter columns
+    let get_posts_preview = async function(){
+        let posts_num_field = document.getElementById("wizard-wordpress-filter-mask-affected-posts-num");
+
+        let preview_request : PreviewRequest = {
+            base_url: host,
+            page: 1,
+            per_page: 1,
+        };
+
+        if((document.getElementById("wizard-wordpress-filter-mask-time-frame") as HTMLInputElement).checked){
+            preview_request.before = (document.getElementById("wizard-wordpress-filter-mask-time-frame-before") as HTMLInputElement).value || null;
+            preview_request.after = (document.getElementById("wizard-wordpress-filter-mask-time-frame-after") as HTMLInputElement).value || null;
+        }
+
+        if((document.getElementById("wizard-wordpress-filter-mask-include-categories-check") as HTMLInputElement).checked){
+            // Collect checked categories
+            let categories: number[] = [];
+
+            let checkboxes = document.getElementById("wizard-wordpress-filter-mask-include-categories-list").querySelectorAll("input");
+            for(let checkbox of Array.from(checkboxes)){
+                if(checkbox.checked){
+                    categories.push(Number.parseInt(checkbox.value));
+                }
+            }
+
+            preview_request.include_categories = categories;
+        }
+        if((document.getElementById("wizard-wordpress-filter-mask-exclude-categories-check") as HTMLInputElement).checked){
+            // Collect checked categories
+            let categories: number[] = [];
+
+            let checkboxes = document.getElementById("wizard-wordpress-filter-mask-exclude-categories-list").querySelectorAll("input");
+            for(let checkbox of Array.from(checkboxes)){
+                if(checkbox.checked){
+                    categories.push(Number.parseInt(checkbox.value));
+                }
+            }
+
+            preview_request.exclude_categories = categories;
+        }
+
+        let api = ImportAPI();
+
+        try {
+            let resp = await api.load_posts_preview(preview_request);
+            console.log(resp);
+
+            posts_num_field.innerText = resp.number_of_posts.toString();
+        }catch(e){
+            console.error("Couldn't load posts preview: "+e);
+            posts_num_field.innerText = "N/A"
+        }
+    }
+
+    let inputs = document.getElementById("wizard-filter-mask-wrapper").querySelectorAll("input");
+    for(let input of Array.from(inputs)){
+        input.addEventListener("change", get_posts_preview);
+    }
+
+    for(let checkbox of Array.from(column_switches)){
+        checkbox.addEventListener("change", toggle_wizard_column)
+    }
+
+    await get_posts_preview();
 }
 
 async function upload_files_handler(){

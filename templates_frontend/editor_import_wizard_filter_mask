@@ -2,13 +2,13 @@
     <div class="wizard-column">
         <div class="wizard-column-title">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="wizard-wordpress-filter-mask-include-categories-check">
+                <input class="form-check-input wizard-column-enabler" type="checkbox" id="wizard-wordpress-filter-mask-include-categories-check">
                 <label class="form-check-label" for="wizard-wordpress-filter-mask-include-categories-check">
                     Include Posts in Categories
                 </label>
             </div>
         </div>
-        <div class="wizard-column-content disabled">
+        <div class="wizard-column-content disabled" id="wizard-wordpress-filter-mask-include-categories-list">
             {{#each categories}}
             {{> editor_import_wizard_filter_mask_categories}}
             {{/each}}
@@ -17,13 +17,13 @@
     <div class="wizard-column">
         <div class="wizard-column-title">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="wizard-wordpress-filter-mask-exclude-categories-check">
+                <input class="form-check-input wizard-column-enabler" type="checkbox" id="wizard-wordpress-filter-mask-exclude-categories-check">
                 <label class="form-check-label" for="wizard-wordpress-filter-mask-exclude-categories-check">
                     Exclude Posts in Categories
                 </label>
             </div>
         </div>
-        <div class="wizard-column-content disabled">
+        <div class="wizard-column-content disabled" id="wizard-wordpress-filter-mask-exclude-categories-list">
             {{#each categories}}
             {{> editor_import_wizard_filter_mask_categories}}
             {{/each}}
@@ -32,17 +32,21 @@
     <div class="wizard-column">
         <div class="wizard-column-title">
             <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="wizard-wordpress-filter-mask-time-frame">
+                <input class="form-check-input wizard-column-enabler" type="checkbox" id="wizard-wordpress-filter-mask-time-frame">
                 <label class="form-check-label" for="wizard-wordpress-filter-mask-time-frame">
                     Filter by Publish Date
                 </label>
             </div>
         </div>
-        <div class="wizard-column-content">
-            <label>Not before:</label>
-            <input class="form-control" type="date">
-            <label>Not after:</label>
-            <input class="form-control" type="date">
+        <div class="wizard-column-content disabled">
+            <label for="wizard-wordpress-filter-mask-time-frame-before">Before:</label>
+            <input class="form-control" type="date" id="wizard-wordpress-filter-mask-time-frame-before" disabled>
+            <label for="wizard-wordpress-filter-mask-time-frame-after">After:</label>
+            <input class="form-control" type="date" id="wizard-wordpress-filter-mask-time-frame-after" disabled>
         </div>
     </div>
+</div>
+<div id="wizard-filter-mask-footer">
+    <span>You're going to import <span id="wizard-wordpress-filter-mask-affected-posts-num">N/A</span> posts.</span>
+    <button type="button" class="btn btn-primary">Next</button>
 </div>

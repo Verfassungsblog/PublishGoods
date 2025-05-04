@@ -1403,6 +1403,38 @@ export interface CategoryTree {
     categories: HierarchicalCategory[];
 }
 
+export interface PreviewRequest {
+    base_url: string;
+    include_categories?: number[];
+    exclude_categories?: number[];
+    before?: string; // ISO-8601 Datumsformat
+    modified_before?: string; // ISO-8601 Datumsformat
+    after?: string; // ISO-8601 Datumsformat
+    modified_after?: string; // ISO-8601 Datumsformat
+    per_page?: number;
+    page?: number;
+}
+
+export interface PostPreviewResponse {
+    number_of_posts: number;
+    previews: PostPreview[];
+}
+
+export interface PostPreview {
+    id: number;
+    date: string; // ISO-8601 Datumsformat
+    link: string;
+    slug: string;
+    post_type: string; // Umbenannt von "type"
+    title: RenderedContent;
+    author: number;
+    excerpt: RenderedContent;
+}
+
+export interface RenderedContent {
+    rendered: string;
+}
+
 export function ImportAPI(){
     async function load_category_tree(host: string){
         const response = await fetch(`/api/import/wordpress/categories?base_url=${host}`, {
@@ -1424,7 +1456,29 @@ export function ImportAPI(){
 
         return response_data.data;
     }
+    async function load_posts_preview(preview_request: PreviewRequest){
+        const response = await fetch(`/api/import/wordpress/posts-preview`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(preview_request)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to retrieve posts preview: ${response.status}`);
+        }
+
+        const response_data: ApiResult<PostPreviewResponse> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to retrieve posts preview: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
     return{
-        load_category_tree
+        load_category_tree,
+        load_posts_preview
     }
 }

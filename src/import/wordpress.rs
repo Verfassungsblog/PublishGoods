@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Display;
+use chrono::NaiveTime;
 use reqwest::header::{HeaderValue, ToStrError};
 use serde::{Deserialize, Serialize};
 use crate::main;
@@ -108,7 +109,7 @@ impl WordpressAPI {
         }
     }
 
-    pub async fn get_posts(&self, context: WordpressAPIContext, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDateTime>, modified_after: Option<chrono::NaiveDateTime>, before: Option<chrono::NaiveDateTime>, modified_before: Option<chrono::NaiveDateTime>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<PostData, WordpressAPIError>{
+    pub async fn get_posts(&self, context: WordpressAPIContext, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDate>, modified_after: Option<chrono::NaiveDate>, before: Option<chrono::NaiveDate>, modified_before: Option<chrono::NaiveDate>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<PostData, WordpressAPIError>{
         let url = format!("https://{}/wp-json/wp/v2/posts", self.base_url);
 
         let client = self.client.clone();
@@ -137,19 +138,30 @@ impl WordpressAPI {
             query.push(("search".to_string(), search));
         }
         if let Some(after) = after {
-            query.push(("after".to_string(), after.to_string()));
+            // Warning: The Wordpress Documentation is wrong: the API expects a DateTime, not a Date!
+            query.push(("after".to_string(), after.and_time(NaiveTime::default()).to_string()));
         }
         if let Some(modified_after) = modified_after {
-            query.push(("modified_after".to_string(), modified_after.to_string()));
+            query.push(("modified_after".to_string(), modified_after.and_time(NaiveTime::default()).to_string()));
+        }
+        if let Some(before) = before {
+            query.push(("before".to_string(), before.and_time(NaiveTime::default()).to_string()));
+        }
+        if let Some(modified_before) = modified_before {
+            query.push(("modified_before".to_string(), modified_before.and_time(NaiveTime::default()).to_string()));
         }
         if let Some(slug) = slug {
             query.push(("slug".to_string(), slug));
         }
-        if let Some(categories) = categories {
-            query.push(("categories".to_string(), categories.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+        if let Some(categories) = categories{
+            if !categories.is_empty() {
+                query.push(("categories".to_string(), categories.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+            }
         }
         if let Some(categories_exclude) = categories_exclude {
-            query.push(("categories_exclude".to_string(), categories_exclude.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+            if !categories_exclude.is_empty() {
+                query.push(("categories_exclude".to_string(), categories_exclude.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+            }
         }
         debug!("Query is: {:?}", query);
         let request = request.query(&query);

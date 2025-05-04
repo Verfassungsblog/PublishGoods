@@ -589,9 +589,14 @@ customstyle{
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     column-gap: 10px;
-    height: 100%;
+    height: calc(100% - 50px);
     overflow: auto;
 }
+#wizard-filter-mask-footer{
+    height: 50px;
+    padding-top: 10px;
+}
+
 .wizard-column{
     display: grid;
     grid-template-rows: auto 1fr;

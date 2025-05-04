@@ -157,10 +157,10 @@ pub struct PreviewRequest{
     base_url: String,
     include_categories: Option<Vec<usize>>,
     exclude_categories: Option<Vec<usize>>,
-    before: Option<chrono::NaiveDateTime>,
-    modified_before: Option<chrono::NaiveDateTime>,
-    after: Option<chrono::NaiveDateTime>,
-    modified_after: Option<chrono::NaiveDateTime>,
+    before: Option<chrono::NaiveDate>,
+    modified_before: Option<chrono::NaiveDate>,
+    after: Option<chrono::NaiveDate>,
+    modified_after: Option<chrono::NaiveDate>,
     per_page: Option<usize>,
     page: Option<usize>
 }
