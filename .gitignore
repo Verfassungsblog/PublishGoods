@@ -4,9 +4,8 @@
 /data/projects/
 /data/temp/
 /data/templates-old/
-/data/data.1.bincode
 /data/data.bincode
-/data/data.2.bincode
+/data/data.*.bincode
 /typescript/node_modules/
 /typescript/dist/
 /typescript/dist/
@@ -17,3 +16,4 @@
 /version.txt
 .vscode/tasks.json
 .vscode/launch.json
+/certs/*
