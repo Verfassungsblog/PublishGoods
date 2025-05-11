@@ -15,16 +15,23 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectDataV5};
-use crate::projects::{BlockData, NewContentBlock, SectionV3, SectionOrTocV2, SectionOrTocV3};
+use crate::data_storage::{DataStorage, ProjectDataV6};
+use crate::projects::{BlockData, NewContentBlock, SectionV3, SectionOrTocV3};
 use crate::utils::csl::CslData;
 
-pub async fn prepare_project(project_data: ProjectDataV5, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
+pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata{
         Some(metadata) => metadata,
         None => return Err(RenderingError::ProjectMetadataMissing)
+    };
+    
+    let add_soft_hyphens = match &project_data.settings{
+        Some(settings) => {
+            settings.add_soft_hyphens
+        }
+        None => false
     };
 
     let mut authors = vec![];
@@ -65,10 +72,10 @@ pub async fn prepare_project(project_data: ProjectDataV5, data_storage: Arc<Data
                 match &sections_to_include{
                     Some(sections_to_include) => { // Only prepare specified sections
                         if sections_to_include.contains(&id){
-                            data.push(render_section(section, data_storage.clone(), &citation_bib, project_id).await)
+                            data.push(render_section(section, data_storage.clone(), &citation_bib, project_id, add_soft_hyphens).await)
                         }
                     },
-                    None => data.push(render_section(section, data_storage.clone(), &citation_bib, project_id).await) // Prepare all sections
+                    None => data.push(render_section(section, data_storage.clone(), &citation_bib, project_id, add_soft_hyphens).await) // Prepare all sections
                 }
 
             }
@@ -116,7 +123,7 @@ pub async fn prepare_project(project_data: ProjectDataV5, data_storage: Arc<Data
     })
 }
 
-pub fn render_citations(project: &ProjectDataV5, csl_data: Arc<CslData>) -> HashMap<String, String>{
+pub fn render_citations(project: &ProjectDataV6, csl_data: Arc<CslData>) -> HashMap<String, String>{
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();
@@ -194,7 +201,7 @@ pub fn render_citations(project: &ProjectDataV5, csl_data: Arc<CslData>) -> Hash
 }
 
 #[async_recursion]
-pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid) -> PreparedSection{
+pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
     let published = match section.metadata.published{
         Some(date) => Some(date.into()),
         None => None
@@ -246,12 +253,24 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
     };
 
     let subtitle = match section.metadata.subtitle{
-        Some(subtitle) => Some(hyphenate_text(subtitle, &dict)),
+        Some(subtitle) => {
+            if add_soft_hyphens{
+                Some(hyphenate_text(subtitle.clone(), &dict))
+            }else {
+                Some(subtitle)
+            }
+        },
         None => None
+    };
+    
+    let title = if add_soft_hyphens{
+        hyphenate_text(section.metadata.title.clone(), &dict)
+    }else{
+        section.metadata.title.clone()
     };
 
     let metadata = PreparedSectionMetadata{
-        title: hyphenate_text(section.metadata.title.clone(), &dict),
+        title,
         toc_title_override: section.metadata.toc_title_override,
         subtitle,
         toc_subtitle_override: section.metadata.toc_subtitle_override,
@@ -269,12 +288,12 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
     let mut endnote_storage: Vec<(uuid::Uuid, String)> = vec![];
 
     for content_block in section.children{
-        content.push(render_content_block(content_block, &mut endnote_storage, &dict, &citation_bib, project_id).await);
+        content.push(render_content_block(content_block, &mut endnote_storage, &dict, &citation_bib, project_id, add_soft_hyphens).await);
     }
 
     let mut sub_sections = vec![];
     for sub_section in section.sub_sections{
-        sub_sections.push(render_section(sub_section, data_storage.clone(), &citation_bib, project_id).await);
+        sub_sections.push(render_section(sub_section, data_storage.clone(), &citation_bib, project_id, add_soft_hyphens).await);
     }
 
     let mut endnotes = vec![];
@@ -321,7 +340,7 @@ pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String{
 }
 
 
-pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid) -> PreparedContentBlock{
+pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedContentBlock{
     let css_classes_raw = block.css_classes.join(" ");
     let css_classes = if block.css_classes.len() > 0{
         format!(" class='{}'", block.css_classes.join(" "))
@@ -330,10 +349,10 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
     };
     let data: String = match block.data{
         BlockData::Paragraph {text} => {
-            format!("<p id='{}' {}>{}</p>", block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib))
+            format!("<p id='{}' {}>{}</p>", block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens))
         }
         BlockData::Heading { text , level} => {
-            format!("<h{} id='{}' {}>{}</h{}>", level, block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib), level)
+            format!("<h{} id='{}' {}>{}</h{}>", level, block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens), level)
         }
         BlockData::Raw { html } => {
             html
@@ -341,7 +360,7 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
         BlockData::List { style, items} => {
             let mut res = String::new();
             for item in items{
-                res.push_str(&format!("<li id='{}'>{}</li>", block.id, render_text(item, endnote_storage, dict, citation_bib)));
+                res.push_str(&format!("<li id='{}'>{}</li>", block.id, render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens)));
             }
             if style == "ordered"{
                 format!("<ol id='{}' {}>{}</ol>", block.id, css_classes, res)
@@ -350,7 +369,7 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
             }
         },
         BlockData::Quote{text, caption, alignment} => {
-            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib), render_text(caption, endnote_storage, dict, citation_bib))
+            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens))
         }
         BlockData::Image {file, caption, with_border: _, with_background: _, stretched: _} => {
             // Load image and convert to base64
@@ -392,7 +411,7 @@ fn image_to_base64(img: &DynamicImage) -> String {
 }
 
 
-pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>) -> String{
+pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool) -> String{
     let re: Regex = Regex::new(r#"<span(?:[^>]*?\bnote-type="([^"]+)")?(?:[^>]*?\bnote-content="([^"]+)")?[^>]*>.*?</span>"#).unwrap(); //TODO: DO NOT RECOMPILE REGEX, it's bad for performance
     let re3 = Regex::new(r#"<citation data-key="([^"]*)">C</citation>"#).unwrap();
 
@@ -470,7 +489,11 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
             }
         }
     });
-    hyphenate_text(res3.to_string(), dict)
+    if(add_soft_hyphens){
+        hyphenate_text(res3.to_string(), dict)
+    }else{
+        res3.to_string()
+    }
 }
 
 fn escape_html(text: &str) -> String{

@@ -56,8 +56,7 @@ namespace Editor{
                     for (let author of data["metadata"]["authors"]) {
                         promises.push(send_get_person_request(author));
                     }
-                    //TODO: implement a order or sort
-
+                    //TODO: implement sort feature
                     Tools.start_loading_spinner();
 
                     try {
@@ -152,6 +151,7 @@ namespace Editor{
                 attach_ddc_handlers();
 
                 document.getElementById("project_settings_toc_enabled").addEventListener("change", update_settings);
+                document.getElementById("project_settings_add_soft_hyphens").addEventListener("change", update_settings);
                 document.getElementById("project_settings_csl_style").addEventListener("change", update_settings);
                 // @ts-ignore
                 document.getElementById("project_settings_template").addEventListener("change", async function(){
@@ -965,6 +965,7 @@ namespace Editor{
             }
             data["cover_image_path"] = (<HTMLInputElement>document.getElementById("project_settings_cover_image")).getAttribute("data-cover-image-path") || null;
             data["backcover_image_path"] = (<HTMLInputElement>document.getElementById("project_settings_backcover_image")).getAttribute("data-cover-image-path") || null;
+            data["add_soft_hyphens"] = (<HTMLInputElement>document.getElementById("project_settings_add_soft_hyphens")).checked;
 
             try {
                 Tools.start_loading_spinner();

@@ -7,6 +7,12 @@
             Enable Table of Contents (TOC)
         </label>
     </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" {{#if settings.add_soft_hyphens}}checked="true"{{/if}} id="project_settings_add_soft_hyphens">
+        <label class="form-check-label" for="project_settings_add_soft_hyphens">
+            Add Soft Hyphens (disable when using weasyprint!)
+        </label>
+    </div>
     <div class="from-group">
         <label>Citation Style</label>
         <select class="form-select form-select-sm" id="project_settings_csl_style">
