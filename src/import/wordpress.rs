@@ -15,7 +15,7 @@ pub struct WordpressAPI{
     client: reqwest::Client,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WordpressAPIError{
     SerdeParsingError,
     ReqwestError,
@@ -175,11 +175,13 @@ impl WordpressAPI {
                         Some(num) => num,
                         None => {
                             error!("Error parsing X-WP-Total as usize.");
+                            debug!("{:?}", response);
                             return Err(WordpressAPIError::UnexpectedResponse);
                         }
                     },
                     None => {
                         error!("X-WP-Total is missing in posts response");
+                        debug!("{:?}", response);
                         return Err(WordpressAPIError::UnexpectedResponse)
                     }
                 };
