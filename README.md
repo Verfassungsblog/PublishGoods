@@ -12,6 +12,9 @@ Build Status:
 ## Documentation
 The documentation with instructions how to set up and use Verfassungsbooks can be found [here](https://wiki.verfassungsblog.de/books/verfassungsbooks-editor-documentation).
 
+### Documentation Coverage
+You can get the current documentation coverage by running `cargo doc && RUSTDOCFLAGS='-Z unstable-options '--show-coverage cargo doc`
+
 ## Contact
 Developer: [kd@verfassungsblog.de](mailto:kd@verfassungsblog.de)
 
