@@ -339,6 +339,9 @@ label{
     background-color: unset;
     border: none;
 }
+.img-btn > svg{
+    display: flex;
+}
 .project_metadata_keywords_entry{
     width: auto;
     display: inline-block;
@@ -621,8 +624,15 @@ customstyle{
     overflow: hidden;
 }
 .wizard-wp-subcategories{
-    margin-left: 15px;
+    margin-left: 45px;
     margin-bottom: 5px;
+}
+.wizard-wp-category-check-recursive-btn, .wizard-wp-category-uncheck-recursive-btn{
+    color: var(--grey);
+    margin-right: 5px;
+}
+.wizard-wp-category-row{
+    display: flex;
 }
 .dropdown{
     position: relative;

@@ -1,6 +1,7 @@
 use hayagriva::{BufWriteFormat, CitationItem, CitationRequest};
-use vb_exchange::projects::{Language, Person, PreparedContentBlock, PreparedEndnote, PreparedLanguage, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
+use vb_exchange::projects::{Person, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
 use vb_exchange::projects::PreparedLicense;
+use language::Language;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -15,11 +16,11 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectDataV6};
-use crate::projects::{BlockData, NewContentBlock, SectionV3, SectionOrTocV3};
+use crate::data_storage::{DataStorage, ProjectData};
+use crate::projects::{BlockData, NewContentBlock, SectionV4, SectionOrTocV3, SectionOrTocV4};
 use crate::utils::csl::CslData;
 
-pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
+pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata{
@@ -66,7 +67,7 @@ pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<Data
 
     let mut data = vec![];
     for section in project_data.sections{
-        if let SectionOrTocV3::Section(section) = section{
+        if let SectionOrTocV4::Section(section) = section{
             if let Some(id) = section.id{
                 // Check if only specified sections should be included
                 match &sections_to_include{
@@ -123,7 +124,7 @@ pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<Data
     })
 }
 
-pub fn render_citations(project: &ProjectDataV6, csl_data: Arc<CslData>) -> HashMap<String, String>{
+pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMap<String, String>{
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();
@@ -201,7 +202,7 @@ pub fn render_citations(project: &ProjectDataV6, csl_data: Arc<CslData>) -> Hash
 }
 
 #[async_recursion]
-pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
+pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
     let published = match section.metadata.published{
         Some(date) => Some(date.into()),
         None => None
@@ -235,21 +236,15 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
     let dict = match &section.metadata.lang{
         Some(lang) => {
             match lang{
-                Language::DE => Standard::from_embedded(hyphenation::Language::German1996).unwrap(),
-                Language::EN => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
+                Language::DeDe => Standard::from_embedded(hyphenation::Language::German1996).unwrap(),
+                Language::EnGb => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap(),
+                _ => {
+                    error!("Unimplemented match for language!!!");
+                    Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
+                }
             }
         }
         None => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
-    };
-
-    let lang = match section.metadata.lang{
-        Some(lang) => {
-            match lang{
-                Language::DE => PreparedLanguage{de: true, en: false},
-                Language::EN => PreparedLanguage{de: false, en: true}
-            }
-        }
-        None => PreparedLanguage{de: false, en: false}
     };
 
     let subtitle = match section.metadata.subtitle{
@@ -279,7 +274,7 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
         web_url: section.metadata.web_url,
         identifiers: section.metadata.identifiers,
         published,
-        lang,
+        lang: section.metadata.lang,
     };
 
     let mut content = vec![];

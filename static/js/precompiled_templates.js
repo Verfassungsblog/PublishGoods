@@ -605,7 +605,16 @@ templates['editor_import_wizard_filter_mask'] = template({"1":function(container
         return undefined
     };
 
-  return ((stack1 = container.invokePartial(lookupProperty(partials,"editor_import_wizard_filter_mask_categories"),depth0,{"name":"editor_import_wizard_filter_mask_categories","data":data,"indent":"            ","helpers":helpers,"partials":partials,"decorators":container.decorators})) != null ? stack1 : "");
+  return ((stack1 = container.invokePartial(lookupProperty(partials,"editor_import_wizard_filter_mask_categories"),depth0,{"name":"editor_import_wizard_filter_mask_categories","hash":{"prefix":"include"},"data":data,"indent":"            ","helpers":helpers,"partials":partials,"decorators":container.decorators})) != null ? stack1 : "");
+},"3":function(container,depth0,helpers,partials,data) {
+    var stack1, lookupProperty = container.lookupProperty || function(parent, propertyName) {
+        if (Object.prototype.hasOwnProperty.call(parent, propertyName)) {
+          return parent[propertyName];
+        }
+        return undefined
+    };
+
+  return ((stack1 = container.invokePartial(lookupProperty(partials,"editor_import_wizard_filter_mask_categories"),depth0,{"name":"editor_import_wizard_filter_mask_categories","hash":{"prefix":"exclude"},"data":data,"indent":"            ","helpers":helpers,"partials":partials,"decorators":container.decorators})) != null ? stack1 : "");
 },"compiler":[8,">= 4.3.0"],"main":function(container,depth0,helpers,partials,data) {
     var stack1, alias1=depth0 != null ? depth0 : (container.nullContext || {}), lookupProperty = container.lookupProperty || function(parent, propertyName) {
         if (Object.prototype.hasOwnProperty.call(parent, propertyName)) {
@@ -614,11 +623,11 @@ templates['editor_import_wizard_filter_mask'] = template({"1":function(container
         return undefined
     };
 
-  return "<div id=\"wizard-filter-mask-wrapper\">\n    <div class=\"wizard-column\">\n        <div class=\"wizard-column-title\">\n            <div class=\"form-check\">\n                <input class=\"form-check-input\" type=\"checkbox\" id=\"wizard-wordpress-filter-mask-include-categories-check\">\n                <label class=\"form-check-label\" for=\"wizard-wordpress-filter-mask-include-categories-check\">\n                    Include Posts in Categories\n                </label>\n            </div>\n        </div>\n        <div class=\"wizard-column-content disabled\">\n"
+  return "<div id=\"wizard-filter-mask-wrapper\">\n    <div class=\"wizard-column\">\n        <div class=\"wizard-column-title\">\n            <div class=\"form-check\">\n                <input class=\"form-check-input wizard-column-enabler\" type=\"checkbox\" id=\"wizard-wordpress-filter-mask-include-categories-check\">\n                <label class=\"form-check-label\" for=\"wizard-wordpress-filter-mask-include-categories-check\">\n                    Include Posts in Categories\n                </label>\n            </div>\n        </div>\n        <div class=\"wizard-column-content disabled\" id=\"wizard-wordpress-filter-mask-include-categories-list\">\n"
     + ((stack1 = lookupProperty(helpers,"each").call(alias1,(depth0 != null ? lookupProperty(depth0,"categories") : depth0),{"name":"each","hash":{},"fn":container.program(1, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":12,"column":12},"end":{"line":14,"column":21}}})) != null ? stack1 : "")
-    + "        </div>\n    </div>\n    <div class=\"wizard-column\">\n        <div class=\"wizard-column-title\">\n            <div class=\"form-check\">\n                <input class=\"form-check-input\" type=\"checkbox\" id=\"wizard-wordpress-filter-mask-exclude-categories-check\">\n                <label class=\"form-check-label\" for=\"wizard-wordpress-filter-mask-exclude-categories-check\">\n                    Exclude Posts in Categories\n                </label>\n            </div>\n        </div>\n        <div class=\"wizard-column-content disabled\">\n"
-    + ((stack1 = lookupProperty(helpers,"each").call(alias1,(depth0 != null ? lookupProperty(depth0,"categories") : depth0),{"name":"each","hash":{},"fn":container.program(1, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":27,"column":12},"end":{"line":29,"column":21}}})) != null ? stack1 : "")
-    + "        </div>\n    </div>\n    <div class=\"wizard-column\">\n        <div class=\"wizard-column-title\">\n            <div class=\"form-check\">\n                <input class=\"form-check-input\" type=\"checkbox\" id=\"wizard-wordpress-filter-mask-time-frame\">\n                <label class=\"form-check-label\" for=\"wizard-wordpress-filter-mask-time-frame\">\n                    Filter by Publish Date\n                </label>\n            </div>\n        </div>\n        <div class=\"wizard-column-content\">\n            <label>Not before:</label>\n            <input class=\"form-control\" type=\"date\">\n            <label>Not after:</label>\n            <input class=\"form-control\" type=\"date\">\n        </div>\n    </div>\n</div>";
+    + "        </div>\n    </div>\n    <div class=\"wizard-column\">\n        <div class=\"wizard-column-title\">\n            <div class=\"form-check\">\n                <input class=\"form-check-input wizard-column-enabler\" type=\"checkbox\" id=\"wizard-wordpress-filter-mask-exclude-categories-check\">\n                <label class=\"form-check-label\" for=\"wizard-wordpress-filter-mask-exclude-categories-check\">\n                    Exclude Posts in Categories\n                </label>\n            </div>\n        </div>\n        <div class=\"wizard-column-content disabled\" id=\"wizard-wordpress-filter-mask-exclude-categories-list\">\n"
+    + ((stack1 = lookupProperty(helpers,"each").call(alias1,(depth0 != null ? lookupProperty(depth0,"categories") : depth0),{"name":"each","hash":{},"fn":container.program(3, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":27,"column":12},"end":{"line":29,"column":21}}})) != null ? stack1 : "")
+    + "        </div>\n    </div>\n    <div class=\"wizard-column\">\n        <div class=\"wizard-column-title\">\n            <div class=\"form-check\">\n                <input class=\"form-check-input wizard-column-enabler\" type=\"checkbox\" id=\"wizard-wordpress-filter-mask-time-frame\">\n                <label class=\"form-check-label\" for=\"wizard-wordpress-filter-mask-time-frame\">\n                    Filter by Publish Date\n                </label>\n            </div>\n        </div>\n        <div class=\"wizard-column-content disabled\">\n            <label for=\"wizard-wordpress-filter-mask-time-frame-before\">Before:</label>\n            <input class=\"form-control\" type=\"date\" id=\"wizard-wordpress-filter-mask-time-frame-before\" disabled>\n            <label for=\"wizard-wordpress-filter-mask-time-frame-after\">After:</label>\n            <input class=\"form-control\" type=\"date\" id=\"wizard-wordpress-filter-mask-time-frame-after\" disabled>\n        </div>\n    </div>\n</div>\n<div id=\"wizard-filter-mask-footer\">\n    <span>You're going to import <span id=\"wizard-wordpress-filter-mask-affected-posts-num\">N/A</span> posts.</span>\n    <button type=\"button\" class=\"btn btn-primary\">Next</button>\n</div>";
 },"usePartial":true,"useData":true});
 templates['search_person_li'] = template({"compiler":[8,">= 4.3.0"],"main":function(container,depth0,helpers,partials,data) {
     var helper, alias1=depth0 != null ? depth0 : (container.nullContext || {}), alias2=container.hooks.helperMissing, alias3="function", alias4=container.escapeExpression, lookupProperty = container.lookupProperty || function(parent, propertyName) {
@@ -837,6 +846,8 @@ templates['persons_bio_edit'] = template({"compiler":[8,">= 4.3.0"],"main":funct
     + "\" rows=\"3\"></textarea>\n    </div>\n</div>";
 },"useData":true});
 templates['editor_import_wizard_filter_mask_categories'] = template({"1":function(container,depth0,helpers,partials,data) {
+    return "        <button class=\"btn img-btn wizard-wp-category-check-recursive-btn\" disabled><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" fill=\"currentColor\" class=\"bi bi-list-check\" viewBox=\"0 0 16 16\">\n            <path fill-rule=\"evenodd\" d=\"M5 11.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5M3.854 2.146a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 3.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 7.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 0 1 .708-.708l.146.147 1.146-1.147a.5.5 0 0 1 .708 0\"/>\n        </svg></button>\n        <button class=\"btn img-btn wizard-wp-category-uncheck-recursive-btn hide\" disabled>\n            <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" fill=\"currentColor\" class=\"bi bi-list\" viewBox=\"0 0 16 16\">\n                <path fill-rule=\"evenodd\" d=\"M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5\"/>\n            </svg>\n        </button>\n";
+},"3":function(container,depth0,helpers,partials,data) {
     var stack1, lookupProperty = container.lookupProperty || function(parent, propertyName) {
         if (Object.prototype.hasOwnProperty.call(parent, propertyName)) {
           return parent[propertyName];
@@ -845,9 +856,9 @@ templates['editor_import_wizard_filter_mask_categories'] = template({"1":functio
     };
 
   return "    <div class=\"wizard-wp-subcategories\">\n"
-    + ((stack1 = lookupProperty(helpers,"each").call(depth0 != null ? depth0 : (container.nullContext || {}),(depth0 != null ? lookupProperty(depth0,"children") : depth0),{"name":"each","hash":{},"fn":container.program(2, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":10,"column":0},"end":{"line":12,"column":9}}})) != null ? stack1 : "")
+    + ((stack1 = lookupProperty(helpers,"each").call(depth0 != null ? depth0 : (container.nullContext || {}),(depth0 != null ? lookupProperty(depth0,"children") : depth0),{"name":"each","hash":{},"fn":container.program(4, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":22,"column":0},"end":{"line":24,"column":9}}})) != null ? stack1 : "")
     + "        </div>\n";
-},"2":function(container,depth0,helpers,partials,data) {
+},"4":function(container,depth0,helpers,partials,data) {
     var stack1, lookupProperty = container.lookupProperty || function(parent, propertyName) {
         if (Object.prototype.hasOwnProperty.call(parent, propertyName)) {
           return parent[propertyName];
@@ -855,7 +866,7 @@ templates['editor_import_wizard_filter_mask_categories'] = template({"1":functio
         return undefined
     };
 
-  return ((stack1 = container.invokePartial(lookupProperty(partials,"editor_import_wizard_filter_mask_categories"),depth0,{"name":"editor_import_wizard_filter_mask_categories","data":data,"helpers":helpers,"partials":partials,"decorators":container.decorators})) != null ? stack1 : "");
+  return ((stack1 = container.invokePartial(lookupProperty(partials,"editor_import_wizard_filter_mask_categories"),depth0,{"name":"editor_import_wizard_filter_mask_categories","hash":{"prefix":(depth0 != null ? lookupProperty(depth0,"prefix") : depth0)},"data":data,"helpers":helpers,"partials":partials,"decorators":container.decorators})) != null ? stack1 : "");
 },"compiler":[8,">= 4.3.0"],"main":function(container,depth0,helpers,partials,data) {
     var stack1, helper, alias1=depth0 != null ? depth0 : (container.nullContext || {}), alias2=container.hooks.helperMissing, alias3="function", alias4=container.escapeExpression, lookupProperty = container.lookupProperty || function(parent, propertyName) {
         if (Object.prototype.hasOwnProperty.call(parent, propertyName)) {
@@ -864,14 +875,22 @@ templates['editor_import_wizard_filter_mask_categories'] = template({"1":functio
         return undefined
     };
 
-  return "<div class=\"wizard-wp-category\">\n    <div class=\"form-check\">\n        <input disabled class=\"form-check-input\" type=\"checkbox\" id=\"wp-category-"
-    + alias4(((helper = (helper = lookupProperty(helpers,"id") || (depth0 != null ? lookupProperty(depth0,"id") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"id","hash":{},"data":data,"loc":{"start":{"line":3,"column":81},"end":{"line":3,"column":87}}}) : helper)))
-    + "\">\n        <label class=\"form-check-label\" for=\"wp-category-"
-    + alias4(((helper = (helper = lookupProperty(helpers,"id") || (depth0 != null ? lookupProperty(depth0,"id") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"id","hash":{},"data":data,"loc":{"start":{"line":4,"column":57},"end":{"line":4,"column":63}}}) : helper)))
-    + "\">\n            "
-    + alias4(((helper = (helper = lookupProperty(helpers,"name") || (depth0 != null ? lookupProperty(depth0,"name") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"name","hash":{},"data":data,"loc":{"start":{"line":5,"column":12},"end":{"line":5,"column":20}}}) : helper)))
-    + "\n        </label>\n    </div>\n"
-    + ((stack1 = lookupProperty(helpers,"if").call(alias1,(depth0 != null ? lookupProperty(depth0,"children") : depth0),{"name":"if","hash":{},"fn":container.program(1, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":8,"column":4},"end":{"line":14,"column":11}}})) != null ? stack1 : "")
+  return "<div class=\"wizard-wp-category\">\n    <div class=\"wizard-wp-category-row\">\n"
+    + ((stack1 = lookupProperty(helpers,"if").call(alias1,(depth0 != null ? lookupProperty(depth0,"children") : depth0),{"name":"if","hash":{},"fn":container.program(1, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":3,"column":8},"end":{"line":12,"column":15}}})) != null ? stack1 : "")
+    + "        <div class=\"form-check\">\n            <input disabled class=\"form-check-input\" value=\""
+    + alias4(((helper = (helper = lookupProperty(helpers,"id") || (depth0 != null ? lookupProperty(depth0,"id") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"id","hash":{},"data":data,"loc":{"start":{"line":14,"column":60},"end":{"line":14,"column":66}}}) : helper)))
+    + "\" type=\"checkbox\" id=\"wp-category-"
+    + alias4(((helper = (helper = lookupProperty(helpers,"prefix") || (depth0 != null ? lookupProperty(depth0,"prefix") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"prefix","hash":{},"data":data,"loc":{"start":{"line":14,"column":100},"end":{"line":14,"column":110}}}) : helper)))
+    + "-"
+    + alias4(((helper = (helper = lookupProperty(helpers,"id") || (depth0 != null ? lookupProperty(depth0,"id") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"id","hash":{},"data":data,"loc":{"start":{"line":14,"column":111},"end":{"line":14,"column":117}}}) : helper)))
+    + "\">\n            <label class=\"form-check-label\" for=\"wp-category-"
+    + alias4(((helper = (helper = lookupProperty(helpers,"prefix") || (depth0 != null ? lookupProperty(depth0,"prefix") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"prefix","hash":{},"data":data,"loc":{"start":{"line":15,"column":61},"end":{"line":15,"column":71}}}) : helper)))
+    + "-"
+    + alias4(((helper = (helper = lookupProperty(helpers,"id") || (depth0 != null ? lookupProperty(depth0,"id") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"id","hash":{},"data":data,"loc":{"start":{"line":15,"column":72},"end":{"line":15,"column":78}}}) : helper)))
+    + "\">\n                "
+    + alias4(((helper = (helper = lookupProperty(helpers,"name") || (depth0 != null ? lookupProperty(depth0,"name") : depth0)) != null ? helper : alias2),(typeof helper === alias3 ? helper.call(alias1,{"name":"name","hash":{},"data":data,"loc":{"start":{"line":16,"column":16},"end":{"line":16,"column":24}}}) : helper)))
+    + "\n            </label>\n        </div>\n    </div>\n"
+    + ((stack1 = lookupProperty(helpers,"if").call(alias1,(depth0 != null ? lookupProperty(depth0,"children") : depth0),{"name":"if","hash":{},"fn":container.program(3, data, 0),"inverse":container.noop,"data":data,"loc":{"start":{"line":20,"column":4},"end":{"line":26,"column":11}}})) != null ? stack1 : "")
     + "</div>";
 },"usePartial":true,"useData":true});
 templates['bibliography_editor_entry'] = template({"1":function(container,depth0,helpers,partials,data) {

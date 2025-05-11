@@ -9,7 +9,7 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::data_storage::ProjectStorage;
-use crate::import::processing::{ImportJob, ImportProcessor, ImportStatus, ImportStatusPoll};
+use crate::import::processing::{FileImportData, ImportJob, ImportJobData, ImportProcessor, ImportStatus, WordpressFilterData};
 use crate::import::wordpress::{Category, CategoryTree, CoAuthor, PostAcf, PostData, PostDataType, PostPreview, RenderedContent, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::api::{ApiError, ApiResult};
 use crate::session::session_guard::Session;
@@ -28,18 +28,24 @@ struct FileUpload<'r>{
     convert_footnotes_to_endnotes: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum WordpressImportData{
+    WordpressLinks(Vec<String>),
+    WordpressFilter(WordpressFilterData),
+}
+
 /// Configuration for importing content to WordPress
 #[derive(Serialize, Deserialize)]
-struct WordpressImport{
+struct WordpressImportRequest{
     /// The unique identifier of the target project
     project_id: uuid::Uuid,
+    /// Data to be imported
+    data: WordpressImportData,
     /// Whether to convert footnotes to endnotes in final output
     endnotes: bool,
-    /// Collection of links that need to be processed
-    links: Vec<String>,
-    /// Whether to increase heading levels by one
+    /// Whether to decrease heading levels by one so h2 becomes h1
     shift_headings: bool,
-    /// Whether to convert internal links to their WordPress equivalents
+    /// Whether to convert links to citations
     convert_links: bool
 }
 
@@ -82,15 +88,13 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
     let import_job = ImportJob{
         id,
         project_id,
-        length: file_paths.len() as usize,
-        processed: 0,
-        files_to_process: Some(file_paths),
         convert_footnotes_to_endnotes: upload.convert_footnotes_to_endnotes,
-        bib_file: bib_file_path,
-        wordpress_post_links_to_convert: None,
-        status: ImportStatus::Pending,
         shift_headings_up: false,
-        convert_links: false
+        convert_links: false,
+        import_data: ImportJobData::FileImport(FileImportData{
+            files_to_process: file_paths,
+            bib_file: bib_file_path,
+        }),
     };
 
     import_processor.job_queue.write().unwrap().push_back(import_job);
@@ -99,21 +103,27 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
 }
 
 #[post("/api/import/wordpress", data = "<job>")]
-pub async fn import_from_wordpress(job: Json<WordpressImport>, _session: Session, _settings: &State<Settings>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<uuid::Uuid>>{
+pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: Session, _settings: &State<Settings>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<uuid::Uuid>>{
     let id = Uuid::new_v4();
+
+    let job = job.into_inner();
+
+    let import_job_data = match job.data{
+        WordpressImportData::WordpressLinks(links) => {
+            ImportJobData::WordpressLinks(links)
+        }
+        WordpressImportData::WordpressFilter(filter_data) => {
+            ImportJobData::WordpressFilter(filter_data)
+        }
+    };
 
     let import_job = ImportJob{
         id,
         project_id: job.project_id,
-        length: job.links.len(),
-        processed: 0,
-        files_to_process: None,
         convert_footnotes_to_endnotes: job.endnotes,
-        wordpress_post_links_to_convert: Some(<Vec<std::string::String> as Clone>::clone(&job.links).into()),
-        status: ImportStatus::Pending,
-        bib_file: None,
         shift_headings_up: job.shift_headings,
-        convert_links: job.convert_links
+        convert_links: job.convert_links,
+        import_data: import_job_data,
     };
 
     import_processor.job_queue.write().unwrap().push_back(import_job);
@@ -276,36 +286,40 @@ pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, 
     }
 }
 
+/// GET /api/import/status/<id>
+///
+/// Returns the current status of an import job identified by its UUID.
+///
+/// # Arguments
+/// * `id` - UUID string identifying the import job
+/// * `_session` - Ensures request comes from authenticated user
+/// * `import_processor` - State containing import job queue and archive
+///
+/// # Returns
+/// Returns a JSON response containing either:
+/// * Success: The current `ImportStatus` of the job
+/// * Error: 
+///   - `BadRequest` if the provided ID is not a valid UUID
+///   - `NotFound` if no job with the given ID exists
 #[get("/api/import/status/<id>")]
-pub async fn poll_import_status(id: String, _session: Session, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<ImportStatusPoll>>{
-    let job_archive = import_processor.job_archive.read().unwrap();
-
+pub async fn poll_import_status(id: String, _session: Session, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<ImportStatus>>{
     let id = match uuid::Uuid::parse_str(&id){
         Ok(id) => id,
         Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid job id".to_string()))
     };
-
-    match job_archive.get(&id){
-        Some(job) =>{
-            let job = job.read().unwrap();
-            let status = ImportStatusPoll{
-                status: job.status.clone(),
-                processed: job.processed,
-                length: job.length,
-            };
-            return ApiResult::new_data(status);
+    // Try to find job with id in archive
+    let job_archive = import_processor.job_archive.read().unwrap();
+    match import_processor.job_archive.read().unwrap().get(&id){
+        Some(status) =>{
+            return ApiResult::new_data(status.clone());
         },
         None => ()
     }
     let job_queue = import_processor.job_queue.read().unwrap();
-
+    // Job not in archive yet, try to find it in job queue
     let job = job_queue.iter().find(|job| job.id == id);
     match job{
-        Some(job) => ApiResult::new_data(ImportStatusPoll{
-            status: job.status.clone(),
-            processed: job.processed,
-            length: job.length,
-        }),
+        Some(job) => ApiResult::new_data(ImportStatus::Pending),
         None => ApiResult::new_error(ApiError::NotFound)
     }
 }

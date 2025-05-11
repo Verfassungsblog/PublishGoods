@@ -5,6 +5,9 @@
 //! You have to create a new configuration file in the config folder to change the default settings.
 //! The default settings are stored in the file config/default.toml, create a new file named "local.toml" in the same folder.
 
+#![warn(missing_docs)]
+#![warn(clippy::missing_docs_in_private_items)]
+
 use std::sync::Arc;
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::rand_core::OsRng;
@@ -33,7 +36,6 @@ pub mod settings_page;
 pub mod import;
 pub mod export;
 pub mod cleaner;
-
 
 #[macro_use] extern crate rocket;
 
@@ -101,11 +103,6 @@ async fn rocket() -> _ {
     info!("Loading project storage...");
     let project_storage = Arc::new(data_storage::ProjectStorage::new());
     project_storage.load_from_directory(&settings).await.unwrap();
-
-    debug!("Loaded Projects:");
-    for project in project_storage.projects.read().unwrap().iter() {
-        debug!("Project: {:?}", project.1.name);
-    };
 
     info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings));

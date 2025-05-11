@@ -10,7 +10,7 @@
         </div>
         <div class="wizard-column-content disabled" id="wizard-wordpress-filter-mask-include-categories-list">
             {{#each categories}}
-            {{> editor_import_wizard_filter_mask_categories}}
+            {{> editor_import_wizard_filter_mask_categories prefix="include"}}
             {{/each}}
         </div>
     </div>
@@ -25,7 +25,7 @@
         </div>
         <div class="wizard-column-content disabled" id="wizard-wordpress-filter-mask-exclude-categories-list">
             {{#each categories}}
-            {{> editor_import_wizard_filter_mask_categories}}
+            {{> editor_import_wizard_filter_mask_categories prefix="exclude"}}
             {{/each}}
         </div>
     </div>

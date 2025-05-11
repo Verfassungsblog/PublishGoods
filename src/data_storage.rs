@@ -1,7 +1,6 @@
 use hayagriva::types::{Date, Duration, DurationRange, FormatString, MaybeTyped, Numeric, NumericDelimiter, NumericValue, QualifiedUrl, SerialNumber};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -13,19 +12,24 @@ use serde::{Deserialize, Serialize};
 use bincode::{Encode, Decode};
 use hayagriva::types::EntryType;
 use vb_exchange::projects::*;
-use crate::projects::{ProjectMetadataV2, SectionOrTocV2, SectionOrTocV1, SectionV3, ProjectMetadataV1, SectionOrTocV3};
+use crate::projects::{ProjectMetadataV2, SectionOrTocV2, SectionOrTocV1, SectionV4, ProjectMetadataV1, SectionOrTocV3, SectionOrTocV4, ProjectMetadataV3};
 use crate::projects::api::ApiError;
 use crate::settings::Settings;
 use reqwest::Url;
 
 use unic_langid_impl::LanguageIdentifier;
+use vb_exchange::deprecated::projects::data_storage::PersonV1;
+use vb_exchange::deprecated::projects::project_settings::{ProjectSettingsV2, ProjectSettingsV3, ProjectSettingsV4};
 use vb_exchange::export_formats::ExportFormat;
+
+pub type InnerDataStorage = InnerDataStorageV3;
+pub type ProjectData = ProjectDataV7;
 
 /// Storage for small data like users, passwords and login attempts
 ///
 /// This data is stored in memory permanently and doesn't get unloaded
 pub struct DataStorage{
-    pub data: RwLock<InnerDataStorageV2>,
+    pub data: RwLock<InnerDataStorage>,
     file_locked: AtomicBool,
 }
 
@@ -35,7 +39,7 @@ pub struct InnerDataStorageV1{
     #[bincode(with_serde)]
     pub login_data: HashMap<uuid::Uuid, Arc<RwLock<User>>>,
     #[bincode(with_serde)]
-    pub persons: HashMap<uuid::Uuid, Arc<RwLock<Person>>>,
+    pub persons: HashMap<uuid::Uuid, Arc<RwLock<PersonV1>>>,
     #[bincode(with_serde)]
     pub templates: HashMap<uuid::Uuid, Arc<RwLock<ProjectTemplateV1>>>
 }
@@ -46,9 +50,32 @@ pub struct InnerDataStorageV2{
     #[bincode(with_serde)]
     pub login_data: HashMap<uuid::Uuid, Arc<RwLock<User>>>,
     #[bincode(with_serde)]
-    pub persons: HashMap<uuid::Uuid, Arc<RwLock<Person>>>,
+    pub persons: HashMap<uuid::Uuid, Arc<RwLock<PersonV1>>>,
     #[bincode(with_serde)]
     pub templates: HashMap<uuid::Uuid, Arc<RwLock<ProjectTemplateV2>>>
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct InnerDataStorageV3{
+    /// HashMap with users, id as HashMap keys
+    #[bincode(with_serde)]
+    pub login_data: HashMap<uuid::Uuid, Arc<RwLock<User>>>,
+    #[bincode(with_serde)]
+    pub persons: HashMap<uuid::Uuid, Arc<RwLock<PersonV2>>>,
+    #[bincode(with_serde)]
+    pub templates: HashMap<uuid::Uuid, Arc<RwLock<ProjectTemplateV2>>>
+}
+
+impl From<InnerDataStorageV2> for InnerDataStorageV3{
+    fn from(value: InnerDataStorageV2) -> Self {
+        InnerDataStorageV3{
+            login_data: value.login_data,
+            persons: value.persons.into_iter()
+                .map(|(k, v)| (k, Arc::new(RwLock::new(PersonV2::from(v.read().unwrap().clone())))))
+                .collect(),
+            templates: value.templates,
+        }
+    }
 }
 
 impl From<InnerDataStorageV1> for InnerDataStorageV2{
@@ -66,7 +93,7 @@ impl DataStorage{
     /// Creates a new empty [DataStorage]
     pub fn new() -> Self {
         DataStorage {
-            data: RwLock::new(InnerDataStorageV2{
+            data: RwLock::new(InnerDataStorageV3{
                 login_data: Default::default(),
                 persons: Default::default(),
                 templates: Default::default(),
@@ -87,8 +114,6 @@ impl DataStorage{
             }
         }
     }
-
-
 
     pub async fn insert_template(&self, template: ProjectTemplateV2, settings: &Settings) -> Result<(), ()>{
         // Create template directory inside data if it doesn't exist
@@ -226,13 +251,30 @@ impl DataStorage{
                 }
 
                 match bincode::decode_from_std_read::<InnerDataStorageV1, _, _>(&mut file, bincode::config::standard()) {
-                    Ok(data) => return Ok(InnerDataStorageV2::from(data)),
+                    Ok(data) => return Ok(InnerDataStorageV3::from(InnerDataStorageV2::from(data))),
                     Err(e) => {
                         eprintln!("bincode decode error while loading data storage with version {} into memory: {}.", version, e);
                         return Err(())
                     },
                 };
             }else if *version == 2 {
+                // Load old project format
+                let mut file = match std::fs::File::open(format!("{}/{}", &path, file_path)) {
+                    Ok(file) => file,
+                    Err(e) => {
+                        eprintln!("io error while loading project file into memory: {}", e);
+                        return Err(())
+                    },
+                };
+                let data_storage: InnerDataStorageV2 = match bincode::decode_from_std_read(&mut file, bincode::config::standard()) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        eprintln!("bincode decode error while loading data storage file with version {} into memory: {}.", version, e);
+                        return Err(())
+                    },
+                };
+                return Ok(data_storage.into());
+            }else if *version == 3 {
                 // Load new project format
                 let mut file = match std::fs::File::open(format!("{}/{}", &path, file_path)) {
                     Ok(file) => file,
@@ -241,14 +283,14 @@ impl DataStorage{
                         return Err(())
                     },
                 };
-                let project = match bincode::decode_from_std_read(&mut file, bincode::config::standard()) {
+                let data_storage: InnerDataStorageV3 = match bincode::decode_from_std_read(&mut file, bincode::config::standard()) {
                     Ok(data) => data,
                     Err(e) => {
                         eprintln!("bincode decode error while loading data storage file with version {} into memory: {}.", version, e);
                         return Err(())
                     },
                 };
-                return Ok(project);
+                return Ok(data_storage);
             }else{
                 eprintln!("error while loading data storage into memory: unknown file version {}.", version);
                 return Err(())
@@ -282,7 +324,7 @@ impl DataStorage{
 
         // Save login data
         let cpy = self.data.read().unwrap().clone();
-        let path = format!("{}/data.2.bincode", settings.data_path);
+        let path = format!("{}/data.3.bincode", settings.data_path);
 
         match tokio::task::spawn_blocking(move || {
             let mut file = match std::fs::File::create(path) {
@@ -397,14 +439,14 @@ pub trait SingleFileLock {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProjectStorage {
     /// HashMap with project uuid and project data if project is already loaded into memory
-    pub projects: RwLock<HashMap<uuid::Uuid, ProjectStorageEntry>>,
-    pub file_locks: RwLock<HashMap<uuid::Uuid, Arc<AtomicBool>>>,
+    projects: RwLock<HashMap<uuid::Uuid, ProjectStorageEntry>>,
+    file_locks: RwLock<HashMap<uuid::Uuid, Arc<AtomicBool>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct ProjectStorageEntry{
     pub name: String,
-    pub data: Option<Arc<RwLock<ProjectDataV6>>>,
+    pub data: Option<Arc<RwLock<ProjectData>>>,
 }
 
 impl MultipleFileLocks for ProjectStorage{
@@ -416,6 +458,18 @@ impl MultipleFileLocks for ProjectStorage{
         self.file_locks.write().unwrap().insert(uuid.clone(), Arc::new(AtomicBool::new(false)));
         return self.file_locks.read().unwrap().get(uuid).unwrap().clone()
     }
+}
+
+#[derive(Debug)]
+pub enum ProjectStorageError{
+    IOError(std::io::Error),
+    ProjectNotFound,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProjectListEntry{
+    id: uuid::Uuid,
+    name: String
 }
 
 impl ProjectStorage {
@@ -541,7 +595,7 @@ impl ProjectStorage {
     ///
     /// # Returns
     /// * `Ok(uuid::Uuid)` - Project inserted successfully - returns the generated [uuid::Uuid] of the project
-    pub async fn insert_project(&self, mut project: ProjectDataV6, settings: &Settings) -> Result<uuid::Uuid, ()> {
+    pub async fn insert_project(&self, mut project: ProjectData, settings: &Settings) -> Result<uuid::Uuid, ()> {
         let uuid = uuid::Uuid::new_v4();
 
         // Update last edited to current time, so the project doesn't get unloaded immediately
@@ -626,7 +680,7 @@ impl ProjectStorage {
                             },
                         };
                         match bincode::decode_from_std_read::<OldProjectData, _, _>(&mut file, bincode::config::standard()) {
-                            Ok(project) => return Ok(ProjectDataV6::from(ProjectDataV5::from(ProjectDataV4::from(ProjectDataV3::from(ProjectDataV2::from(project)))))),
+                            Ok(project) => return Ok(ProjectDataV7::from(ProjectDataV6::from(ProjectDataV5::from(ProjectDataV4::from(ProjectDataV3::from(ProjectDataV2::from(project))))))),
                             Err(e) => {
                                 eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
                                 return Err(())
@@ -642,7 +696,7 @@ impl ProjectStorage {
                             },
                         };
                         match bincode::decode_from_std_read::<ProjectDataV2, _, _>(&mut file, bincode::config::standard()) {
-                            Ok(project) => return Ok(ProjectDataV6::from(ProjectDataV5::from(ProjectDataV4::from(ProjectDataV3::from(project))))),
+                            Ok(project) => return Ok(ProjectDataV7::from(ProjectDataV6::from(ProjectDataV5::from(ProjectDataV4::from(ProjectDataV3::from(project)))))),
                             Err(e) => {
                                 eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
                                 return Err(())
@@ -658,7 +712,7 @@ impl ProjectStorage {
                             },
                         };
                         match bincode::decode_from_std_read::<ProjectDataV3, _, _>(&mut file, bincode::config::standard()) {
-                            Ok(project) => return Ok(ProjectDataV6::from(ProjectDataV5::from(ProjectDataV4::from(project)))),
+                            Ok(project) => return Ok(ProjectDataV7::from(ProjectDataV6::from(ProjectDataV5::from(ProjectDataV4::from(project))))),
                             Err(e) => {
                                 eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
                                 return Err(())
@@ -674,7 +728,7 @@ impl ProjectStorage {
                             },
                         };
                         match bincode::decode_from_std_read::<ProjectDataV4, _, _>(&mut file, bincode::config::standard()) {
-                            Ok(project) => return Ok(ProjectDataV6::from(ProjectDataV5::from(project))),
+                            Ok(project) => return Ok(ProjectDataV7::from(ProjectDataV6::from(ProjectDataV5::from(project)))),
                             Err(e) => {
                                 eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
                                 return Err(())
@@ -690,7 +744,7 @@ impl ProjectStorage {
                             },
                         };
                         match bincode::decode_from_std_read::<ProjectDataV5, _, _>(&mut file, bincode::config::standard()) {
-                            Ok(project) => return Ok(ProjectDataV6::from(project)),
+                            Ok(project) => return Ok(ProjectDataV7::from(ProjectDataV6::from(project))),
                             Err(e) => {
                                 eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
                                 return Err(())
@@ -706,6 +760,23 @@ impl ProjectStorage {
                             },
                         };
                         let project: ProjectDataV6 = match bincode::decode_from_std_read(&mut file, bincode::config::standard()) {
+                            Ok(project) => project,
+                            Err(e) => {
+                                eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
+                                return Err(())
+                            },
+                        };
+                        return Ok(ProjectDataV7::from(project));
+                    }else if *version == 7 {
+                        // Load new project format
+                        let mut file = match std::fs::File::open(format!("{}/{}", &npath, project_path)) {
+                            Ok(file) => file,
+                            Err(e) => {
+                                eprintln!("io error while loading project file into memory: {}", e);
+                                return Err(())
+                            },
+                        };
+                        let project: ProjectDataV7 = match bincode::decode_from_std_read(&mut file, bincode::config::standard()) {
                             Ok(project) => project,
                             Err(e) => {
                                 eprintln!("bincode decode error while loading project file with version {} into memory: {}.", version, e);
@@ -738,7 +809,7 @@ impl ProjectStorage {
                         println!("Loaded project, inserting into memory storage.");
                         if let Some(tproject) = self.projects.write().unwrap().get_mut(uuid){
                                 // Update last edited to current time, so the project doesn't get unloaded immediately
-                                let mut project: ProjectDataV6 = project;
+                                let mut project: ProjectData = project;
                                 project.last_interaction = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
                                 tproject.name = project.name.clone();
                                 println!("Replacing project");
@@ -766,7 +837,7 @@ impl ProjectStorage {
         }
     }
 
-    pub async fn get_project(&self, uuid: &uuid::Uuid, settings: &Settings) -> Result<Arc<RwLock<ProjectDataV6>>, ()> {
+    pub async fn get_project(&self, uuid: &uuid::Uuid, settings: &Settings) -> Result<Arc<RwLock<ProjectData>>, ()> {
         // Check if project exists
         match self.projects.read().unwrap().get(uuid) {
             Some(project) => {
@@ -800,6 +871,41 @@ impl ProjectStorage {
         }
     }
 
+    pub async fn get_projects_list(&self) -> Vec<ProjectListEntry>{
+        self.projects
+            .read().unwrap()
+            .iter()
+            .map(|(id, project)| ProjectListEntry {
+                id: *id,
+                name: project.name.clone(),
+            })
+            .collect()
+    }
+
+    /// Deletes a project from memory and disk permanently
+    pub async fn delete_project(&self, project_id: &uuid::Uuid, settings: &Settings) -> Result<(), ProjectStorageError>{
+        debug!("Deleting project {}", project_id);
+
+        // Check if project exists:
+        if !self.projects.read().unwrap().contains_key(&project_id){
+            warn!("Tried to delete non-existent project {}", project_id);
+            return Err(ProjectStorageError::ProjectNotFound);
+        }
+
+        // Remove project from in-memory storage:
+        self.projects.write().unwrap().remove(&project_id);
+
+        // Remove project from disk:
+        let path = format!("{}/projects/{}", settings.data_path, project_id);
+
+        if let Err(e) = tokio::fs::remove_dir_all(path).await{
+            error!("Failed to delete project {} from disk: {}", project_id, e);
+            return Err(ProjectStorageError::IOError(e))
+        };
+
+        Ok(())
+    }
+
     async fn save_project_to_disk(&self, uuid: &uuid::Uuid, settings: &Settings) -> Result<(), ()> {
         // Get project
         let project = match self.projects.read().unwrap().get(&uuid) {
@@ -821,7 +927,7 @@ impl ProjectStorage {
             }
         }
 
-        let version = "6"; //TODO: auto detect latest version
+        let version = "7"; //TODO: auto detect latest version
 
         // Encode project data with bincode and save to disk
         let path = format!("{}/projects/{}/project.{}.bincode", settings.data_path, uuid, version);
@@ -863,14 +969,6 @@ impl ProjectStorage {
             }
         }
     }
-}
-
-#[derive(Serialize, Deserialize)]
-pub enum ProjectData{
-    V1(OldProjectData),
-    V2(ProjectDataV2),
-    V3(ProjectDataV3),
-    V4(ProjectDataV6)
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
@@ -958,6 +1056,35 @@ pub struct ProjectDataV6 {
     pub bibliography: HashMap<String, BibEntryV2> //TODO: add prefix & suffix support
 }
 
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectDataV7 {
+    pub name: String,
+    pub description: Option<String>,
+    #[bincode(with_serde)]
+    pub template_id: uuid::Uuid,
+    pub last_interaction: u64,
+    pub metadata: Option<ProjectMetadataV3>,
+    pub settings: Option<ProjectSettingsV5>,
+    pub sections: Vec<SectionOrTocV4>,
+    #[bincode(with_serde)]
+    pub bibliography: HashMap<String, BibEntryV2> //TODO: add prefix & suffix support
+}
+
+impl From<ProjectDataV6> for ProjectDataV7{
+    fn from(value: ProjectDataV6) -> Self {
+        ProjectDataV7 {
+            name: value.name,
+            description: value.description,
+            template_id: value.template_id,
+            last_interaction: value.last_interaction,
+            metadata: value.metadata.map(|v|v.into()),
+            settings: value.settings,
+            sections: value.sections.iter().map(|section| section.clone().into()).collect(),
+            bibliography: value.bibliography,
+        }
+    }
+}
+
 impl From<OldProjectData> for ProjectDataV2{
     fn from(value: OldProjectData) -> Self {
         ProjectDataV2{
@@ -1039,7 +1166,7 @@ impl From<ProjectDataV4> for ProjectDataV5 {
             template_id: value.template_id,
             last_interaction: value.last_interaction,
             metadata,
-            settings: value.settings,
+            settings: value.settings.map(|s|s.into()),
             sections: value.sections.iter().map(|section|section.clone().into()).collect(),
             bibliography: value.bibliography,
         }
@@ -1751,11 +1878,11 @@ impl BibEntryV2 {
     }
 }
 
-impl ProjectDataV6 {
+impl ProjectDataV7 {
     // TODO migrate to using path instead of the id and searching for it
-    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<SectionV3> {
+    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<SectionV4> {
         let pos = self.sections.iter().position(|section| match section {
-            SectionOrTocV3::Section(section) => section.id == Some(*section_to_remove_id),
+            SectionOrTocV4::Section(section) => section.id == Some(*section_to_remove_id),
             _ => false,
         });
 
@@ -1763,7 +1890,7 @@ impl ProjectDataV6 {
             Some(pos) => self.sections.remove(pos).into_section(),
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrTocV3::Section(section) = section {
+                    if let SectionOrTocV4::Section(section) = section {
                         if let Some(removed) = section.remove_child_section(section_to_remove_id) {
                             return Some(removed);
                         }
@@ -1773,9 +1900,9 @@ impl ProjectDataV6 {
             }
         }
     }
-    pub fn insert_section_as_first_child(&mut self, parent_section_id: &uuid::Uuid, section_to_insert: SectionV3) -> Result<(), ()> {
+    pub fn insert_section_as_first_child(&mut self, parent_section_id: &uuid::Uuid, section_to_insert: SectionV4) -> Result<(), ()> {
         for section in &mut self.sections {
-            if let SectionOrTocV3::Section(section) = section {
+            if let SectionOrTocV4::Section(section) = section {
                 // Check if this is the parent section
                 if section.id == Some(*parent_section_id) {
                     section.sub_sections.insert(0, section_to_insert);
@@ -1790,20 +1917,20 @@ impl ProjectDataV6 {
         }
         Err(())
     }
-    pub fn insert_section_after(&mut self, previous_element: &uuid::Uuid, section_to_insert: SectionV3) -> Result<(), ()> {
+    pub fn insert_section_after(&mut self, previous_element: &uuid::Uuid, section_to_insert: SectionV4) -> Result<(), ()> {
         let pos = self.sections.iter().position(|section| match section {
-            SectionOrTocV3::Section(section) => section.id == Some(*previous_element),
+            SectionOrTocV4::Section(section) => section.id == Some(*previous_element),
             _ => false,
         });
 
         match pos {
             Some(pos) => {
-                self.sections.insert(pos + 1, SectionOrTocV3::Section(section_to_insert));
+                self.sections.insert(pos + 1, SectionOrTocV4::Section(section_to_insert));
                 Ok(())
             }
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrTocV3::Section(section) = section {
+                    if let SectionOrTocV4::Section(section) = section {
                         if let Some(_) = section.insert_child_section_after(previous_element, &section_to_insert) {
                             return Ok(());
                         }
@@ -1816,14 +1943,14 @@ impl ProjectDataV6 {
 }
 
 pub fn get_section_by_path_mut<'a>(
-    project: &'a mut RwLockWriteGuard<ProjectDataV6>,
+    project: &'a mut RwLockWriteGuard<ProjectData>,
     path: &Vec<uuid::Uuid>
-) -> Result<&'a mut SectionV3, ApiError> {
+) -> Result<&'a mut SectionV4, ApiError> {
 
     // Find first section
     let first_section_opt = project.sections.iter_mut()
         .find_map(|section| {
-            if let SectionOrTocV3::Section(section) = section {
+            if let SectionOrTocV4::Section(section) = section {
                 if section.id.unwrap_or_default() == path[0] {
                     Some(section)
                 } else {
@@ -1866,12 +1993,12 @@ pub fn get_section_by_path_mut<'a>(
     Ok(current_section)
 }
 
-pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV6>, path: &Vec<uuid::Uuid>) -> Result<&'a SectionV3, ApiError>{
-    let mut first_section : Option<&SectionV3> = None;
+pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectData>, path: &Vec<uuid::Uuid>) -> Result<&'a SectionV4, ApiError>{
+    let mut first_section : Option<&SectionV4> = None;
 
     // Find first section
     for section in project.sections.iter(){
-        if let SectionOrTocV3::Section(section) = section{
+        if let SectionOrTocV4::Section(section) = section{
             if section.id.unwrap_or_default() == path[0]{
                 first_section = Some(section);
             }
@@ -1879,7 +2006,7 @@ pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV6>, path
     }
 
     // Return error if no first section found
-    let first_section: &SectionV3 = match first_section{
+    let first_section: &SectionV4 = match first_section{
         Some(first_section) => first_section,
         None => {
             println!("Couldn't find section with id {}", path[0]);
@@ -1887,7 +2014,7 @@ pub fn get_section_by_path<'a>(project: &'a RwLockReadGuard<ProjectDataV6>, path
         }
     };
 
-    let mut current_section: &SectionV3 = first_section;
+    let mut current_section: &SectionV4 = first_section;
 
     // Skip first element, because we already found it
     for part in path.iter().skip(1){

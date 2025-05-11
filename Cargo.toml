@@ -10,7 +10,8 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", branch="master"}
+vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", branch="2025.5"}
+#vb-exchange = { path = "../Verfassungsbooks-Exchange-Lib" } <-- use this if testing locally
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.15"
@@ -44,3 +45,9 @@ tokio-rustls = "0.26.0"
 zip = "2.2.0"
 log = "0.4"
 env_logger = "0.11"
+lingua = { version = "1.7.1", optional = true }
+language = { version = "0.1.3", features = ["serde"] }
+
+[features]
+default = ["language_detection"]
+language_detection = ["dep:lingua"]
