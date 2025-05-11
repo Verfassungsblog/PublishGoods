@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::data_storage::ProjectStorage;
 use crate::import::processing::{FileImportData, ImportJob, ImportJobData, ImportProcessor, ImportStatus, WordpressFilterData};
-use crate::import::wordpress::{Category, CategoryTree, CoAuthor, PostAcf, PostData, PostDataType, PostPreview, RenderedContent, WordpressAPI, WordpressAPIContext, WordpressAPIError};
+use crate::import::wordpress::{CategoryTree, PostDataType, PostPreview, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::api::{ApiError, ApiResult};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
@@ -183,7 +183,7 @@ pub async fn get_wordpress_categories(base_url: String, _session: Session) -> Js
                     info!("No categories found for wordpress api: {}", base_url);
                     ApiResult::new_data(vec![].into())
                 }
-                WordpressAPIError::Unsupported(e) => {
+                WordpressAPIError::Unsupported(_) => {
                     ApiResult::new_error(ApiError::InternalServerError)
                 }
                 WordpressAPIError::UnexpectedResponse => {
@@ -308,7 +308,6 @@ pub async fn poll_import_status(id: String, _session: Session, import_processor:
         Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid job id".to_string()))
     };
     // Try to find job with id in archive
-    let job_archive = import_processor.job_archive.read().unwrap();
     match import_processor.job_archive.read().unwrap().get(&id){
         Some(status) =>{
             return ApiResult::new_data(status.clone());

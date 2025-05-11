@@ -1,3 +1,5 @@
+/// Contains API routes to view and modify sections inside a project
+
 use std::sync::Arc;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};

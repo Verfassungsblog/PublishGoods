@@ -1,7 +1,6 @@
 use vb_exchange::projects::BlockType;
 use async_recursion::async_recursion;
 use std::collections::{HashMap, VecDeque};
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use chrono::NaiveDate;
@@ -18,14 +17,19 @@ use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::language_detection::detect_language_for_post;
-use crate::import::wordpress::{Post, PostData, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionV4};
+use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
+use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV3, SectionOrTocV4, SectionV4};
 use crate::utils::block_id_generator::generate_id;
 
+/// Struct wrapping all import jobs
 pub struct ImportProcessor{
-    pub settings: Settings,
-    pub project_storage: Arc<ProjectStorage>,
+    /// Copy of the global settings
+    settings: Settings,
+    /// Reference to the project storage
+    project_storage: Arc<ProjectStorage>,
+    /// Queue of import jobs that are still waiting for a worker thread
     pub job_queue: RwLock<VecDeque<ImportJob>>,
+    /// HashMap with information about jobs currently running or finished/failed
     pub job_archive: RwLock<HashMap<uuid::Uuid, ImportStatus>>,
 }
 

@@ -1,10 +1,9 @@
 use crate::data_storage::{DataStorage, ProjectStorageError, ProjectTemplateV2};
-use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, SectionOrTocV3, SectionOrTocV4};
-use crate::projects::SectionOrTocV2;
+use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, SectionOrTocV4};
 use rocket::serde::json::Json;
 use std::sync::Arc;
 use bincode::{Decode, Encode};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate};
 use language::Language;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
@@ -19,31 +18,46 @@ use crate::settings::Settings;
 
 pub mod sections;
 
+/// General return type of API Routes
+/// One of the fields error or data must be Some
+///
+/// Return data: Some(()) if api call succeeded and you don't want to return anything
 #[derive(Serialize, Deserialize)]
 pub struct ApiResult<T> {
+    /// Error occured
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ApiError>,
+    /// Return response data or Some(()) if succeeded but no return data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
 }
 
+/// Errors that may occur when calling api routes
 #[derive(Serialize, Deserialize)]
 pub enum ApiError{
+    /// The requested resource doesn't exist
     NotFound,
+    /// The request couldn't be fulfilled due to user error, see string
     BadRequest(String),
+    /// You didn't send a valid session cookie
     Unauthorized,
+    /// Something seriously went wrong, admin will find infos in logs
     InternalServerError,
+    /// e.g. Folder/File with this name already exists
     Conflict(String),
+    /// Other error, specified with a string
     Other(String),
 }
 
 impl<T> ApiResult<T>{
+    /// Creates a JSON response with an ['ApiResult'] where the error field is set to the error provided
     pub fn new_error(error: ApiError) -> Json<ApiResult<T>> {
         Json(Self {
             error: Some(error),
             data: None,
         })
     }
+    /// Creates a JSON response with an ['ApiResult'] where the data field is set to the data provided
     pub fn new_data(data: T) -> Json<ApiResult<T>> {
         Json(Self {
             error: None,
@@ -128,7 +142,10 @@ pub async fn get_project_metadata(project_id: String, _session: Session, setting
         ApiResult::new_data(None)
     }
 }
+
+/// Trait for HTTP PATCH routes
 pub trait Patch<P, T>{
+    /// Update type T with data from P
     fn patch(&mut self, patch: P) -> T;
 }
 
@@ -228,7 +245,7 @@ impl Patch<PatchProjectMetadata, ProjectMetadata> for ProjectMetadata {
 }
 
 
-
+/// Struct for HTTP PATCH routes to update the project metadata
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
 pub struct PatchProjectMetadata{
     /// Book Title
@@ -373,6 +390,11 @@ pub async fn patch_project_metadata(project_id: String, _session: Session, setti
     ApiResult::new_data(())
 }
 
+/// GET /api/csl/styles
+/// Returns a list of all csl styles available
+///
+/// Returns:
+/// ApiResult with a list of strings containing the csl style filenames
 #[get("/api/csl/styles")]
 pub async fn get_csl_styles(_session: Session, settings: &State<Settings>) -> Json<ApiResult<Vec<String>>> {
     let path = format!("{}/csl_styles", settings.data_path);
