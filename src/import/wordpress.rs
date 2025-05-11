@@ -1,9 +1,7 @@
-use std::collections::HashMap;
 use std::fmt::Display;
 use chrono::NaiveTime;
-use reqwest::header::{HeaderValue, ToStrError};
+use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
-use crate::main;
 
 /// Import from Wordpress API
 pub struct WordpressAPI{

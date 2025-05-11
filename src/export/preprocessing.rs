@@ -17,7 +17,7 @@ use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
 use crate::data_storage::{DataStorage, ProjectData};
-use crate::projects::{BlockData, NewContentBlock, SectionV4, SectionOrTocV3, SectionOrTocV4};
+use crate::projects::{BlockData, NewContentBlock, SectionV4, SectionOrTocV4};
 use crate::utils::csl::CslData;
 
 pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
@@ -484,7 +484,7 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
             }
         }
     });
-    if(add_soft_hyphens){
+    if add_soft_hyphens {
         hyphenate_text(res3.to_string(), dict)
     }else{
         res3.to_string()

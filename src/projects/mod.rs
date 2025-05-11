@@ -365,7 +365,7 @@ pub struct SectionV4 {
 }
 
 impl From<SectionV3> for SectionV4 {
-    fn from(mut value: SectionV3) -> Self {
+    fn from(value: SectionV3) -> Self {
         SectionV4 {
             id: value.id,
             css_classes: value.css_classes,

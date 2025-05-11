@@ -18,7 +18,7 @@ use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::language_detection::detect_language_for_post;
 use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV3, SectionOrTocV4, SectionV4};
+use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV4, SectionV4};
 use crate::utils::block_id_generator::generate_id;
 
 /// Struct wrapping all import jobs
@@ -1136,7 +1136,7 @@ impl ImportProcessor{
 
     async fn import_bib_entries(&self, project_id: uuid::Uuid, bib_file_path: &str, settings: &Settings) -> Result<(), ImportError>{
         let mut bib_file_content = String::new();
-        let mut bib_file = match tokio::fs::File::open(bib_file_path.clone()).await{
+        let mut bib_file = match tokio::fs::File::open(bib_file_path).await{
             Ok(bib_file) => bib_file,
             Err(e) => {
                 warn!("Error opening bib file {}: {}", bib_file_path, e);

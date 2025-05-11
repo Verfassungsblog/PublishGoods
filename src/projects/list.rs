@@ -9,7 +9,7 @@ use crate::settings::Settings;
 #[get("/")]
 pub async fn list_projects(_session: Session, project_storage: &State<Arc<ProjectStorage>>, settings: &State<Settings>) -> Template {
     // Get all projects
-    let mut projects = project_storage.get_projects_list().await;
+    let projects = project_storage.get_projects_list().await;
     #[derive(serde::Serialize)]
     struct DashboardData<'a>{
         projects: Vec<ProjectListEntry>,
