@@ -16,7 +16,7 @@ use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
-use crate::import::language_detection::detect_language_for_post;
+use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
 use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV4, SectionV4};
 use crate::utils::block_id_generator::generate_id;
@@ -339,7 +339,18 @@ impl ImportProcessor{
                 })
             }).collect();
         }
-        todo!()
+
+        let number_of_posts = posts.len();
+        let project = Arc::clone(&project_storage.get_project(&job.project_id, &self.settings).await.unwrap());
+
+        for (num, post) in posts.into_iter().enumerate(){
+            self.update_import_status(&job.id, ImportStatus::Processing(ProcessingDetails::new(num+1, Some(number_of_posts))));
+            if let Err(e) = self.import_wp_post(post, project.clone(), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await{
+                eprintln!("Error processing post for import: {:?}", e);
+                self.update_import_status(&job.id, ImportStatus::Failed(e));
+                break;
+            }
+        }
     }
 
     async fn process_job(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){
@@ -788,6 +799,7 @@ impl ImportProcessor{
             }
         }
 
+        section.metadata.lang = detect_language_for_section(&section);
         project_data.write().unwrap().sections.push(SectionOrTocV4::Section(section));
         Ok(())
 
@@ -804,7 +816,7 @@ impl ImportProcessor{
         if dom.tree_type == html_parser::DomVariant::Document{
             return Err(ImportError::HtmlConversionFailed)
         } //TODO support a full html document
-        
+
         let mut section = SectionV4 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
