@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-
 use rocket::form::Form;
 use rocket::fs::TempFile;
 use rocket::http::ContentType;
@@ -28,9 +27,12 @@ struct FileUpload<'r>{
     convert_footnotes_to_endnotes: bool,
 }
 
+/// Data structure used for WordPress import operations
 #[derive(Serialize, Deserialize)]
-pub enum WordpressImportData{
+pub enum WordpressImportData {
+    /// Collection of WordPress URLs to be processed for import
     WordpressLinks(Vec<String>),
+    /// Filter criteria for WordPress content import, containing host URL and various filtering options
     WordpressFilter(WordpressFilterData),
 }
 
@@ -38,7 +40,7 @@ pub enum WordpressImportData{
 #[derive(Serialize, Deserialize)]
 struct WordpressImportRequest{
     /// The unique identifier of the target project
-    project_id: uuid::Uuid,
+    project_id: Uuid,
     /// Data to be imported
     data: WordpressImportData,
     /// Whether to convert footnotes to endnotes in final output
@@ -49,8 +51,21 @@ struct WordpressImportRequest{
     convert_links: bool
 }
 
+/// POST /api/import/upload
+///
+/// Creates a new import job for files uploaded via a multipart form.
+///
+/// # Arguments
+///
+/// * `upload` - Form data containing files to import and import settings
+///
+/// # Returns
+///
+/// Returns a UUID that can be used to track the import job status.
+/// On error returns:
+/// - BadRequest if project_id is invalid or files have invalid content type
 #[post("/api/import/upload", data = "<upload>")]
-pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Session, settings: &State<Settings>, _project_storage: &State<Arc<ProjectStorage>>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<uuid::Uuid>>{
+pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Session, settings: &State<Settings>, _project_storage: &State<Arc<ProjectStorage>>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<Uuid>>{
     debug!("Uploading file for import for project {}", upload.project_id);
 
     let mut file_paths: VecDeque<(String, ContentType)> = VecDeque::new();
@@ -79,12 +94,12 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
         None => None
     };
 
-    let project_id = match uuid::Uuid::parse_str(&upload.project_id){
+    let project_id = match Uuid::parse_str(&upload.project_id){
         Ok(id) => id,
         Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid project id".to_string()))
     };
 
-    let id = uuid::Uuid::new_v4();
+    let id = Uuid::new_v4();
     let import_job = ImportJob{
         id,
         project_id,
@@ -102,8 +117,18 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
     ApiResult::new_data(id)
 }
 
+/// POST /api/import/wordpress
+///
+/// Creates a new WordPress import job and adds it to the import processor queue.
+/// Requires a valid session.
+///
+/// # Parameters
+/// * `job` - Import configuration containing target project, import data and processing options
+///
+/// # Returns
+/// Returns a UUID identifying the created import job
 #[post("/api/import/wordpress", data = "<job>")]
-pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: Session, _settings: &State<Settings>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<uuid::Uuid>>{
+pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: Session, _settings: &State<Settings>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<Uuid>>{
     let id = Uuid::new_v4();
 
     let job = job.into_inner();
@@ -306,7 +331,7 @@ pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, 
 ///   - `NotFound` if no job with the given ID exists
 #[get("/api/import/status/<id>")]
 pub async fn poll_import_status(id: String, _session: Session, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<ImportStatus>>{
-    let id = match uuid::Uuid::parse_str(&id){
+    let id = match Uuid::parse_str(&id){
         Ok(id) => id,
         Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid job id".to_string()))
     };
@@ -321,7 +346,7 @@ pub async fn poll_import_status(id: String, _session: Session, import_processor:
     // Job not in archive yet, try to find it in job queue
     let job = job_queue.iter().find(|job| job.id == id);
     match job{
-        Some(job) => ApiResult::new_data(ImportStatus::Pending),
+        Some(_) => ApiResult::new_data(ImportStatus::Pending),
         None => ApiResult::new_error(ApiError::NotFound)
     }
 }
