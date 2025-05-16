@@ -108,17 +108,26 @@ pub enum ImportJobData{
     WordpressFilter(WordpressFilterData)
 }
 
+/// Filter settings for WordPress imports
 #[derive(Serialize, Deserialize)]
 pub struct WordpressFilterData{
+    /// Host (without protocol) to get posts from
     pub wp_host: String,
+    /// optional filter to only include posts before a date
     pub before: Option<NaiveDate>,
+    /// optional filter to only include posts after a date
     pub after: Option<NaiveDate>,
+    /// optional filter to only include posts in at least one of the specified categories
     pub include_categories: Option<Vec<usize>>,
+    /// optional filter to exclude posts in at least one of the specified categories
     pub exclude_categories: Option<Vec<usize>>
 }
 
+/// Holds data for an import from files to convert via pandoc
 pub struct FileImportData{
+    /// List of (Path, ContentType) entries (one per section)
     pub files_to_process: VecDeque<(String, ContentType)>,
+    /// optional path to an bib file to import
     pub bib_file: Option<String>,
 }
 

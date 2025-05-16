@@ -22,7 +22,7 @@ function import_btn_handler() {
         document.getElementById("wizard-start").classList.add("hide");
         document.getElementById("wizard-pandoc-1").classList.remove("hide");
     });
-    Tools.add_event_listeners("#wizard-pandoc-upload-btn", "click", upload_files_handler);
+    //Tools.add_event_listeners("#wizard-pandoc-upload-btn", "click", upload_files_handler);
 
     Tools.add_event_listeners("#wizard-wp-btn", "click", function () {
         document.getElementById("wizard-start").classList.add("hide");
@@ -37,7 +37,7 @@ function import_btn_handler() {
         document.getElementById("wizard-wordpress-by-links").classList.remove("hide");
     });
     Tools.add_event_listeners("#wizard-wordpress-host-next", "click", wordpress_filter_load_categories);
-    Tools.add_event_listeners("#wizard-wordpress-upload-btn", "click", wordpress_import_handler);
+    //Tools.add_event_listeners("#wizard-wordpress-upload-btn", "click", wordpress_import_handler);
 }
 
 /**
@@ -239,7 +239,7 @@ async function wordpress_filter_show_filter_mask(category_tree: CategoryTree, ho
  *
  * @return {Promise<void>} A promise that resolves when the file upload handling is completed, or rejects if any errors occur.
  */
-async function upload_files_handler() {
+/*async function upload_files_handler() {
     let files = (<HTMLInputElement>document.getElementById("wizard-pandoc-upload-input")).files;
 
     let formData = new FormData();
@@ -292,7 +292,7 @@ async function upload_files_handler() {
         console.error(e);
         Tools.show_alert("Failed to upload files", "error");
     }
-}
+} */
 
 /**
  * Handles the import process for WordPress settings by gathering input data,
@@ -301,7 +301,7 @@ async function upload_files_handler() {
  *
  * @return {Promise<void>} A promise that resolves once the import process is completed and the UI is updated accordingly.
  */
-async function wordpress_import_handler() {
+/*async function wordpress_import_handler() {
     let data: any = {};
     data["links"] = [];
 
@@ -354,7 +354,7 @@ async function wordpress_import_handler() {
         status_text.innerHTML = "Failed :(";
         Tools.show_alert("Failed to upload files", "error");
     }
-}
+}*/
 
 window.addEventListener("load", async function () {
     // @ts-ignore

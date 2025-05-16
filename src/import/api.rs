@@ -25,6 +25,8 @@ struct FileUpload<'r>{
     project_id: String,
     /// Whether footnotes should be converted to endnotes during processing
     convert_footnotes_to_endnotes: bool,
+    shift_headings_up: bool,
+    convert_links: bool,
 }
 
 /// Data structure used for WordPress import operations
@@ -104,8 +106,8 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
         id,
         project_id,
         convert_footnotes_to_endnotes: upload.convert_footnotes_to_endnotes,
-        shift_headings_up: false,
-        convert_links: false,
+        shift_headings_up: upload.shift_headings_up,
+        convert_links: upload.convert_links,
         import_data: ImportJobData::FileImport(FileImportData{
             files_to_process: file_paths,
             bib_file: bib_file_path,
