@@ -1,3 +1,4 @@
+use std::time::SystemTime;
 use lingua::{Language, LanguageDetectorBuilder};
 use crate::import::wordpress::Post;
 use crate::projects::{BlockData, SectionV4};
@@ -15,10 +16,13 @@ use crate::projects::{BlockData, SectionV4};
 /// * `None` - If the language could not be detected or could not be mapped to a BCP-47 code
 pub fn detect_language_for_post(post: &Post) -> Option<language::Language>{
     debug!("Trying to detect language for post");
+    let start_time = SystemTime::now();
     
     let detector = LanguageDetectorBuilder::from_all_languages().with_low_accuracy_mode().build();
     let detected_lang = detector.detect_language_of(&post.content.rendered);
-    
+
+    debug!("Language detection took {} ms.", start_time.elapsed().unwrap().as_millis());
+
     match detected_lang {
         Some(lang) => match language_to_bcp47(lang){
             Some(lang) => Some(lang),

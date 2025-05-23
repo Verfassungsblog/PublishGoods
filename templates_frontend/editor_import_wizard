@@ -28,7 +28,7 @@
     <button class="btn btn-primary mt-2 float-end" id="wizard-pandoc-upload-btn">Upload</button>
 </div>
 <div id="wizard-progress" class="hide">
-    <p>Upload Progress:</p>
+    <p>Import Progress:</p>
     <progress id="wizard-upload-progress" value="0" max="100"></progress>
     <p class="mt-2">Status: <span id="wizard-upload-progress-status"></span></p>
 </div>
@@ -63,7 +63,7 @@
 <div id="wizard-wordpress-by-filter-3" class="hide">
 
 </div>
-<div id="wizard-wordpress-by-links" class="hide">
+<div id="wizard-wordpress-settings" class="hide">
     <p>Import Settings:</p>
     <div class="form-check">
         <input class="form-check-input" type="checkbox" id="wizard-wordpress-settings-convert-to-endnotes">
@@ -83,9 +83,12 @@
             Convert Links to Citations
         </label>
     </div>
+    <button class="btn btn-primary mt-2 float-end" id="wizard-wordpress-start-import-btn">Start Import</button>
+</div>
+<div id="wizard-wordpress-by-links" class="hide">
+
     <label for="wizard-wordpress-settings-links">Wordpress Post Links to import:</label>
     <textarea id="wizard-wordpress-settings-links" class="form-control">
 
     </textarea>
-    <button class="btn btn-primary mt-2 float-end" id="wizard-wordpress-upload-btn">Start Import</button>
 </div>

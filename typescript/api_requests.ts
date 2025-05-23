@@ -1422,8 +1422,8 @@ export interface WordpressFilterData{
     wp_host: string;
     before?: string; // ISO-8601 Date Format
     after?: string; // ISO-8601 Date Format
-    include_categories?: [number]; // Array of ids
-    exclude_categories?: [number];
+    include_categories?: number[]; // Array of ids
+    exclude_categories?: number[];
 }
 
 export type WordpressImportData = {

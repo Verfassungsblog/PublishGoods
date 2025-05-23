@@ -360,6 +360,7 @@ impl ImportProcessor{
                 break;
             }
         }
+        self.update_import_status(&job.id, ImportStatus::Complete);
     }
 
     async fn process_job(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){

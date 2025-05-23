@@ -1,6 +1,13 @@
 import * as Tools from "./tools";
 import * as API from "./api_requests";
-import {CategoryTree, ImportAPI, PreviewRequest} from "./api_requests";
+import {
+    CategoryTree,
+    ImportAPI,
+    PreviewRequest,
+    WordpressFilterData,
+    WordpressImportData,
+    WordpressImportRequest
+} from "./api_requests";
 
 /**
  * Handles the event when the Import button is clicked. This method initializes
@@ -229,7 +236,178 @@ async function wordpress_filter_show_filter_mask(category_tree: CategoryTree, ho
     });
 
 
-    await get_posts_preview();
+    get_posts_preview().then(_ => {});
+
+    document.getElementById("wizard-wordpress-filter-mask-next").addEventListener("click", async function(){
+        let wordpress_import_data : WordpressImportData = {
+            WordpressFilter: get_filter_settings(host),
+        };
+
+        document.getElementById("wizard-wordpress-by-filter-3").classList.add("hide");
+        await wordpress_show_settings(wordpress_import_data);
+    });
+}
+
+function get_filter_settings(host: string): WordpressFilterData{
+    let filter_data : WordpressFilterData = {
+        wp_host: host
+    };
+
+    if ((document.getElementById("wizard-wordpress-filter-mask-time-frame") as HTMLInputElement).checked){
+        filter_data.before = (document.getElementById("wizard-wordpress-filter-mask-time-frame-before") as HTMLInputElement).value || null;
+        filter_data.after = (document.getElementById("wizard-wordpress-filter-mask-time-frame-after") as HTMLInputElement).value || null;
+    }
+
+    if ((document.getElementById("wizard-wordpress-filter-mask-include-categories-check") as HTMLInputElement).checked){
+        let categories: number[] = [];
+        let checked_inputs = document.getElementById("wizard-wordpress-filter-mask-include-categories-list").querySelectorAll("input:checked") as NodeListOf<HTMLInputElement>;
+        checked_inputs.forEach((element) => {
+            categories.push(parseInt(element.value));
+        });
+        filter_data.include_categories = categories;
+    }
+
+    if ((document.getElementById("wizard-wordpress-filter-mask-exclude-categories-check") as HTMLInputElement).checked){
+        let categories: number[] = [];
+        let checked_inputs = document.getElementById("wizard-wordpress-filter-mask-exclude-categories-list").querySelectorAll("input:checked") as NodeListOf<HTMLInputElement>;
+        checked_inputs.forEach((element) => {
+            categories.push(parseInt(element.value));
+        });
+        filter_data.exclude_categories = categories;
+    }
+
+    return filter_data
+}
+
+async function wordpress_show_settings(import_data: WordpressImportData){
+    document.getElementById("wizard-wordpress-settings").classList.remove("hide");
+
+    let start_import_btn = document.getElementById("wizard-wordpress-start-import-btn") as HTMLInputElement;
+
+    start_import_btn.addEventListener("click", async function(){
+        let import_request : WordpressImportRequest = {
+            convert_links: (document.getElementById("wizard-wordpress-settings-convert-links") as HTMLInputElement).checked,
+            data: import_data,
+            endnotes: (document.getElementById("wizard-wordpress-settings-convert-to-endnotes") as HTMLInputElement).checked,
+            // @ts-ignore
+            project_id: globalThis.project_id,
+            shift_headings: (document.getElementById("wizard-wordpress-settings-shift-levels-up") as HTMLInputElement).checked
+        };
+
+        let api = API.ImportAPI();
+
+        try {
+            start_import_btn.disabled = true;
+            let job_id = await api.add_wp_import_job(import_request);
+            document.getElementById("wizard-wordpress-settings").classList.add("hide");
+            await show_import_status(job_id);
+        }catch (e) {
+            console.error(e);
+            Tools.show_alert("Couldn't add import job!", "danger");
+            start_import_btn.disabled = false;
+        }
+    })
+}
+
+async function show_import_status(import_job_id: string){
+    document.getElementById("wizard-progress").classList.remove("hide");
+
+    let status_text = document.getElementById("wizard-upload-progress-status");
+    let status_bar = document.getElementById("wizard-upload-progress") as HTMLProgressElement;
+    let overlay_wrapper = document.getElementById("overlay-wrapper");
+
+    let api = API.ImportAPI();
+
+    let error_counter = 0;
+    let update_status = setInterval(async function(){
+        try{
+            let res = await api.poll_import_status(import_job_id);
+            console.log(res);
+            if(typeof res === "string"){
+                switch (res){
+                    case "Pending":
+                        status_text.innerText = "Pending in Queue";
+                        break
+                    case "RequestWPPosts":
+                        status_text.innerText = "Requesting Posts from WordPress host";
+                        break
+                    case "Complete":
+                        status_text.innerText = "Import completed!";
+                        clearInterval(update_status);
+                        overlay_wrapper.classList.add("hide");
+                        Tools.show_alert("Import completed!", "success");
+                }
+            }else if ("Processing" in res){
+                let details = res.Processing;
+
+                if(details.total){
+                    status_bar.value = Math.round((details.current / details.total) * 100);
+                }
+
+                status_text.innerText = "Processing post "+details.current+" of "+details.total;
+            }else if ("Failed" in res) {
+                const error = res.Failed;
+                console.error(error);
+
+                let error_msg = "";
+
+                if(typeof error === "string"){
+                    switch (error){
+                        case "UnsupportedFileType":
+                            error_msg ="The file type of the file is not supported."
+                            break;
+                        case "InvalidFile":
+                            error_msg = "The uploaded file is corrupted."
+                            break;
+                        case "BibFileInvalid":
+                            error_msg = "The uploaded bibliography file is invalid."
+                            break;
+                        case "PandocError":
+                            error_msg = "Couldn't convert the uploaded file to HTML due to an Pandoc error. Contact your administrator."
+                            break;
+                        case "HtmlConversionFailed":
+                            error_msg = "Couldn't convert the uploaded file to HTML."
+                            break;
+                        case "ProjectNotFound":
+                            error_msg = "Couldn't find the project to import into. Was it deleted in the meantime?";
+                            break;
+                    }
+                }else if ("WordpressApiError" in error){
+                    let details = error.WordPressApiError as string;
+                    switch (details){
+                        case "SerdeParsingError":
+                            error_msg = "Invalid Import Request."
+                            break;
+                        case "ReqwestError":
+                            error_msg = "Couldn't connect to WordPress host."
+                            break;
+                        case "InvalidURL":
+                            error_msg = "URL to WordPress host seems invalid."
+                            break;
+                        case "NotFound":
+                            error_msg = "No posts found."
+                            break;
+                        case "UnexpectedResponse":
+                            error_msg = "Got an unexpected response from the WordPress host.";
+                            break;
+                    }
+                }
+
+                status_text.innerText = "Import failed :(";
+                clearInterval(update_status);
+                overlay_wrapper.classList.add("hide");
+                Tools.show_alert("Import failed: "+error_msg, "danger");
+            }
+        }catch(e){
+            error_counter += 1;
+            console.error(e);
+            Tools.show_alert("Couldn't fetch import job status!", "danger");
+            // Cancel Interval after 3 failures
+            if(error_counter >= 3){
+                clearInterval(update_status);
+            }
+        }
+    }, 500);
 }
 
 /**

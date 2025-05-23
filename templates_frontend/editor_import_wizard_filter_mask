@@ -48,5 +48,5 @@
 </div>
 <div id="wizard-filter-mask-footer">
     <span>You're going to import <span id="wizard-wordpress-filter-mask-affected-posts-num">N/A</span> posts.</span>
-    <button type="button" class="btn btn-primary">Next</button>
+    <button type="button" class="btn btn-primary float-end" id="wizard-wordpress-filter-mask-next">Next</button>
 </div>

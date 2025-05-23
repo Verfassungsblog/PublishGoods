@@ -19,9 +19,9 @@
     </div>
     {{#if children}}
     <div class="wizard-wp-subcategories">
-{{#each children}}
-{{> editor_import_wizard_filter_mask_categories prefix=prefix}}
-{{/each}}
-        </div>
+    {{#each children}}
+    {{> editor_import_wizard_filter_mask_categories prefix=../prefix}}
+    {{/each}}
+            </div>
     {{/if}}
 </div>
