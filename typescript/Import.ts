@@ -29,7 +29,7 @@ function import_btn_handler() {
         document.getElementById("wizard-start").classList.add("hide");
         document.getElementById("wizard-pandoc-1").classList.remove("hide");
     });
-    //Tools.add_event_listeners("#wizard-pandoc-upload-btn", "click", upload_files_handler);
+    Tools.add_event_listeners("#wizard-pandoc-upload-btn", "click", upload_files_handler);
 
     Tools.add_event_listeners("#wizard-wp-btn", "click", function () {
         document.getElementById("wizard-start").classList.add("hide");
@@ -39,12 +39,8 @@ function import_btn_handler() {
         document.getElementById("wizard-wordpress-1").classList.add("hide");
         document.getElementById("wizard-wordpress-by-filter-1").classList.remove("hide");
     });
-    Tools.add_event_listeners("#wizard-wp-links-btn", "click", function () {
-        document.getElementById("wizard-wordpress-1").classList.add("hide");
-        document.getElementById("wizard-wordpress-by-links").classList.remove("hide");
-    });
+    Tools.add_event_listeners("#wizard-wp-links-btn", "click", show_wordpress_links);
     Tools.add_event_listeners("#wizard-wordpress-host-next", "click", wordpress_filter_load_categories);
-    //Tools.add_event_listeners("#wizard-wordpress-upload-btn", "click", wordpress_import_handler);
 }
 
 /**
@@ -335,7 +331,8 @@ async function show_import_status(import_job_id: string){
                         status_text.innerText = "Import completed!";
                         clearInterval(update_status);
                         overlay_wrapper.classList.add("hide");
-                        Tools.show_alert("Import completed!", "success");
+                        location.reload();
+                        //Tools.show_alert("Import completed!", "success");
                 }
             }else if ("Processing" in res){
                 let details = res.Processing;
@@ -410,6 +407,33 @@ async function show_import_status(import_job_id: string){
     }, 500);
 }
 
+async function show_wordpress_links(){
+    document.getElementById("wizard-wordpress-1").classList.add("hide");
+    document.getElementById("wizard-wordpress-by-links").classList.remove("hide");
+
+    document.getElementById("wizard-wordpress-by-links-next").addEventListener("click", async function(){
+        let links = [];
+
+        let links_field = document.getElementById("wizard-wordpress-settings-links") as HTMLTextAreaElement;
+        for (let link of links_field.value.trim().split("\n")) {
+            links.push(link);
+        }
+
+        if(links.length == 0){
+            Tools.show_alert("Please insert at least one link.");
+            return;
+        }
+
+        let import_data : WordpressImportData = {
+            WordpressLinks: links
+        };
+
+        document.getElementById("wizard-wordpress-by-links").classList.add("hide");
+
+        await wordpress_show_settings(import_data);
+    });
+}
+
 /**
  * Handles file upload functionality. This method processes the selected files from specific HTML input elements, prepares the FormData object,
  * and sends it to a server via an API call. It monitors the upload and processing status and updates the progress bar and status messages accordingly.
@@ -417,7 +441,7 @@ async function show_import_status(import_job_id: string){
  *
  * @return {Promise<void>} A promise that resolves when the file upload handling is completed, or rejects if any errors occur.
  */
-/*async function upload_files_handler() {
+async function upload_files_handler() {
     let files = (<HTMLInputElement>document.getElementById("wizard-pandoc-upload-input")).files;
 
     let formData = new FormData();
@@ -431,108 +455,26 @@ async function show_import_status(import_job_id: string){
     }
 
     let convert_to_endnotes = (<HTMLInputElement>document.getElementById("wizard-pandoc-settings-convert-to-endnotes")).checked;
+    let shift_headings_up = (<HTMLInputElement>document.getElementById("wizard-pandoc-settings-shift-levels-up")).checked;
+    let convert_links = (<HTMLInputElement>document.getElementById("wizard-pandoc-settings-convert-links")).checked;
     formData.append("convert_footnotes_to_endnotes", convert_to_endnotes.toString());
+    formData.append("shift_headings_up", shift_headings_up.toString());
+    formData.append("convert_links", convert_links.toString());
 
     // @ts-ignore
     formData.append("project_id", globalThis.project_id);
 
-    document.getElementById("wizard-pandoc-1").classList.add("hide");
-    document.getElementById("wizard-progress").classList.remove("hide");
-    let status_text = document.getElementById("wizard-upload-progress-status");
-    let progress_bar = document.getElementById("wizard-upload-progress");
+    try{
+        let api = API.ImportAPI();
+        let job_id = await api.add_file_import_job(formData);
 
-    try {
-        let import_id = (await API.send_import_from_upload(formData))["data"];
-        let poller = setInterval(async function () {
-            let res = (await API.send_poll_import_status(import_id))["data"];
-            let status = res["status"];
-            progress_bar.setAttribute("max", res["length"]);
-            progress_bar.setAttribute("value", res["processed"]);
-            if (status == "Pending") {
-                status_text.innerHTML = "Waiting for files to be processed...";
-            }
-            if (status == "Processing") {
-                status_text.innerHTML = "Processing file " + res["processed"] + " of " + res["length"] + "...";
-            }
-            if (status == "Complete") {
-                status_text.innerHTML = "Files processed successfully!";
-                clearInterval(poller);
-                // Reload page:
-                location.reload();
-            }
-            if (status == "Failed") {
-                status_text.innerHTML = "Failed to process files!";
-                clearInterval(poller);
-            }
-        }, 250);
-
-    } catch (e) {
+        document.getElementById("wizard-pandoc-1").classList.add("hide");
+        await show_import_status(job_id);
+    }catch (e) {
         console.error(e);
-        Tools.show_alert("Failed to upload files", "error");
+        Tools.show_alert("Couldn't send import job :(", "danger");
     }
-} */
-
-/**
- * Handles the import process for WordPress settings by gathering input data,
- * sending it to the server for processing, and monitoring the progress of the import operation.
- * Updates the UI to reflect the current status of the process.
- *
- * @return {Promise<void>} A promise that resolves once the import process is completed and the UI is updated accordingly.
- */
-/*async function wordpress_import_handler() {
-    let data: any = {};
-    data["links"] = [];
-
-    let links_field = document.getElementById("wizard-wordpress-settings-links") as HTMLTextAreaElement;
-    console.log(links_field.value);
-    for (let link of links_field.value.trim().split("\n")) {
-        data["links"].push(link);
-    }
-    data["endnotes"] = (<HTMLInputElement>document.getElementById("wizard-wordpress-settings-convert-to-endnotes")).checked;
-    data["shift_headings"] = (<HTMLInputElement>document.getElementById("wizard-wordpress-settings-convert-to-endnotes")).checked;
-    data["convert_links"] = (<HTMLInputElement>document.getElementById("wizard-wordpress-settings-convert-links")).checked;
-    // @ts-ignore
-    data["project_id"] = globalThis.project_id;
-
-    console.log(data);
-
-    document.getElementById("wizard-wordpress-1").classList.add("hide");
-    document.getElementById("wizard-progress").classList.remove("hide");
-    let status_text = document.getElementById("wizard-upload-progress-status");
-    let progress_bar = document.getElementById("wizard-upload-progress");
-
-    try {
-        let import_id = (await API.send_import_from_wordpress(data))["data"];
-        let poller = setInterval(async function () {
-            let res = (await API.send_poll_import_status(import_id))["data"];
-            let status = res["status"];
-            console.log(res);
-            progress_bar.setAttribute("max", res["length"]);
-            progress_bar.setAttribute("value", res["processed"]);
-            if (status == "Pending") {
-                status_text.innerHTML = "Waiting for files to be processed...";
-            }
-            if (status == "Processing") {
-                status_text.innerHTML = "Processing file " + res["processed"] + " of " + res["length"] + "...";
-            }
-            if (status == "Complete") {
-                status_text.innerHTML = "Files processed successfully!";
-                clearInterval(poller);
-                // Reload page:
-                location.reload();
-            }
-            if (status == "Failed") {
-                status_text.innerHTML = "Failed to process files!";
-                clearInterval(poller);
-            }
-        }, 250);
-
-    } catch (e) {
-        console.error(e);
-        status_text.innerHTML = "Failed :(";
-        Tools.show_alert("Failed to upload files", "error");
-    }
-}*/
+}
 
 window.addEventListener("load", async function () {
     // @ts-ignore

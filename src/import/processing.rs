@@ -259,7 +259,7 @@ impl ImportProcessor{
 
             let project = project_storage.get_project(&job.project_id, &self.settings).await.unwrap();
 
-            match self.convert_file(file, content_type, project, job.convert_footnotes_to_endnotes).await {
+            match self.convert_file(file, content_type, project, job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await {
                 Ok(_) => {
                     debug!("File processed successfully");
                     // Remove file from temp directory
@@ -282,6 +282,7 @@ impl ImportProcessor{
                 error!("Error removing file from temp directory: {:?}", e);
             }
         }
+        self.update_import_status(&job.id, ImportStatus::Complete);
     }
 
     /// Imports WordPress posts from a wordpress host by filter criteria
@@ -505,7 +506,7 @@ impl ImportProcessor{
         Ok(posts.pop().unwrap())
     }
 
-    async fn convert_file(&self, file_path: &str, content_type: &ContentType, project: Arc<RwLock<ProjectData>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn convert_file(&self, file_path: &str, content_type: &ContentType, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
         let mut file = match tokio::fs::File::open(file_path).await{
             Ok(file) => file,
             Err(e) => {
@@ -558,7 +559,7 @@ impl ImportProcessor{
                     }
         }
 
-        self.import_html_from_pandoc(file_content, project, endnotes).await?;
+        self.import_html_from_pandoc(file_content, project, endnotes, shift_headings_up, convert_links).await?;
         Ok(())
     }
 
@@ -815,7 +816,7 @@ impl ImportProcessor{
 
     }
 
-    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectData>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError>{
         let dom = match Dom::parse(&input){
             Ok(dom) => dom,
             Err(e) => {
@@ -826,7 +827,7 @@ impl ImportProcessor{
         if dom.tree_type == html_parser::DomVariant::Document{
             return Err(ImportError::HtmlConversionFailed)
         } //TODO support a full html document
-
+        
         let mut section = SectionV4 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
@@ -942,7 +943,7 @@ impl ImportProcessor{
                 Node::Element(el) => {
                     match el.name.to_lowercase().as_str(){
                         "h1" | "h2" | "h4" | "h5" | "h6" => {
-                            let level = match el.name.to_lowercase().as_str(){
+                            let mut level = match el.name.to_lowercase().as_str(){
                                 "h1" => 1,
                                 "h2" => 2,
                                 "h3" => 3,
@@ -951,11 +952,20 @@ impl ImportProcessor{
                                 "h6" => 6,
                                 _ => 0
                             };
+                            
+                            if shift_headings{
+                                if level == 1{
+                                    level = 1
+                                }else{
+                                    level = level -1;
+                                }
+                            }
+                            
                             section.children.push(NewContentBlock{
                                 id: generate_id(&section),
                                 block_type: BlockType::Heading,
                                 data: BlockData::Heading {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                     level,
                                 },
                                 css_classes: vec![],
@@ -967,7 +977,7 @@ impl ImportProcessor{
                                 id: generate_id(&section),
                                 block_type: BlockType::Paragraph,
                                 data: BlockData::Paragraph {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                 },
                                 css_classes: vec![],
                                 revision_id: None,
@@ -985,7 +995,7 @@ impl ImportProcessor{
                             for node in el.children.iter() {
                                 if let Node::Element(el) = node {
                                     if el.name.to_lowercase() == "li" {
-                                        let result = self.dom_to_html(el.clone(), Some(&footnotes), endnotes, false, project_data.clone()).await;
+                                        let result = self.dom_to_html(el.clone(), Some(&footnotes), endnotes, convert_links, project_data.clone()).await;
                                         items.push(result);
                                     }
                                 }
@@ -1007,7 +1017,7 @@ impl ImportProcessor{
                                 id: generate_id(&section),
                                 block_type: BlockType::Quote,
                                 data: BlockData::Quote {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                     caption: "".to_string(),
                                     alignment: "".to_string(),
                                 },
@@ -1030,7 +1040,7 @@ impl ImportProcessor{
                                 id: generate_id(&section),
                                 block_type: BlockType::Paragraph,
                                 data: BlockData::Paragraph {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                 },
                                 css_classes: vec![],
                                 revision_id: None,
@@ -1043,6 +1053,11 @@ impl ImportProcessor{
             }
         }
 
+        if cfg!(feature = "language_detection"){
+            let lang = detect_language_for_section(&section);
+            section.metadata.lang = lang;
+        }
+        
         project_data.write().unwrap().sections.push(SectionOrTocV4::Section(section));
         Ok(())
     }

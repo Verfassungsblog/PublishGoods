@@ -21,6 +21,18 @@
             Convert Footnotes to Endnotes
         </label>
     </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="wizard-pandoc-settings-shift-levels-up">
+        <label class="form-check-label" for="wizard-pandoc-settings-shift-levels-up">
+            Shift Headings up by one level
+        </label>
+    </div>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="wizard-pandoc-settings-convert-links">
+        <label class="form-check-label" for="wizard-pandoc-settings-convert-links">
+            Convert Links to Citations
+        </label>
+    </div>
     <p>Please supply one file per Section.</p>
     <input type="file" class="form-control" id="wizard-pandoc-upload-input" multiple/>
     <p class="mt-2">Optional bibliography</p>
@@ -86,9 +98,7 @@
     <button class="btn btn-primary mt-2 float-end" id="wizard-wordpress-start-import-btn">Start Import</button>
 </div>
 <div id="wizard-wordpress-by-links" class="hide">
-
-    <label for="wizard-wordpress-settings-links">Wordpress Post Links to import:</label>
-    <textarea id="wizard-wordpress-settings-links" class="form-control">
-
-    </textarea>
+    <label for="wizard-wordpress-settings-links">Wordpress Post Links to import (one per line):</label>
+    <textarea id="wizard-wordpress-settings-links" class="form-control"></textarea>
+    <button class="form-control btn btn-primary float-end mt-2" style="width: auto;" id="wizard-wordpress-by-links-next">Next</button>
 </div>
