@@ -49,8 +49,7 @@
     <div class="col-9 d-flex">
         <select class="form-select" id="add_biography_lang" style="width: 200px;" aria-label="Language">
             <option value="none" disabled selected>Select Language</option>
-            <option value="DE" id="add_biography_lang_DE">German</option>
-            <option value="EN" id="add_biography_lang_EN">English</option>
+            {{> languages_options}}
         </select>
         <button class="btn btn-secondary ms-1" type="button" id="add_bio_btn">Add</button>
     </div>
