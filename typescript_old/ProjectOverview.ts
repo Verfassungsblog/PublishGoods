@@ -105,15 +105,6 @@ namespace Editor{
                     }
                 }
 
-                if(data["metadata"] != null && data["metadata"]["languages"] != null){
-                    // Set each entry to true if it is in the languages array
-                    let languages = {};
-                    for(let language of data["metadata"]["languages"]){
-                        languages[language] = true;
-                    }
-                    data["metadata"]["languages"] = languages;
-                }
-
                 if(data["metadata"] != null && data["metadata"]["license"] != null){
                     let license = data["metadata"]["license"];
                     data["metadata"]["license"] = {};
