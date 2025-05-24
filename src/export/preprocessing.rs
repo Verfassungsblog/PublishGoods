@@ -238,13 +238,14 @@ pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, 
             match lang{
                 Language::DeDe => Standard::from_embedded(hyphenation::Language::German1996).unwrap(),
                 Language::EnGb => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap(),
+                Language::EnUs => Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap(),
                 _ => {
                     error!("Unimplemented match for language!!!");
-                    Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
+                    Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap()
                 }
             }
         }
-        None => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
+        None => Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap()
     };
 
     let subtitle = match section.metadata.subtitle{

@@ -18,7 +18,7 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language>{
     debug!("Trying to detect language for post");
     let start_time = SystemTime::now();
     
-    let detector = LanguageDetectorBuilder::from_all_languages().with_low_accuracy_mode().build();
+    let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&post.content.rendered);
 
     debug!("Language detection took {} ms.", start_time.elapsed().unwrap().as_millis());
@@ -56,7 +56,7 @@ pub fn detect_language_for_section(section: &SectionV4) -> Option<language::Lang
             }
         }
     }).collect();
-    let detector = LanguageDetectorBuilder::from_all_languages().with_low_accuracy_mode().build();
+    let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&content_to_analyze);
     match detected_lang {
         Some(lang) => match language_to_bcp47(lang){
