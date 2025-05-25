@@ -5,6 +5,9 @@
 //! You have to create a new configuration file in the config folder to change the default settings.
 //! The default settings are stored in the file config/default.toml, create a new file named "local.toml" in the same folder.
 
+#![warn(missing_docs)]
+#![warn(clippy::missing_docs_in_private_items)]
+
 use std::sync::Arc;
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::rand_core::OsRng;
@@ -21,6 +24,7 @@ use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root
 use crate::utils::csl::CslData;
 use log::{debug, info};
 
+
 mod settings;
 pub mod session;
 pub mod projects;
@@ -32,7 +36,6 @@ pub mod settings_page;
 pub mod import;
 pub mod export;
 pub mod cleaner;
-
 
 #[macro_use] extern crate rocket;
 
@@ -101,11 +104,6 @@ async fn rocket() -> _ {
     let project_storage = Arc::new(data_storage::ProjectStorage::new());
     project_storage.load_from_directory(&settings).await.unwrap();
 
-    debug!("Loaded Projects:");
-    for project in project_storage.projects.read().unwrap().iter() {
-        debug!("Project: {:?}", project.1.name);
-    };
-
     info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings));
 
@@ -170,7 +168,9 @@ async fn rocket() -> _ {
             export::api::get_request_result,
             export::api::get_request_status,
             export::api::get_request_result_specific_file,
-            utils::lobid_proxy::search_gnd, session::logout::logout_page, session::login::login_page, session::login::process_login_form, projects::create::show_create_project, projects::api::delete_project_upload, projects::api::get_csl_styles, projects::create::process_create_project, projects::list::list_projects, projects::editor::show_editor, projects::bibliography_editor::show_bib_editor, projects::bibliography_editor::api::get_library, projects::bibliography_editor::api::update_bib_entry, projects::api::get_project_template, projects::api::set_project_template, projects::api::list_templates, projects::bibliography_editor::api::get_bib_entry, projects::bibliography_editor::api::search_bib_entry, projects::bibliography_editor::api::add_bib_entry, projects::api::get_project_metadata, projects::api::get_project_settings, projects::api::set_project_metadata, projects::api::set_project_settings, projects::api::add_author_to_project, projects::api::add_editor_to_project, projects::api::remove_editor_from_project, projects::api::remove_author_from_project, projects::api::add_keyword_to_project, projects::api::remove_keyword_from_project, projects::api::add_identifier_to_project, projects::api::remove_identifier_from_project, projects::api::update_identifier_in_project, projects::api::delete_project, persons::api::delete_person, persons::list::list_persons, persons::create::show_create_person, persons::api::create_person, persons::api::get_person, persons::api::update_person, persons::api::search_persons, projects::api::patch_project_metadata, projects::api::get_project_contents, projects::api::add_content, projects::api::move_content_after, projects::api::move_content_child_of, projects::api::sections::get_section, projects::api::sections::update_section, projects::api::sections::delete_section, projects::api::get_content_blocks_in_section, projects::api::set_content_blocks_in_section, projects::api::upload_to_project, import::upload::poll_import_status, projects::api::get_project_upload, import::upload::import_from_wordpress, export::download::download_rendering, settings_page::settings_page, settings_page::api::add_user, settings_page::api::update_user, settings_page::api::delete_user, import::upload::import_from_upload])
+            import::api::get_wordpress_categories,
+            import::api::get_wordpress_posts_preview,
+            utils::lobid_proxy::search_gnd, session::logout::logout_page, session::login::login_page, session::login::process_login_form, projects::create::show_create_project, projects::api::delete_project_upload, projects::api::get_csl_styles, projects::create::process_create_project, projects::list::list_projects, projects::editor::show_editor, projects::bibliography_editor::show_bib_editor, projects::bibliography_editor::api::get_library, projects::bibliography_editor::api::update_bib_entry, projects::api::get_project_template, projects::api::set_project_template, projects::api::list_templates, projects::bibliography_editor::api::get_bib_entry, projects::bibliography_editor::api::search_bib_entry, projects::bibliography_editor::api::add_bib_entry, projects::api::get_project_metadata, projects::api::get_project_settings, projects::api::set_project_metadata, projects::api::set_project_settings, projects::api::add_author_to_project, projects::api::add_editor_to_project, projects::api::remove_editor_from_project, projects::api::remove_author_from_project, projects::api::add_keyword_to_project, projects::api::remove_keyword_from_project, projects::api::add_identifier_to_project, projects::api::remove_identifier_from_project, projects::api::update_identifier_in_project, projects::api::delete_project, persons::api::delete_person, persons::list::list_persons, persons::create::show_create_person, persons::api::create_person, persons::api::get_person, persons::api::update_person, persons::api::search_persons, projects::api::patch_project_metadata, projects::api::get_project_contents, projects::api::add_content, projects::api::move_content_after, projects::api::move_content_child_of, projects::api::sections::get_section, projects::api::sections::update_section, projects::api::sections::delete_section, projects::api::get_content_blocks_in_section, projects::api::set_content_blocks_in_section, projects::api::upload_to_project, import::api::poll_import_status, projects::api::get_project_upload, import::api::import_from_wordpress, export::download::download_rendering, settings_page::settings_page, settings_page::api::add_user, settings_page::api::update_user, settings_page::api::delete_user, import::api::import_from_upload])
         .manage(SessionStorage::new())
         .manage(settings)
         .manage(data_storage)

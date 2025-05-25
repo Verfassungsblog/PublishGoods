@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::collections::BTreeMap;
-use crate::data_storage::{ProjectDataV6, ProjectTemplateV2};
+use crate::data_storage::{ProjectData, ProjectTemplateV2};
 use std::sync::Arc;
 use rocket::http::Status;
 use rocket::response::Redirect;
@@ -20,10 +20,15 @@ pub async fn show_create_project(_session: Session, data_storage: &State<Arc<Dat
     data.insert("templates", templates);
     Ok(Template::render("create_project", data))
 }
+
+/// Struct used for creating a new project
 #[derive(FromForm)]
 pub struct CreateProjectForm{
+    /// Project Name
     pub project_name: String,
+    /// uuid of the template used
     pub template_id: String,
+    /// optional project description
     pub project_description: Option<String>,
 }
 
@@ -43,7 +48,7 @@ pub async fn process_create_project(_session: Session, data: rocket::form::Form<
         return Err(Status::BadRequest)
     }
 
-    let project_data = ProjectDataV6 {
+    let project_data = ProjectData {
         name: data.project_name.clone(),
         description: data.project_description.clone(),
         template_id,

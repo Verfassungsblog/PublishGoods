@@ -3,6 +3,7 @@ use async_recursion::async_recursion;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use chrono::NaiveDate;
 use hayagriva::{io};
 
 use html_parser::{Dom, Node};
@@ -10,64 +11,130 @@ use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
-use crate::data_storage::{BibEntryV2, ProjectDataV6, ProjectStorage};
+use crate::data_storage::{BibEntryV2, ProjectData, ProjectStorage};
 use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
-use crate::import::wordpress::{WordpressAPI, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, SectionMetadataV3, SectionOrTocV2, SectionOrTocV3, SectionV3};
+use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
+use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
+use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV4, SectionV4};
 use crate::utils::block_id_generator::generate_id;
 
+/// Struct wrapping all import jobs
 pub struct ImportProcessor{
-    pub settings: Settings,
-    pub project_storage: Arc<ProjectStorage>,
+    /// Copy of the global settings
+    settings: Settings,
+    /// Reference to the project storage
+    project_storage: Arc<ProjectStorage>,
+    /// Queue of import jobs that are still waiting for a worker thread
     pub job_queue: RwLock<VecDeque<ImportJob>>,
-    pub job_archive: RwLock<HashMap<uuid::Uuid, Arc<RwLock<ImportJob>>>>,
+    /// HashMap with information about jobs currently running or finished/failed
+    pub job_archive: RwLock<HashMap<uuid::Uuid, ImportStatus>>,
 }
 
+/// Represents the current status for an important job
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportStatus{
+    /// The job is queued in the worker queue
     Pending,
-    Processing,
+    /// Posts are requested and transferred from a wordpress host
+    RequestWPPosts,
+    /// Content is being processed and converted
+    Processing(ProcessingDetails),
+    /// The job completed successfully
     Complete,
-    Failed
+    /// The job failed
+    Failed(ImportError)
 }
 
-#[derive(Debug)]
-pub enum ImportError{
-    UnknownFileType,
+/// Contains number of the item currently processed and the total number of items to process
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessingDetails{
+    /// Number of item currently processed
+    pub current: usize,
+    /// Total number of items to process. Will be None for WordpressFilter requests since we can't know the exact number of posts
+    pub total: Option<usize>,
+}
+
+impl ProcessingDetails{
+    pub fn new(current: usize, total: Option<usize>) -> Self{
+        ProcessingDetails{current, total}
+    }
+}
+
+/// Contains errors that may occur on imports
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ImportError {
+    /// The mime type is not supported or couldn't be read / guessed
     UnsupportedFileType,
+    /// The file couldn't be opened or read
     InvalidFile,
+    /// The bib file couldn't be opened or read
     BibFileInvalid,
+    /// Pandoc couldn't be executed or failed
     PandocError,
+    /// Couldn't parse the HTML produced after converting
     HtmlConversionFailed,
-    WordPressApiError(WordpressAPIError)
+    /// An WordPress API error occurred
+    WordPressApiError(WordpressAPIError),
+    /// The target project to import to doesn't exist
+    ProjectNotFound
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ImportStatusPoll{
-    pub status: ImportStatus,
-    pub processed: usize,
-    pub length: usize,
-}
-
-
+/// Represents a import job with settings and an ['ImportJobData'] variant.
 pub struct ImportJob{
+    /// ImportJob id, randomly generated
     pub id: uuid::Uuid,
+    /// ID of the project to import into
     pub project_id: uuid::Uuid,
-    pub length: usize,
-    pub processed: usize,
+    /// Whether we should convert all footnotes to endnotes
     pub convert_footnotes_to_endnotes: bool,
+    /// Whether we should shift all headings up 1 level (h2 becomes h1)
     pub shift_headings_up: bool,
+    /// Whether we should try to convert links into citations
     pub convert_links: bool,
-    pub files_to_process: Option<VecDeque<(String, ContentType)>>,
-    pub wordpress_post_links_to_convert: Option<VecDeque<String>>,
+    /// References where to find the items to imports
+    pub import_data: ImportJobData,
+}
+
+/// Contains the references to Links/Files/Wordpress Filters to import
+pub enum ImportJobData{
+    /// Import by a list of links to wordpress posts
+    WordpressLinks(Vec<String>),
+    /// Import by converting files via pandoc
+    FileImport(FileImportData),
+    /// Import by requesting posts matching filters from a wordpress host
+    WordpressFilter(WordpressFilterData)
+}
+
+/// Filter settings for WordPress imports
+#[derive(Serialize, Deserialize)]
+pub struct WordpressFilterData{
+    /// Host (without protocol) to get posts from
+    pub wp_host: String,
+    /// optional filter to only include posts before a date
+    pub before: Option<NaiveDate>,
+    /// optional filter to only include posts after a date
+    pub after: Option<NaiveDate>,
+    /// optional filter to only include posts in at least one of the specified categories
+    pub include_categories: Option<Vec<usize>>,
+    /// optional filter to exclude posts in at least one of the specified categories
+    pub exclude_categories: Option<Vec<usize>>
+}
+
+/// Holds data for an import from files to convert via pandoc
+pub struct FileImportData{
+    /// List of (Path, ContentType) entries (one per section)
+    pub files_to_process: VecDeque<(String, ContentType)>,
+    /// optional path to an bib file to import
     pub bib_file: Option<String>,
-    pub status: ImportStatus,
 }
 
 impl ImportProcessor{
+    fn update_import_status(&self, job_id: &uuid::Uuid, new_status: ImportStatus){
+        self.job_archive.write().unwrap().insert(job_id.clone(), new_status);
+    }
     pub fn start(settings: Settings, project_storage: Arc<ProjectStorage>) -> Arc<ImportProcessor>{
         let processor = Arc::new(ImportProcessor{
             settings,
@@ -83,27 +150,40 @@ impl ImportProcessor{
             loop{
                 // Check if there are any new jobs
                 let job_queue_len = processor_clone.job_queue.read().unwrap().len();
-                if job_queue_len > 0 && processor_clone.settings.max_import_threads > running_threads.load(std::sync::atomic::Ordering::Relaxed){
-                    debug!("Starting new import job..."); //TODO: new thread
+                if job_queue_len > 0 && processor_clone.settings.max_import_threads > running_threads.load(std::sync::atomic::Ordering::SeqCst){
+                    debug!("Starting new import job...");
 
                     let proc_clone = processor_clone.clone();
                     let running_threads_cpy = running_threads.clone();
 
                     tokio::spawn(async move{
                         running_threads_cpy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let mut job = match proc_clone.job_queue.write().unwrap().pop_front(){
+                        let job = match proc_clone.job_queue.write().unwrap().pop_front(){
                             Some(job) => job,
                             None => {
-                                running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                                running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                                 return;
                             }
                         };
-                        job.status = ImportStatus::Processing;
-                        let job = Arc::new(RwLock::new(job));
-                        proc_clone.job_archive.write().unwrap().insert(job.read().unwrap().id, job.clone());
+
+
+                        let total_to_process = match &job.import_data{
+                            ImportJobData::WordpressLinks(data) => {
+                                Some(data.len())
+                            }
+                            ImportJobData::FileImport(data) => {
+                                Some(data.files_to_process.len())
+                            }
+                            ImportJobData::WordpressFilter(data) => {
+                                None
+                            }
+                        };
+
+                        let status = ImportStatus::Processing(ProcessingDetails{ current: 0, total: total_to_process });
+                        proc_clone.job_archive.write().unwrap().insert(job.id.clone(), status);
                         proc_clone.process_job(job, proc_clone.project_storage.clone()).await;
                         debug!("Job finished");
-                        running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     });
                 }else{
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -114,112 +194,185 @@ impl ImportProcessor{
         processor
     }
 
-    async fn process_job(&self, job: Arc<RwLock<ImportJob>>, project_storage: Arc<ProjectStorage>){
-        let job = job.clone();
+    /// Import WordPress posts by post links
+    async fn process_wordpress_links(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){
+        let job_data = match job.import_data{
+            ImportJobData::WordpressLinks(links) => links,
+            _ => unreachable!(),
+        };
 
-        let project_id = job.read().unwrap().project_id.clone();
-        let bib_file = job.read().unwrap().bib_file.clone();
+        let project = match project_storage.get_project(&job.project_id, &self.settings).await{
+            Ok(project) => {
+                project.clone()
+            },
+            Err(_) => {
+                self.update_import_status(&job.id, ImportStatus::Failed(ImportError::ProjectNotFound));
+                return;
+            }
+        };
 
-        // Start with bib file if present
-        if let Some(bib_file) = bib_file{
-            match self.import_bib_entries(project_id, bib_file, &self.settings).await{
+        let total_num = job_data.len();
+        for (num, link) in job_data.iter().enumerate(){
+            debug!("Importing wordpress URL: {}", link);
+            // Update import status
+            self.update_import_status(&job.id, ImportStatus::Processing(ProcessingDetails::new(num, Some(total_num))));
+            if let Err(e) = self.import_by_url(link, Arc::clone(&project), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await{
+                error!("Import failed: {:?}", e);
+                self.update_import_status(&job.id, ImportStatus::Failed(e));
+                break;
+            }
+        }
+        self.update_import_status(&job.id, ImportStatus::Complete);
+    }
+
+    /// Import content from files via Pandoc.
+    /// Optionally imports bibliography entries from bibtex
+    async fn process_file_import(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){
+        let job_data = match job.import_data{
+            ImportJobData::FileImport(data) => data,
+            _ => unreachable!()
+        };
+
+        // Import bib entries from file if present
+        if let Some(bib_file) = job_data.bib_file{
+            match self.import_bib_entries(job.project_id, &bib_file, &self.settings).await{
                 Ok(_) => {
                     debug!("Bib entries imported successfully");
                 }
                 Err(e) => {
                     warn!("Error importing bib entries: {:?}", e);
-                    job.write().unwrap().status = ImportStatus::Failed;
+                    self.update_import_status(&job.id, ImportStatus::Failed(e));
                     return;
                 }
             }
+
+            // Remove bib file
+            if let Err(e) = tokio::fs::remove_file(bib_file).await{
+                error!("Error deleting bib file: {:?}", e);
+            }
         }
 
-        let files_to_process_cpy = job.read().unwrap().files_to_process.clone().unwrap_or_else(|| VecDeque::new());
+        let total_num = job_data.files_to_process.len();
+
+        for (num, (file, content_type)) in job_data.files_to_process.iter().enumerate(){
+            debug!("Processing file: {}", file);
+
+            let project = project_storage.get_project(&job.project_id, &self.settings).await.unwrap();
+
+            match self.convert_file(file, content_type, project, job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await {
+                Ok(_) => {
+                    debug!("File processed successfully");
+                    // Remove file from temp directory
+                    let res = tokio::fs::remove_file(file).await;
+                    if let Err(e) = res {
+                        error!("Error removing file from temp directory: {:?}", e);
+                    }
+                    self.update_import_status(&job.id, ImportStatus::Processing(ProcessingDetails::new(num+1, Some(total_num))))
+                }
+                Err(e) => {
+                    warn!("Error processing file: {:?}", e);
+                    self.update_import_status(&job.id, ImportStatus::Failed(e));
+                    break;
+                }
+            }
+        }
+        for (file, _) in job_data.files_to_process.iter() {
+            let res = tokio::fs::remove_file(file).await;
+            if let Err(e) = res {
+                error!("Error removing file from temp directory: {:?}", e);
+            }
+        }
+        self.update_import_status(&job.id, ImportStatus::Complete);
+    }
+
+    /// Imports WordPress posts from a wordpress host by filter criteria
+    async fn process_wordpress_filter(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){
+        let job_data = match job.import_data{
+            ImportJobData::WordpressFilter(data) => data,
+            _ => unreachable!(),
+        };
+
+        // Load all posts matching filter (except categories)
+        let api = match WordpressAPI::new(job_data.wp_host){
+            Ok(api) => api,
+            Err(e) => {
+                self.update_import_status(&job.id, ImportStatus::Failed(ImportError::WordPressApiError(e)));
+                return;
+            }
+        };
+
+        self.update_import_status(&job.id, ImportStatus::RequestWPPosts);
+
+        let mut posts: Vec<Post> = vec![];
+        let mut page = 1;
 
         loop{
-            let files_to_process_len = match &job.read().unwrap().files_to_process{
-                None => 0,
-                Some(ftp) => ftp.len()
-            };
-            let wordpress_to_process_len = match &job.read().unwrap().wordpress_post_links_to_convert{
-                None => 0,
-                Some(pltc) => pltc.len(),
-            };
-
-            if files_to_process_len > 0 {
-                debug!("Checking remaining files... {} remaining", files_to_process_len);
-                let res = job.write().unwrap().files_to_process.as_mut().unwrap().pop_front();
-                let (file, content_type) = match res {
-                    Some(f) => f,
-                    None => {
-                        job.write().unwrap().status = ImportStatus::Complete;
-                        break;
-                    }
-                };
-                debug!("Processing file: {}", file);
-
-                let project_id = job.read().unwrap().project_id.clone();
-                let endnotes = job.read().unwrap().convert_footnotes_to_endnotes;
-
-                let project = project_storage.get_project(&project_id, &self.settings).await.unwrap();
-
-                match self.convert_file(&file, content_type, project, endnotes).await {
-                    Ok(_) => {
-                        debug!("File processed successfully");
-                        // Remove file from temp directory
-                        let res = tokio::fs::remove_file(file).await;
-                        if let Err(e) = res {
-                            error!("Error removing file from temp directory: {:?}", e);
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Error processing file: {:?}", e);
-                        job.write().unwrap().status = ImportStatus::Failed;
-                        // Remove files from temp directory
-                        let res = tokio::fs::remove_file(file).await;
-                        if let Err(e) = res {
-                            error!("Error removing file from temp directory: {:?}", e);
-                        }
-                        for (file, _) in files_to_process_cpy.iter() {
-                            let res = tokio::fs::remove_file(file).await;
-                            if let Err(e) = res {
-                                error!("Error removing file from temp directory: {:?}", e);
-                            }
-                        }
-                        break;
-                    }
+            let data = match api.get_posts(WordpressAPIContext::View, Some(page), Some(100), None, job_data.after, None, job_data.before, None, None, None, None).await{
+                Ok(data) => data,
+                Err(e) => {
+                    warn!("Error fetching posts from WordpressAPI: {:?}", e);
+                    self.update_import_status(&job.id, ImportStatus::Failed(ImportError::WordPressApiError(e)));
+                    break;
                 }
-            }else if wordpress_to_process_len > 0{
+            };
 
-                let endnotes = job.read().unwrap().convert_footnotes_to_endnotes;
-                let shift_headings_up = job.read().unwrap().shift_headings_up;
-                let convert_links = job.read().unwrap().convert_links;
+            let mut res_posts = match data.data{
+                PostDataType::PostPreviews(_) => unreachable!(),
+                PostDataType::FullPosts(posts) => posts,
+            };
+            posts.append(&mut res_posts);
 
-                let project = project_storage.get_project(&project_id, &self.settings).await.unwrap();
+            if page >= data.total_pages{
+                break;
+            }else {
+                page = page + 1;
+            }
+        }
 
-                let res = job.write().unwrap().wordpress_post_links_to_convert.as_mut().unwrap().pop_front();
-                if let Some(url) = res{
-                    match self.import_by_url(&url, project, endnotes, shift_headings_up, convert_links).await{
-                        Ok(_) => {
-                            debug!("Wordpress Post processed successfully");
-                        }
-                        Err(e) => {
-                            warn!("Error processing wordpress post: {:?}", e);
-                            job.write().unwrap().status = ImportStatus::Failed;
-                            break;
-                        }
-                    }
-                }
-            }else{
-                job.write().unwrap().status = ImportStatus::Complete;
+        // Remove posts that don't meet our category filters
+        // We can't just use the wordpress filter mechanism for category filters since it fails on too many categories (url length > 2000 chars) on some wp hosts
+
+        // Include Category Filter
+        if let Some(include_categories) = job_data.include_categories{
+            posts = posts.into_iter().filter(|post| {
+                post.categories.iter().any(|category| {
+                    include_categories.contains(category)
+                })
+            }).collect();
+        }
+
+        // Exclude Category Filter
+        if let Some(exclude_categories) = job_data.exclude_categories{
+            posts = posts.into_iter().filter(|post| {
+                !post.categories.iter().any(|category| {
+                    exclude_categories.contains(category)
+                })
+            }).collect();
+        }
+
+        let number_of_posts = posts.len();
+        let project = Arc::clone(&project_storage.get_project(&job.project_id, &self.settings).await.unwrap());
+
+        for (num, post) in posts.into_iter().enumerate(){
+            self.update_import_status(&job.id, ImportStatus::Processing(ProcessingDetails::new(num+1, Some(number_of_posts))));
+            if let Err(e) = self.import_wp_post(post, project.clone(), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await{
+                eprintln!("Error processing post for import: {:?}", e);
+                self.update_import_status(&job.id, ImportStatus::Failed(e));
                 break;
             }
+        }
+        self.update_import_status(&job.id, ImportStatus::Complete);
+    }
 
-            job.write().unwrap().processed += 1;
+    async fn process_job(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){
+        match job.import_data{
+            ImportJobData::WordpressLinks(_) => self.process_wordpress_links(job, project_storage).await,
+            ImportJobData::FileImport(_) => self.process_file_import(job, project_storage).await,
+            ImportJobData::WordpressFilter(_) => self.process_wordpress_filter(job, project_storage).await,
         }
     }
 
-    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectDataV6>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
+    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
         let url = if url.ends_with("/"){
             url[..url.len()-1].to_string()
         }else{
@@ -232,12 +385,15 @@ impl ImportProcessor{
             None => return Err(ImportError::WordPressApiError(WordpressAPIError::InvalidURL))
         };
 
-        let api = WordpressAPI::new(host.to_string());
+        let api = match WordpressAPI::new(host.to_string()){
+            Ok(api) => api,
+            Err(e) => return Err(ImportError::WordPressApiError(e))
+        };
         let path = parsed_url.path();
 
         let slug = path.split("/").last().unwrap_or("");
 
-        if path.starts_with("/category/"){
+        /*if path.starts_with("/category/"){
             debug!("Found category link. Trying to import all posts within category");
             let category = match api.get_categories(None, None, None, None, None, Some(slug.to_string()), None, None, None).await{
                 Ok(categories) => categories,
@@ -250,7 +406,7 @@ impl ImportProcessor{
             let mut posts = vec![];
             let mut page = 1;
             loop{
-                let mut new_posts = match api.get_posts(Some(page), None, None, None, None, None, Some(vec![category.id]), None).await{
+                let mut new_posts = match api.get_posts(WordpressAPIContext::default(), Some(page), None, None, None, None, None, Some(vec![category.id]), None).await{
                     Ok(posts) => posts,
                     Err(e) => return Err(ImportError::WordPressApiError(e))
                 };
@@ -265,22 +421,16 @@ impl ImportProcessor{
                 self.import_single_post(post.slug.clone(), project.clone(), endnotes, shift_headings_up, convert_links, &api).await?;
             }
         }else{
+        TODO: reimplement category link importing
+        */
             debug!("Found non-category link. Trying to import single post");
-            self.import_single_post(slug.to_string(), project, endnotes, shift_headings_up, convert_links, &api).await?;
-        }
+            let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
+            self.import_wp_post(post, project.clone(), endnotes, shift_headings_up, convert_links).await?;
+        //}
         Ok(())
     }
 
-    async fn import_single_post(&self, slug: String, project: Arc<RwLock<ProjectDataV6>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, api: &WordpressAPI) -> Result<(), ImportError>{
-        let posts = match api.get_posts(None, None, None, None, None, Some(slug.to_string()), None, None).await{
-            Ok(posts) => posts,
-            Err(e) => return Err(ImportError::WordPressApiError(e))
-        };
-        if posts.len()!= 1{
-            return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
-        }
-        let post = posts.first().unwrap();
-
+    async fn import_wp_post(&self, post: Post, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
         let subtitle = match &post.acf{
             None => None,
             Some(acf) => {
@@ -311,32 +461,52 @@ impl ImportProcessor{
             }
         }
 
+        let lang = if cfg!(feature = "language_detection"){
+            detect_language_for_post(&post)
+        }else{
+            None
+        };
 
-        let section = SectionV3 {
+
+        let section = SectionV4 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV3 {
+            metadata: SectionMetadataV4 {
                 title: post.title.rendered.clone(),
                 toc_title_override: None,
                 subtitle,
                 toc_subtitle_override: None,
-                authors: vec![], //TODO create authors automatically
+                authors: vec![],
                 editors: vec![],
                 web_url: Some(post.link.clone()),
                 identifiers,
                 published: Some(post.date.date()),
                 last_changed: Some(post.modified),
-                lang: None,
+                lang,
             },
         };
 
         self.import_html_from_wp(section, post.content.rendered.clone(), project, endnotes, shift_headings_up, convert_links).await
     }
 
-    async fn convert_file(&self, file_path: &str, content_type: ContentType, project: Arc<RwLock<ProjectDataV6>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn get_wp_post_by_link(&self, slug: String, api: &WordpressAPI) -> Result<Post, ImportError>{
+        let mut posts = match api.get_posts(WordpressAPIContext::default(), None, None, None, None, None, None, None, Some(slug.to_string()), None, None).await{
+            Ok(posts) => match posts.data{
+                PostDataType::FullPosts(posts) => posts,
+                _ => return Err(ImportError::WordPressApiError(WordpressAPIError::InvalidURL))
+            },
+            Err(e) => return Err(ImportError::WordPressApiError(e))
+        };
+        if posts.len()!= 1{
+            return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
+        }
+        Ok(posts.pop().unwrap())
+    }
+
+    async fn convert_file(&self, file_path: &str, content_type: &ContentType, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
         let mut file = match tokio::fs::File::open(file_path).await{
             Ok(file) => file,
             Err(e) => {
@@ -389,7 +559,7 @@ impl ImportProcessor{
                     }
         }
 
-        self.import_html_from_pandoc(file_content, project, endnotes).await?;
+        self.import_html_from_pandoc(file_content, project, endnotes, shift_headings_up, convert_links).await?;
         Ok(())
     }
 
@@ -429,7 +599,7 @@ impl ImportProcessor{
             }
     }
 
-    async fn import_html_from_wp(&self, mut section: SectionV3, input: String, project_data: Arc<RwLock<ProjectDataV6>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
+    async fn import_html_from_wp(&self, mut section: SectionV4, input: String, project_data: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -640,12 +810,13 @@ impl ImportProcessor{
             }
         }
 
-        project_data.write().unwrap().sections.push(SectionOrTocV3::Section(section));
+        section.metadata.lang = detect_language_for_section(&section);
+        project_data.write().unwrap().sections.push(SectionOrTocV4::Section(section));
         Ok(())
 
     }
 
-    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectDataV6>>, endnotes: bool) -> Result<(), ImportError>{
+    async fn import_html_from_pandoc(&self, input: String, project_data: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError>{
         let dom = match Dom::parse(&input){
             Ok(dom) => dom,
             Err(e) => {
@@ -657,13 +828,13 @@ impl ImportProcessor{
             return Err(ImportError::HtmlConversionFailed)
         } //TODO support a full html document
         
-        let mut section = SectionV3 {
+        let mut section = SectionV4 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV3 {
+            metadata: SectionMetadataV4 {
                 title: "Imported Section".to_string(),
                 toc_title_override: None,
                 subtitle: None,
@@ -772,7 +943,7 @@ impl ImportProcessor{
                 Node::Element(el) => {
                     match el.name.to_lowercase().as_str(){
                         "h1" | "h2" | "h4" | "h5" | "h6" => {
-                            let level = match el.name.to_lowercase().as_str(){
+                            let mut level = match el.name.to_lowercase().as_str(){
                                 "h1" => 1,
                                 "h2" => 2,
                                 "h3" => 3,
@@ -781,11 +952,20 @@ impl ImportProcessor{
                                 "h6" => 6,
                                 _ => 0
                             };
+                            
+                            if shift_headings{
+                                if level == 1{
+                                    level = 1
+                                }else{
+                                    level = level -1;
+                                }
+                            }
+                            
                             section.children.push(NewContentBlock{
                                 id: generate_id(&section),
                                 block_type: BlockType::Heading,
                                 data: BlockData::Heading {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                     level,
                                 },
                                 css_classes: vec![],
@@ -797,7 +977,7 @@ impl ImportProcessor{
                                 id: generate_id(&section),
                                 block_type: BlockType::Paragraph,
                                 data: BlockData::Paragraph {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                 },
                                 css_classes: vec![],
                                 revision_id: None,
@@ -815,7 +995,7 @@ impl ImportProcessor{
                             for node in el.children.iter() {
                                 if let Node::Element(el) = node {
                                     if el.name.to_lowercase() == "li" {
-                                        let result = self.dom_to_html(el.clone(), Some(&footnotes), endnotes, false, project_data.clone()).await;
+                                        let result = self.dom_to_html(el.clone(), Some(&footnotes), endnotes, convert_links, project_data.clone()).await;
                                         items.push(result);
                                     }
                                 }
@@ -837,7 +1017,7 @@ impl ImportProcessor{
                                 id: generate_id(&section),
                                 block_type: BlockType::Quote,
                                 data: BlockData::Quote {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                     caption: "".to_string(),
                                     alignment: "".to_string(),
                                 },
@@ -860,7 +1040,7 @@ impl ImportProcessor{
                                 id: generate_id(&section),
                                 block_type: BlockType::Paragraph,
                                 data: BlockData::Paragraph {
-                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, false, project_data.clone()).await,
+                                    text: self.dom_to_html(el, Some(&footnotes), endnotes, convert_links, project_data.clone()).await,
                                 },
                                 css_classes: vec![],
                                 revision_id: None,
@@ -873,13 +1053,18 @@ impl ImportProcessor{
             }
         }
 
-        project_data.write().unwrap().sections.push(SectionOrTocV3::Section(section));
+        if cfg!(feature = "language_detection"){
+            let lang = detect_language_for_section(&section);
+            section.metadata.lang = lang;
+        }
+        
+        project_data.write().unwrap().sections.push(SectionOrTocV4::Section(section));
         Ok(())
     }
 
     //TODO: maybe also copy classes and ids from the html
     #[async_recursion]
-    async fn dom_to_html(&self, ele: html_parser::Element, footnotes: Option<&HashMap<String, String>>, endnotes: bool, convert_links: bool, project_data: Arc<RwLock<ProjectDataV6>>) -> String{
+    async fn dom_to_html(&self, ele: html_parser::Element, footnotes: Option<&HashMap<String, String>>, endnotes: bool, convert_links: bool, project_data: Arc<RwLock<ProjectData>>) -> String{
         let mut html = String::new();
         for node in ele.children{
             match node{
@@ -986,9 +1171,9 @@ impl ImportProcessor{
         html
     }
 
-    async fn import_bib_entries(&self, project_id: uuid::Uuid, bib_file_path: String, settings: &Settings) -> Result<(), ImportError>{
+    async fn import_bib_entries(&self, project_id: uuid::Uuid, bib_file_path: &str, settings: &Settings) -> Result<(), ImportError>{
         let mut bib_file_content = String::new();
-        let mut bib_file = match tokio::fs::File::open(bib_file_path.clone()).await{
+        let mut bib_file = match tokio::fs::File::open(bib_file_path).await{
             Ok(bib_file) => bib_file,
             Err(e) => {
                 warn!("Error opening bib file {}: {}", bib_file_path, e);

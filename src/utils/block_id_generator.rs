@@ -1,8 +1,8 @@
 use rand::{Rng, thread_rng};
-use crate::projects::SectionV3;
+use crate::projects::SectionV4;
 
 /// Generates a block id with 10 random characters which is unique for the section
-pub fn generate_id(section: &SectionV3) -> String{
+pub fn generate_id(section: &SectionV4) -> String{
     let existing_ids: Vec<String> = section.children.iter().map(|child| child.id.clone()).collect();
 
     loop {

@@ -1,6 +1,7 @@
 use hayagriva::{BufWriteFormat, CitationItem, CitationRequest};
-use vb_exchange::projects::{Language, Person, PreparedContentBlock, PreparedEndnote, PreparedLanguage, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
+use vb_exchange::projects::{Person, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
 use vb_exchange::projects::PreparedLicense;
+use language::Language;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -15,11 +16,11 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectDataV6};
-use crate::projects::{BlockData, NewContentBlock, SectionV3, SectionOrTocV3};
+use crate::data_storage::{DataStorage, ProjectData};
+use crate::projects::{BlockData, NewContentBlock, SectionV4, SectionOrTocV4};
 use crate::utils::csl::CslData;
 
-pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
+pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata{
@@ -66,7 +67,7 @@ pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<Data
 
     let mut data = vec![];
     for section in project_data.sections{
-        if let SectionOrTocV3::Section(section) = section{
+        if let SectionOrTocV4::Section(section) = section{
             if let Some(id) = section.id{
                 // Check if only specified sections should be included
                 match &sections_to_include{
@@ -123,7 +124,7 @@ pub async fn prepare_project(project_data: ProjectDataV6, data_storage: Arc<Data
     })
 }
 
-pub fn render_citations(project: &ProjectDataV6, csl_data: Arc<CslData>) -> HashMap<String, String>{
+pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMap<String, String>{
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();
@@ -200,8 +201,10 @@ pub fn render_citations(project: &ProjectDataV6, csl_data: Arc<CslData>) -> Hash
     res
 }
 
+
+
 #[async_recursion]
-pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
+pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
     let published = match section.metadata.published{
         Some(date) => Some(date.into()),
         None => None
@@ -234,22 +237,9 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
     // Load hyphenation dictionary for the language
     let dict = match &section.metadata.lang{
         Some(lang) => {
-            match lang{
-                Language::DE => Standard::from_embedded(hyphenation::Language::German1996).unwrap(),
-                Language::EN => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
-            }
+            get_hyphenation_dict(lang).unwrap_or_else(|| Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap())
         }
-        None => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap()
-    };
-
-    let lang = match section.metadata.lang{
-        Some(lang) => {
-            match lang{
-                Language::DE => PreparedLanguage{de: true, en: false},
-                Language::EN => PreparedLanguage{de: false, en: true}
-            }
-        }
-        None => PreparedLanguage{de: false, en: false}
+        None => Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap()
     };
 
     let subtitle = match section.metadata.subtitle{
@@ -279,7 +269,7 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
         web_url: section.metadata.web_url,
         identifiers: section.metadata.identifiers,
         published,
-        lang,
+        lang: section.metadata.lang,
     };
 
     let mut content = vec![];
@@ -312,6 +302,116 @@ pub async fn render_section(section: SectionV3, data_storage: Arc<DataStorage>, 
     }
 }
 
+/// Returns the hyphenation dictionary for the given language, if available.
+///
+/// The function attempts to map the provided `Language` enum variant to its corresponding
+/// `hyphenation::Language` variant. If a supported mapping is found, it loads and returns
+/// the hyphenation dictionary using `Standard::from_embedded`.  
+/// If the language is not supported, `None` is returned.
+///
+/// # Arguments
+/// * `language` - A reference to a `Language` enum variant indicating the language for which
+///   the hyphenation dictionary should be retrieved.
+///
+/// # Returns
+/// An `Option<Standard>` instance containing the hyphenation dictionary if available,
+/// or `None` if the language has no hyphenation support.
+///
+fn get_hyphenation_dict(language: &Language) -> Option<Standard>{
+    let lang = match language {
+        Language::AfZa => Some(hyphenation::Language::Afrikaans),
+        Language::SqAl => Some(hyphenation::Language::Albanian),
+        Language::HyAm => Some(hyphenation::Language::Armenian),
+        Language::AsIn => Some(hyphenation::Language::Assamese),
+        Language::EuEs => Some(hyphenation::Language::Basque),
+        Language::BeBy => Some(hyphenation::Language::Belarusian),
+        Language::BnBd => Some(hyphenation::Language::Bengali),
+        Language::BnIn => Some(hyphenation::Language::Bengali),
+        Language::CaEs => Some(hyphenation::Language::Catalan),
+        Language::CaEsValencia => Some(hyphenation::Language::Catalan),
+        Language::ZhCn => Some(hyphenation::Language::Chinese),
+        Language::ZhHk => Some(hyphenation::Language::Chinese),
+        Language::ZhMo => Some(hyphenation::Language::Chinese),
+        Language::ZhSg => Some(hyphenation::Language::Chinese),
+        Language::ZhTw => Some(hyphenation::Language::Chinese),
+        Language::HrBa => Some(hyphenation::Language::Croatian),
+        Language::HrHr => Some(hyphenation::Language::Croatian),
+        Language::CsCz => Some(hyphenation::Language::Czech),
+        Language::DaDk => Some(hyphenation::Language::Danish),
+        Language::NlNl => Some(hyphenation::Language::Dutch),
+        Language::NlBe => Some(hyphenation::Language::Dutch),
+        Language::EnGb => Some(hyphenation::Language::EnglishGB),
+        Language::EnUs => Some(hyphenation::Language::EnglishUS),
+        Language::EtEe => Some(hyphenation::Language::Estonian),
+        Language::FiFi => Some(hyphenation::Language::Finnish),
+        Language::Fr029 | Language::FrBe | Language::FrCa | Language::FrCd | Language::FrCh | Language::FrCi | Language::FrCm | Language::FrFr | Language::FrHt | Language::FrLu | Language::FrMa | Language::FrMc | Language::FrMl | Language::FrRe | Language::FrSn => Some(hyphenation::Language::French),
+        Language::GlEs => Some(hyphenation::Language::Galician),
+        Language::KaGe => Some(hyphenation::Language::Georgian),
+        Language::DeDe | Language::DeAt | Language::DeLi | Language::DeLu => Some(hyphenation::Language::German1996),
+        Language::DeCh => Some(hyphenation::Language::GermanSwiss),
+        Language::GuIn => Some(hyphenation::Language::Gujarati),
+        Language::HiIn => Some(hyphenation::Language::Hindi),
+        Language::HuHu => Some(hyphenation::Language::Hungarian),
+        Language::IsIs => Some(hyphenation::Language::Icelandic),
+        Language::IdId => Some(hyphenation::Language::Indonesian),
+        Language::GaIe => Some(hyphenation::Language::Irish),
+        Language::ItCh | Language::ItIt => Some(hyphenation::Language::Italian),
+        Language::KnIn => Some(hyphenation::Language::Kannada),
+        Language::LaVa => Some(hyphenation::Language::Latin),
+        Language::LvLv => Some(hyphenation::Language::Latvian),
+        Language::LtLt => Some(hyphenation::Language::Lithuanian),
+        Language::MkMk => Some(hyphenation::Language::Macedonian),
+        Language::MlIn => Some(hyphenation::Language::Malayalam),
+        Language::MrIn => Some(hyphenation::Language::Marathi),
+        Language::MnMn | Language::MnMongMn => Some(hyphenation::Language::Mongolian),
+        Language::NbNo => Some(hyphenation::Language::NorwegianBokmal),
+        Language::NnNo => Some(hyphenation::Language::NorwegianNynorsk),
+        Language::OcFr => Some(hyphenation::Language::Occitan),
+        Language::OrIn => Some(hyphenation::Language::Oriya),
+        Language::PaIn | Language::PaArabPk => Some(hyphenation::Language::Panjabi),
+        Language::PlPl => Some(hyphenation::Language::Polish),
+        Language::PtPt | Language::PtBr => Some(hyphenation::Language::Portuguese),
+        Language::RoMd | Language::RoRo => Some(hyphenation::Language::Romanian),
+        Language::RmCh => Some(hyphenation::Language::Romansh),
+        Language::RuMd | Language::RuRu => Some(hyphenation::Language::Russian),
+        Language::SaIn => Some(hyphenation::Language::Sanskrit),
+        Language::SrCyrlBa | Language::SrCyrlMe | Language::SrCyrlRs => Some(hyphenation::Language::SerbianCyrillic),
+        Language::SkSk => Some(hyphenation::Language::Slovak),
+        Language::SlSi => Some(hyphenation::Language::Slovenian),
+        Language::Es419 | Language::EsAr | Language::EsBo | Language::EsCl | Language::EsCo | Language::EsCr | Language::EsCu | Language::EsDo | Language::EsEc | Language::EsEs | Language::EsGt | Language::EsHn | Language::EsMx | Language::EsNi | Language::EsPa | Language::EsPe | Language::EsPr | Language::EsPy | Language::EsSv | Language::EsUs | Language::EsUy | Language::EsVe => Some(hyphenation::Language::Spanish),
+        Language::SvFi | Language::SvSe => Some(hyphenation::Language::Swedish),
+        Language::TaIn | Language::TaLk => Some(hyphenation::Language::Tamil),
+        Language::TeIn => Some(hyphenation::Language::Telugu),
+        Language::ThTh => Some(hyphenation::Language::Thai),
+        Language::TrTr => Some(hyphenation::Language::Turkish),
+        Language::TkTm => Some(hyphenation::Language::Turkmen),
+        Language::UkUa => Some(hyphenation::Language::Ukrainian),
+        Language::HsbDe => Some(hyphenation::Language::Uppersorbian),
+        Language::CyGb => Some(hyphenation::Language::Welsh),
+        _ => {
+            None
+        }
+    };
+    match lang{
+        Some(lang) => Some(Standard::from_embedded(lang).unwrap()),
+        None => None
+    }
+}
+
+/// Hyphenates each word in the provided text using the given hyphenation dictionary,
+/// inserting soft hyphens (`\u{00ad}`) at appropriate positions. 
+///
+/// Words that appear to be part of HTML tags or contain certain special characters
+/// (`<`, `>`, `=`, `&`) are excluded from hyphenation and copied verbatim to the output.
+/// The function preserves whitespace between words.
+///
+/// # Arguments
+/// * `text` - The input text as a String, containing words to hyphenate.
+/// * `dict` - A reference to a hyphenation dictionary implementing `hyphenation::Standard`.
+///
+/// # Returns
+/// A new String with hyphenation applied, containing soft hyphens in the hyphenated positions
+/// for eligible words.
 pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String{
     let mut res = String::new();
     let mut word_iter = text.split_whitespace().peekable();
@@ -339,7 +439,32 @@ pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String{
     res
 }
 
-
+/// Renders a content block into an HTML string wrapped within a `PreparedContentBlock`.
+///
+/// Accepts the content block structure, a mutable storage for endnotes,
+/// a dictionary for text processing, citation mapping, the associated project ID, 
+/// and a flag to optionally add soft hyphens during rendering.
+///
+/// The rendering logic varies depending on the `BlockData` variant of the input block:
+/// - For paragraphs, outputs formatted text with optional soft hyphens and processes endnotes and citations.
+/// - For headings, wraps rendered text in the appropriate heading tag and level.
+/// - For raw HTML, includes the provided HTML string as-is.
+/// - For lists, renders the items as an ordered or unordered list, processing content as plain text.
+/// - For quotes, applies alignment and processes both the quoted text and the caption.
+/// - For images, asynchronously loads the image from disk, encodes it as base64, and embeds it as a data URI; on failure, emits no output and logs the error.
+///
+/// The function incorporates optional CSS classes for each element where applicable.
+/// If image loading or processing fails, an error is logged to standard error and an empty string is rendered for that block.
+///
+/// # Arguments
+/// * `block` - The content block to be rendered.
+/// * `endnote_storage` - A mutable vector for endnote references, used in paragraph and text blocks.
+/// * `dict` - Dictionary used for text rendering and possible hyphenation.
+/// * `citation_bib` - Mapping for citations occurring in the content.
+/// * `project_id` - The UUID of the project, needed to locate uploaded image files.
+/// * `add_soft_hyphens` - If true, optionally insert soft hyphens in rendered text for hyphenation if vivliostyle is used (weasyprint supports hyphenation out of the box).
+///
+/// Returns a `PreparedContentBlock` containing the HTML string and associated metadata.
 pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedContentBlock{
     let css_classes_raw = block.css_classes.join(" ");
     let css_classes = if block.css_classes.len() > 0{
@@ -379,8 +504,10 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
                     let img = image::load_from_memory(file.as_slice());
                     match img{
                         Ok(img) => {
-                            let img_as_base64 = image_to_base64(&img);
-                            format!("<img id='{}' src=\"{}\" alt=\"{}\" {}/>", block.id, img_as_base64, caption.unwrap_or_default(), css_classes)
+                            match image_to_base64(&img){
+                                Some(str) => format!("<img id='{}' src=\"{}\" alt=\"{}\" {}/>", block.id, str, caption.unwrap_or_default(), css_classes),
+                                None => String::new()
+                            }
                         },
                         Err(e) => {
                             eprintln!("Couldn't load image: {}", e);
@@ -402,12 +529,27 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
     }
 }
 
-fn image_to_base64(img: &DynamicImage) -> String {
+/// Converts a given `DynamicImage` to a PNG image and returns its data as a base64-encoded string with a data URL prefix.
+///
+/// The returned string is prefixed with `"data:image/png;base64,"` to be used directly as a data URL, suitable for embedding in HTML or other contexts that accept base64-encoded images.
+///
+/// # Arguments
+///
+/// * `img` - Reference to a `DynamicImage` that will be converted to base64.
+///
+/// # Returns
+/// 
+/// * Some with data:image/png;base64,+base64-value if successful 
+/// * None if image couldn't be converted to png
+fn image_to_base64(img: &DynamicImage) -> Option<String> {
     let mut image_data: Vec<u8> = Vec::new();
-    img.write_to(&mut Cursor::new(&mut image_data), ImageOutputFormat::Png)
-        .unwrap();
+    if let Err(e) = img.write_to(&mut Cursor::new(&mut image_data), ImageOutputFormat::Png){
+        eprintln!("Couldn't convert image to png: {}", e);
+        return None;
+    }
+        
     let res_base64 = general_purpose::STANDARD.encode(image_data);
-    format!("data:image/png;base64,{}", res_base64)
+    Some(format!("data:image/png;base64,{}", res_base64))
 }
 
 
@@ -489,16 +631,37 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
             }
         }
     });
-    if(add_soft_hyphens){
+    if add_soft_hyphens {
         hyphenate_text(res3.to_string(), dict)
     }else{
         res3.to_string()
     }
 }
 
+/// Escapes special HTML characters in the input text by replacing:
+/// - '&' with '&amp;'
+/// - '<' with '&lt;'
+/// - '>' with '&gt;'
+/// - '"' with '&quot;'
+///
+/// # Arguments
+/// * `text` - The input string that should be escaped.
+///
+/// # Returns
+/// A new `String` with special HTML characters replaced by their respective HTML entities.
 fn escape_html(text: &str) -> String{
     text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }
+
+/// Replaces common HTML escape sequences in the input string with their respective characters.
+///
+/// Specifically, this function converts:
+/// - `&amp;` to `&`
+/// - `&lt;` to `<`
+/// - `&gt;` to `>`
+/// - `&quot;` to `"`
+///
+/// Returns a new `String` with the replacements applied.
 fn unescape_html(text: &str) -> String{
     text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
 }

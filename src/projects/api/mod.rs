@@ -1,10 +1,10 @@
-use crate::data_storage::{DataStorage, ProjectTemplateV2};
-use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, SectionOrTocV3};
-use crate::projects::SectionOrTocV2;
+use crate::data_storage::{DataStorage, ProjectStorageError, ProjectTemplateV2};
+use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, SectionOrTocV4};
 use rocket::serde::json::Json;
 use std::sync::Arc;
 use bincode::{Decode, Encode};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate};
+use language::Language;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
@@ -12,37 +12,52 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use vb_exchange::projects::ProjectSettingsV5;
 use crate::data_storage::ProjectStorage;
-use crate::projects::{Identifier, Keyword, Language, License, ProjectMetadataV2};
+use crate::projects::{Identifier, Keyword, License, ProjectMetadata};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 
 pub mod sections;
 
+/// General return type of API Routes
+/// One of the fields error or data must be Some
+///
+/// Return data: Some(()) if api call succeeded and you don't want to return anything
 #[derive(Serialize, Deserialize)]
 pub struct ApiResult<T> {
+    /// Error occured
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ApiError>,
+    /// Return response data or Some(()) if succeeded but no return data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
 }
 
+/// Errors that may occur when calling api routes
 #[derive(Serialize, Deserialize)]
 pub enum ApiError{
+    /// The requested resource doesn't exist
     NotFound,
+    /// The request couldn't be fulfilled due to user error, see string
     BadRequest(String),
+    /// You didn't send a valid session cookie
     Unauthorized,
+    /// Something seriously went wrong, admin will find infos in logs
     InternalServerError,
+    /// e.g. Folder/File with this name already exists
     Conflict(String),
+    /// Other error, specified with a string
     Other(String),
 }
 
 impl<T> ApiResult<T>{
+    /// Creates a JSON response with an ['ApiResult'] where the error field is set to the error provided
     pub fn new_error(error: ApiError) -> Json<ApiResult<T>> {
         Json(Self {
             error: Some(error),
             data: None,
         })
     }
+    /// Creates a JSON response with an ['ApiResult'] where the data field is set to the data provided
     pub fn new_data(data: T) -> Json<ApiResult<T>> {
         Json(Self {
             error: None,
@@ -54,7 +69,7 @@ impl<T> ApiResult<T>{
 /// Delete project
 /// DELETE /api/projects/<project_id>
 #[delete("/api/projects/<project_id>")]
-pub async fn delete_project(project_id: String, _session: Session, _settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<()>> {
+pub async fn delete_project(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<()>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -65,12 +80,20 @@ pub async fn delete_project(project_id: String, _session: Session, _settings: &S
 
     let project_storage = Arc::clone(project_storage);
 
-    project_storage.projects.write().unwrap().remove(&project_id);
-    ApiResult::new_data(())
+    match project_storage.delete_project(&project_id, settings).await{
+        Ok(_) =>
+            ApiResult::new_data(()),
+        Err(e) => match e{
+            ProjectStorageError::IOError(_) => {
+                ApiResult::new_error(ApiError::InternalServerError)
+            }
+            ProjectStorageError::ProjectNotFound => ApiResult::new_error(ApiError::BadRequest("Project not Found".to_string()))
+        }
+    }
 }
 
 #[get("/api/projects/<project_id>/metadata")]
-pub async fn get_project_metadata(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, data_storage: &State<Arc<DataStorage>>) -> Json<ApiResult<Option<ProjectMetadataV2>>> {
+pub async fn get_project_metadata(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, data_storage: &State<Arc<DataStorage>>) -> Json<ApiResult<Option<ProjectMetadata>>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -119,12 +142,15 @@ pub async fn get_project_metadata(project_id: String, _session: Session, setting
         ApiResult::new_data(None)
     }
 }
+
+/// Trait for HTTP PATCH routes
 pub trait Patch<P, T>{
+    /// Update type T with data from P
     fn patch(&mut self, patch: P) -> T;
 }
 
-impl Patch<PatchProjectMetadata, ProjectMetadataV2> for ProjectMetadataV2 {
-    fn patch(&mut self, patch: PatchProjectMetadata) -> ProjectMetadataV2 {
+impl Patch<PatchProjectMetadata, ProjectMetadata> for ProjectMetadata {
+    fn patch(&mut self, patch: PatchProjectMetadata) -> ProjectMetadata {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title{
@@ -219,7 +245,7 @@ impl Patch<PatchProjectMetadata, ProjectMetadataV2> for ProjectMetadataV2 {
 }
 
 
-
+/// Struct for HTTP PATCH routes to update the project metadata
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
 pub struct PatchProjectMetadata{
     /// Book Title
@@ -247,6 +273,7 @@ pub struct PatchProjectMetadata{
     pub published: Option<Option<String>>,
     /// Languages of the book
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
+    #[bincode(with_serde)]
     pub languages: Option<Option<Vec<Language>>>,
     /// Number of pages of the book (should be automatically calculated)
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
@@ -281,7 +308,7 @@ pub struct PatchProjectMetadata{
 }
 
 #[post("/api/projects/<project_id>/metadata", data = "<metadata>")]
-pub async fn set_project_metadata(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, metadata: Json<ProjectMetadataV2>) -> Json<ApiResult<()>> {
+pub async fn set_project_metadata(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, metadata: Json<ProjectMetadata>) -> Json<ApiResult<()>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -331,7 +358,7 @@ pub async fn patch_project_metadata(project_id: String, _session: Session, setti
     let mut old_metadata = match &project_entry.read().unwrap().metadata{
         Some(metadata) => metadata.clone(),
         None => {
-            ProjectMetadataV2::default()
+            ProjectMetadata::default()
         }
     };
 
@@ -363,6 +390,11 @@ pub async fn patch_project_metadata(project_id: String, _session: Session, setti
     ApiResult::new_data(())
 }
 
+/// GET /api/csl/styles
+/// Returns a list of all csl styles available
+///
+/// Returns:
+/// ApiResult with a list of strings containing the csl style filenames
 #[get("/api/csl/styles")]
 pub async fn get_csl_styles(_session: Session, settings: &State<Settings>) -> Json<ApiResult<Vec<String>>> {
     let path = format!("{}/csl_styles", settings.data_path);
@@ -486,7 +518,7 @@ pub async fn add_author_to_project(project_id: String, author_id: String, _sessi
     let mut project = project_entry.write().unwrap();
 
     if let None = project.metadata{
-        let new_metadata: ProjectMetadataV2 = Default::default();
+        let new_metadata: ProjectMetadata = Default::default();
         project.metadata = Some(new_metadata);
     }
 
@@ -534,7 +566,7 @@ pub async fn add_editor_to_project(project_id: String, editor_id: String, _sessi
     let mut project = project_entry.write().unwrap();
 
     if let None = project.metadata{
-        let new_metadata: ProjectMetadataV2 = Default::default();
+        let new_metadata: ProjectMetadata = Default::default();
         project.metadata = Some(new_metadata);
     }
 
@@ -670,7 +702,7 @@ pub async fn add_keyword_to_project(project_id: String, keyword: Json<Keyword>, 
     let mut project = project_entry.write().unwrap();
 
     if let None = project.metadata{
-        let new_metadata: ProjectMetadataV2 = Default::default();
+        let new_metadata: ProjectMetadata = Default::default();
         project.metadata = Some(new_metadata);
     }
 
@@ -757,7 +789,7 @@ pub async fn add_identifier_to_project(project_id: String, mut identifier: Json<
     let mut project = project_entry.write().unwrap();
 
     if let None = project.metadata{
-        let new_metadata: ProjectMetadataV2 = Default::default();
+        let new_metadata: ProjectMetadata = Default::default();
         project.metadata = Some(new_metadata);
     }
 
@@ -881,7 +913,7 @@ pub async fn update_identifier_in_project(project_id: String, identifier_id: Str
 /// Returns a list of all contents (sections or toc placeholder) in the project
 /// Strips out the inner content of ContentBlocks
 #[get("/api/projects/<project_id>/contents")]
-pub async fn get_project_contents(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<SectionOrTocV3>>> {
+pub async fn get_project_contents(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<SectionOrTocV4>>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -905,11 +937,11 @@ pub async fn get_project_contents(project_id: String, _session: Session, setting
     let mut contents = Vec::new();
     for entry in project.sections.iter(){
         match entry{
-            SectionOrTocV3::Toc => {
+            SectionOrTocV4::Toc => {
                 contents.push(entry.clone());
             },
-            SectionOrTocV3::Section(section) => {
-                contents.push(SectionOrTocV3::Section(section.clone_without_contentblocks()));
+            SectionOrTocV4::Section(section) => {
+                contents.push(SectionOrTocV4::Section(section.clone_without_contentblocks()));
             }
         }
     }
@@ -920,7 +952,7 @@ pub async fn get_project_contents(project_id: String, _session: Session, setting
 /// POST /api/projects/<project_id>/contents
 /// Add a new section or toc placeholder to the project
 #[post("/api/projects/<project_id>/contents", data = "<content>")]
-pub async fn add_content(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, content: Json<SectionOrTocV3>) -> Json<ApiResult<SectionOrTocV3>>{
+pub async fn add_content(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, content: Json<SectionOrTocV4>) -> Json<ApiResult<SectionOrTocV4>>{
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -932,12 +964,12 @@ pub async fn add_content(project_id: String, _session: Session, settings: &State
     // Check if Section or Toc, generate uuid if section
     let mut content = content.into_inner();
     match &mut content{
-        SectionOrTocV3::Section(section) => {
+        SectionOrTocV4::Section(section) => {
             if let None = section.id{
                 section.id = Some(uuid::Uuid::new_v4());
             }
         },
-        SectionOrTocV3::Toc => {},
+        SectionOrTocV4::Toc => {},
     }
 
     let project_storage = Arc::clone(project_storage);
@@ -1013,7 +1045,7 @@ pub async fn move_content_after(project_id: String, content_id: String, after_id
         Err(_) => {
             println!("Couldn't find content with id {}", after_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrTocV3::Section(content));
+            project.sections.push(SectionOrTocV4::Section(content));
             ApiResult::new_error(ApiError::NotFound)
         }
     }
@@ -1076,7 +1108,7 @@ pub async fn move_content_child_of(project_id: String, content_id: String, paren
         Err(_) => {
             println!("Couldn't find content with id {}", parent_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrTocV3::Section(content));
+            project.sections.push(SectionOrTocV4::Section(content));
             ApiResult::new_error(ApiError::NotFound)
         }
     }

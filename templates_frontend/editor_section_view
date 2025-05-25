@@ -69,8 +69,430 @@
     <label>Language</label>
     <select class="form-select form-select-sm quickchange" id="section_metadata_lang">
         <option value="none">Not Specified</option>
-        <option value="DE" {{#if metadata.langval.DE}}selected{{/if}}>German</option>
-        <option value="EN" {{#if metadata.langval.EN}}selected{{/if}}>English</option>
+        <option value="af-ZA" {{#is metadata.lang
+        "af-ZA"}}selected{{/is}}>Afrikaans</option>
+        <option value="am-ET" {{#is metadata.lang
+        "am-ET"}}selected{{/is}}>Amharic</option>
+        <option value="ar-AE" {{#is metadata.lang
+        "ar-AE"}}selected{{/is}}>Arabic (UAE)</option>
+        <option value="ar-BH" {{#is metadata.lang
+        "ar-BH"}}selected{{/is}}>Arabic (Bahrain)</option>
+        <option value="ar-DZ" {{#is metadata.lang
+        "ar-DZ"}}selected{{/is}}>Arabic (Algeria)</option>
+        <option value="ar-EG" {{#is metadata.lang
+        "ar-EG"}}selected{{/is}}>Arabic (Egypt)</option>
+        <option value="ar-IQ" {{#is metadata.lang
+        "ar-IQ"}}selected{{/is}}>Arabic (Iraq)</option>
+        <option value="ar-JO" {{#is metadata.lang
+        "ar-JO"}}selected{{/is}}>Arabic (Jordan)</option>
+        <option value="ar-KW" {{#is metadata.lang
+        "ar-KW"}}selected{{/is}}>Arabic (Kuwait)</option>
+        <option value="ar-LB" {{#is metadata.lang
+        "ar-LB"}}selected{{/is}}>Arabic (Lebanon)</option>
+        <option value="ar-LY" {{#is metadata.lang
+        "ar-LY"}}selected{{/is}}>Arabic (Libya)</option>
+        <option value="ar-MA" {{#is metadata.lang
+        "ar-MA"}}selected{{/is}}>Arabic (Morocco)</option>
+        <option value="ar-OM" {{#is metadata.lang
+        "ar-OM"}}selected{{/is}}>Arabic (Oman)</option>
+        <option value="ar-QA" {{#is metadata.lang
+        "ar-QA"}}selected{{/is}}>Arabic (Qatar)</option>
+        <option value="ar-SA" {{#is metadata.lang
+        "ar-SA"}}selected{{/is}}>Arabic (Saudi Arabia)</option>
+        <option value="ar-SY" {{#is metadata.lang
+        "ar-SY"}}selected{{/is}}>Arabic (Syria)</option>
+        <option value="ar-TN" {{#is metadata.lang
+        "ar-TN"}}selected{{/is}}>Arabic (Tunisia)</option>
+        <option value="ar-YE" {{#is metadata.lang
+        "ar-YE"}}selected{{/is}}>Arabic (Yemen)</option>
+        <option value="arn-CL" {{#is metadata.lang
+        "arn-CL"}}selected{{/is}}>Mapudungun</option>
+        <option value="as-IN" {{#is metadata.lang
+        "as-IN"}}selected{{/is}}>Assamese</option>
+        <option value="az-Cyrl-AZ" {{#is metadata.lang
+        "az-Cyrl-AZ"}}selected{{/is}}>Azerbaijani (Cyrillic)</option>
+        <option value="az-Latn-AZ" {{#is metadata.lang
+        "az-Latn-AZ"}}selected{{/is}}>Azerbaijani (Latin)</option>
+        <option value="ba-RU" {{#is metadata.lang
+        "ba-RU"}}selected{{/is}}>Bashkir</option>
+        <option value="be-BY" {{#is metadata.lang
+        "be-BY"}}selected{{/is}}>Belarusian</option>
+        <option value="bg-BG" {{#is metadata.lang
+        "bg-BG"}}selected{{/is}}>Bulgarian</option>
+        <option value="bn-BD" {{#is metadata.lang
+        "bn-BD"}}selected{{/is}}>Bengali (Bangladesh)</option>
+        <option value="bn-IN" {{#is metadata.lang
+        "bn-IN"}}selected{{/is}}>Bengali (India)</option>
+        <option value="bo-CN" {{#is metadata.lang
+        "bo-CN"}}selected{{/is}}>Tibetan</option>
+        <option value="br-FR" {{#is metadata.lang
+        "br-FR"}}selected{{/is}}>Breton</option>
+        <option value="bs-Cyrl-BA" {{#is metadata.lang
+        "bs-Cyrl-BA"}}selected{{/is}}>Bosnian (Cyrillic)</option>
+        <option value="bs-Latn-BA" {{#is metadata.lang
+        "bs-Latn-BA"}}selected{{/is}}>Bosnian (Latin)</option>
+        <option value="ca-ES" {{#is metadata.lang
+        "ca-ES"}}selected{{/is}}>Catalan</option>
+        <option value="ca-ES-VALENCIA" {{#is metadata.lang
+        "ca-ES-VALENCIA"}}selected{{/is}}>Catalan (Valencian)</option>
+        <option value="chr-Cher-US" {{#is metadata.lang
+        "chr-Cher-US"}}selected{{/is}}>Cherokee</option>
+        <option value="co-FR" {{#is metadata.lang
+        "co-FR"}}selected{{/is}}>Corsican</option>
+        <option value="cs-CZ" {{#is metadata.lang
+        "cs-CZ"}}selected{{/is}}>Czech</option>
+        <option value="cy-GB" {{#is metadata.lang
+        "cy-GB"}}selected{{/is}}>Welsh</option>
+        <option value="da-DK" {{#is metadata.lang
+        "da-DK"}}selected{{/is}}>Danish</option>
+        <option value="de-AT" {{#is metadata.lang
+        "de-AT"}}selected{{/is}}>German (Austria)</option>
+        <option value="de-CH" {{#is metadata.lang
+        "de-CH"}}selected{{/is}}>German (Switzerland)</option>
+        <option value="de-DE" {{#is metadata.lang
+        "de-DE"}}selected{{/is}}>German (Germany)</option>
+        <option value="de-LI" {{#is metadata.lang
+        "de-LI"}}selected{{/is}}>German (Liechtenstein)</option>
+        <option value="de-LU" {{#is metadata.lang
+        "de-LU"}}selected{{/is}}>German (Luxembourg)</option>
+        <option value="dsb-DE" {{#is metadata.lang
+        "dsb-DE"}}selected{{/is}}>Lower Sorbian</option>
+        <option value="dv-MV" {{#is metadata.lang
+        "dv-MV"}}selected{{/is}}>Divehi</option>
+        <option value="dz-BT" {{#is metadata.lang
+        "dz-BT"}}selected{{/is}}>Dzongkha</option>
+        <option value="el-GR" {{#is metadata.lang
+        "el-GR"}}selected{{/is}}>Greek</option>
+        <option value="en-029" {{#is metadata.lang
+        "en-029"}}selected{{/is}}>English (Caribbean)</option>
+        <option value="en-AE" {{#is metadata.lang
+        "en-AE"}}selected{{/is}}>English (UAE)</option>
+        <option value="en-AU" {{#is metadata.lang
+        "en-AU"}}selected{{/is}}>English (Australia)</option>
+        <option value="en-BZ" {{#is metadata.lang
+        "en-BZ"}}selected{{/is}}>English (Belize)</option>
+        <option value="en-CA" {{#is metadata.lang
+        "en-CA"}}selected{{/is}}>English (Canada)</option>
+        <option value="en-GB" {{#is metadata.lang
+        "en-GB"}}selected{{/is}}>English (United Kingdom)</option>
+        <option value="en-HK" {{#is metadata.lang
+        "en-HK"}}selected{{/is}}>English (Hong Kong)</option>
+        <option value="en-IE" {{#is metadata.lang
+        "en-IE"}}selected{{/is}}>English (Ireland)</option>
+        <option value="en-IN" {{#is metadata.lang
+        "en-IN"}}selected{{/is}}>English (India)</option>
+        <option value="en-JM" {{#is metadata.lang
+        "en-JM"}}selected{{/is}}>English (Jamaica)</option>
+        <option value="en-MY" {{#is metadata.lang
+        "en-MY"}}selected{{/is}}>English (Malaysia)</option>
+        <option value="en-NZ" {{#is metadata.lang
+        "en-NZ"}}selected{{/is}}>English (New Zealand)</option>
+        <option value="en-PH" {{#is metadata.lang
+        "en-PH"}}selected{{/is}}>English (Philippines)</option>
+        <option value="en-SG" {{#is metadata.lang
+        "en-SG"}}selected{{/is}}>English (Singapore)</option>
+        <option value="en-TT" {{#is metadata.lang
+        "en-TT"}}selected{{/is}}>English (Trinidad and Tobago)</option>
+        <option value="en-US" {{#is metadata.lang
+        "en-US"}}selected{{/is}}>English (United States)</option>
+        <option value="en-ZA" {{#is metadata.lang
+        "en-ZA"}}selected{{/is}}>English (South Africa)</option>
+        <option value="en-ZW" {{#is metadata.lang
+        "en-ZW"}}selected{{/is}}>English (Zimbabwe)</option>
+        <option value="es-419" {{#is metadata.lang
+        "es-419"}}selected{{/is}}>Spanish (Latin America)</option>
+        <option value="es-AR" {{#is metadata.lang
+        "es-AR"}}selected{{/is}}>Spanish (Argentina)</option>
+        <option value="es-BO" {{#is metadata.lang
+        "es-BO"}}selected{{/is}}>Spanish (Bolivia)</option>
+        <option value="es-CL" {{#is metadata.lang
+        "es-CL"}}selected{{/is}}>Spanish (Chile)</option>
+        <option value="es-CO" {{#is metadata.lang
+        "es-CO"}}selected{{/is}}>Spanish (Colombia)</option>
+        <option value="es-CR" {{#is metadata.lang
+        "es-CR"}}selected{{/is}}>Spanish (Costa Rica)</option>
+        <option value="es-CU" {{#is metadata.lang
+        "es-CU"}}selected{{/is}}>Spanish (Cuba)</option>
+        <option value="es-DO" {{#is metadata.lang
+        "es-DO"}}selected{{/is}}>Spanish (Dominican Republic)</option>
+        <option value="es-EC" {{#is metadata.lang
+        "es-EC"}}selected{{/is}}>Spanish (Ecuador)</option>
+        <option value="es-ES" {{#is metadata.lang
+        "es-ES"}}selected{{/is}}>Spanish (Spain)</option>
+        <option value="es-GT" {{#is metadata.lang
+        "es-GT"}}selected{{/is}}>Spanish (Guatemala)</option>
+        <option value="es-HN" {{#is metadata.lang
+        "es-HN"}}selected{{/is}}>Spanish (Honduras)</option>
+        <option value="es-MX" {{#is metadata.lang
+        "es-MX"}}selected{{/is}}>Spanish (Mexico)</option>
+        <option value="es-NI" {{#is metadata.lang
+        "es-NI"}}selected{{/is}}>Spanish (Nicaragua)</option>
+        <option value="es-PA" {{#is metadata.lang
+        "es-PA"}}selected{{/is}}>Spanish (Panama)</option>
+        <option value="es-PE" {{#is metadata.lang
+        "es-PE"}}selected{{/is}}>Spanish (Peru)</option>
+        <option value="es-PR" {{#is metadata.lang
+        "es-PR"}}selected{{/is}}>Spanish (Puerto Rico)</option>
+        <option value="es-PY" {{#is metadata.lang
+        "es-PY"}}selected{{/is}}>Spanish (Paraguay)</option>
+        <option value="es-SV" {{#is metadata.lang
+        "es-SV"}}selected{{/is}}>Spanish (El Salvador)</option>
+        <option value="es-US" {{#is metadata.lang
+        "es-US"}}selected{{/is}}>Spanish (United States)</option>
+        <option value="es-UY" {{#is metadata.lang
+        "es-UY"}}selected{{/is}}>Spanish (Uruguay)</option>
+        <option value="es-VE" {{#is metadata.lang
+        "es-VE"}}selected{{/is}}>Spanish (Venezuela)</option>
+        <option value="et-EE" {{#is metadata.lang
+        "et-EE"}}selected{{/is}}>Estonian</option>
+        <option value="eu-ES" {{#is metadata.lang
+        "eu-ES"}}selected{{/is}}>Basque</option>
+        <option value="fa-IR" {{#is metadata.lang
+        "fa-IR"}}selected{{/is}}>Persian</option>
+        <option value="ff-Latn-NG" {{#is metadata.lang
+        "ff-Latn-NG"}}selected{{/is}}>Fulah (Nigeria)</option>
+        <option value="ff-Latn-SN" {{#is metadata.lang
+        "ff-Latn-SN"}}selected{{/is}}>Fulah (Senegal)</option>
+        <option value="fi-FI" {{#is metadata.lang
+        "fi-FI"}}selected{{/is}}>Finnish</option>
+        <option value="fil-PH" {{#is metadata.lang
+        "fil-PH"}}selected{{/is}}>Filipino</option>
+        <option value="fo-FO" {{#is metadata.lang
+        "fo-FO"}}selected{{/is}}>Faroese</option>
+        <option value="fr-029" {{#is metadata.lang
+        "fr-029"}}selected{{/is}}>French (Caribbean)</option>
+        <option value="fr-BE" {{#is metadata.lang
+        "fr-BE"}}selected{{/is}}>French (Belgium)</option>
+        <option value="fr-CA" {{#is metadata.lang
+        "fr-CA"}}selected{{/is}}>French (Canada)</option>
+        <option value="fr-CD" {{#is metadata.lang
+        "fr-CD"}}selected{{/is}}>French (Congo DRC)</option>
+        <option value="fr-CH" {{#is metadata.lang
+        "fr-CH"}}selected{{/is}}>French (Switzerland)</option>
+        <option value="fr-CI" {{#is metadata.lang
+        "fr-CI"}}selected{{/is}}>French (Côte d'Ivoire)</option>
+        <option value="fr-CM" {{#is metadata.lang
+        "fr-CM"}}selected{{/is}}>French (Cameroon)</option>
+        <option value="fr-FR" {{#is metadata.lang
+        "fr-FR"}}selected{{/is}}>French (France)</option>
+        <option value="fr-HT" {{#is metadata.lang
+        "fr-HT"}}selected{{/is}}>French (Haiti)</option>
+        <option value="fr-LU" {{#is metadata.lang
+        "fr-LU"}}selected{{/is}}>French (Luxembourg)</option>
+        <option value="fr-MA" {{#is metadata.lang
+        "fr-MA"}}selected{{/is}}>French (Morocco)</option>
+        <option value="fr-MC" {{#is metadata.lang
+        "fr-MC"}}selected{{/is}}>French (Monaco)</option>
+        <option value="fr-ML" {{#is metadata.lang
+        "fr-ML"}}selected{{/is}}>French (Mali)</option>
+        <option value="fr-RE" {{#is metadata.lang
+        "fr-RE"}}selected{{/is}}>French (Reunion)</option>
+        <option value="fr-SN" {{#is metadata.lang
+        "fr-SN"}}selected{{/is}}>French (Senegal)</option>
+        <option value="fy-NL" {{#is metadata.lang
+        "fy-NL"}}selected{{/is}}>Frisian</option>
+        <option value="ga-IE" {{#is metadata.lang
+        "ga-IE"}}selected{{/is}}>Irish</option>
+        <option value="gd-GB" {{#is metadata.lang
+        "gd-GB"}}selected{{/is}}>Scottish Gaelic</option>
+        <option value="gl-ES" {{#is metadata.lang
+        "gl-ES"}}selected{{/is}}>Galician</option>
+        <option value="gn-PY" {{#is metadata.lang
+        "gn-PY"}}selected{{/is}}>Guarani</option>
+        <option value="gsw-FR" {{#is metadata.lang
+        "gsw-FR"}}selected{{/is}}>Alsatian</option>
+        <option value="gu-IN" {{#is metadata.lang
+        "gu-IN"}}selected{{/is}}>Gujarati</option>
+        <option value="ha-Latn-NG" {{#is metadata.lang
+        "ha-Latn-NG"}}selected{{/is}}>Hausa</option>
+        <option value="haw-US" {{#is metadata.lang
+        "haw-US"}}selected{{/is}}>Hawaiian</option>
+        <option value="he-IL" {{#is metadata.lang
+        "he-IL"}}selected{{/is}}>Hebrew</option>
+        <option value="hi-IN" {{#is metadata.lang
+        "hi-IN"}}selected{{/is}}>Hindi</option>
+        <option value="hr-BA" {{#is metadata.lang
+        "hr-BA"}}selected{{/is}}>Croatian (Bosnia and Herzegovina)</option>
+        <option value="hr-HR" {{#is metadata.lang
+        "hr-HR"}}selected{{/is}}>Croatian (Croatia)</option>
+        <option value="hsb-DE" {{#is metadata.lang
+        "hsb-DE"}}selected{{/is}}>Upper Sorbian</option>
+        <option value="hu-HU" {{#is metadata.lang
+        "hu-HU"}}selected{{/is}}>Hungarian</option>
+        <option value="hy-AM" {{#is metadata.lang
+        "hy-AM"}}selected{{/is}}>Armenian</option>
+        <option value="id-ID" {{#is metadata.lang
+        "id-ID"}}selected{{/is}}>Indonesian</option>
+        <option value="ig-NG" {{#is metadata.lang
+        "ig-NG"}}selected{{/is}}>Igbo</option>
+        <option value="ii-CN" {{#is metadata.lang
+        "ii-CN"}}selected{{/is}}>Yi</option>
+        <option value="is-IS" {{#is metadata.lang
+        "is-IS"}}selected{{/is}}>Icelandic</option>
+        <option value="it-CH" {{#is metadata.lang
+        "it-CH"}}selected{{/is}}>Italian (Switzerland)</option>
+        <option value="it-IT" {{#is metadata.lang
+        "it-IT"}}selected{{/is}}>Italian (Italy)</option>
+        <option value="iu-Cans-CA" {{#is metadata.lang
+        "iu-Cans-CA"}}selected{{/is}}>Inuktitut (Syllabics)</option>
+        <option value="iu-Latn-CA" {{#is metadata.lang
+        "iu-Latn-CA"}}selected{{/is}}>Inuktitut (Latin)</option>
+        <option value="ja-JP" {{#is metadata.lang
+        "ja-JP"}}selected{{/is}}>Japanese</option>
+        <option value="ka-GE" {{#is metadata.lang
+        "ka-GE"}}selected{{/is}}>Georgian</option>
+        <option value="kk-KZ" {{#is metadata.lang
+        "kk-KZ"}}selected{{/is}}>Kazakh</option>
+        <option value="kl-GL" {{#is metadata.lang
+        "kl-GL"}}selected{{/is}}>Greenlandic</option>
+        <option value="km-KH" {{#is metadata.lang
+        "km-KH"}}selected{{/is}}>Khmer</option>
+        <option value="kn-IN" {{#is metadata.lang
+        "kn-IN"}}selected{{/is}}>Kannada</option>
+        <option value="ko-KR" {{#is metadata.lang
+        "ko-KR"}}selected{{/is}}>Korean</option>
+        <option value="kok-IN" {{#is metadata.lang
+        "kok-IN"}}selected{{/is}}>Konkani</option>
+        <option value="kr-Latn-NG" {{#is metadata.lang
+        "kr-Latn-NG"}}selected{{/is}}>Kanuri</option>
+        <option value="ks-Deva-IN" {{#is metadata.lang
+        "ks-Deva-IN"}}selected{{/is}}>Kashmiri</option>
+        <option value="ku-Arab-IQ" {{#is metadata.lang
+        "ku-Arab-IQ"}}selected{{/is}}>Central Kurdish</option>
+        <option value="ky-KG" {{#is metadata.lang
+        "ky-KG"}}selected{{/is}}>Kyrgyz</option>
+        <option value="la-VA" {{#is metadata.lang
+        "la-VA"}}selected{{/is}}>Latin</option>
+        <option value="lb-LU" {{#is metadata.lang
+        "lb-LU"}}selected{{/is}}>Luxembourgish</option>
+        <option value="lo-LA" {{#is metadata.lang
+        "lo-LA"}}selected{{/is}}>Lao</option>
+        <option value="lt-LT" {{#is metadata.lang
+        "lt-LT"}}selected{{/is}}>Lithuanian</option>
+        <option value="lv-LV" {{#is metadata.lang
+        "lv-LV"}}selected{{/is}}>Latvian</option>
+        <option value="mi-NZ" {{#is metadata.lang
+        "mi-NZ"}}selected{{/is}}>Maori</option>
+        <option value="mk-MK" {{#is metadata.lang
+        "mk-MK"}}selected{{/is}}>Macedonian</option>
+        <option value="ml-IN" {{#is metadata.lang
+        "ml-IN"}}selected{{/is}}>Malayalam</option>
+        <option value="mn-Cyrl-MN" {{#is metadata.lang
+        "mn-Cyrl-MN"}}selected{{/is}}>Mongolian (Cyrillic)</option>
+        <option value="mn-Mong-MN" {{#is metadata.lang
+        "mn-Mong-MN"}}selected{{/is}}>Mongolian (Traditional)</option>
+        <option value="moh-CA" {{#is metadata.lang
+        "moh-CA"}}selected{{/is}}>Mohawk</option>
+        <option value="mr-IN" {{#is metadata.lang
+        "mr-IN"}}selected{{/is}}>Marathi</option>
+        <option value="ms-BN" {{#is metadata.lang
+        "ms-BN"}}selected{{/is}}>Malay (Brunei)</option>
+        <option value="ms-MY" {{#is metadata.lang
+        "ms-MY"}}selected{{/is}}>Malay (Malaysia)</option>
+        <option value="mt-MT" {{#is metadata.lang
+        "mt-MT"}}selected{{/is}}>Maltese</option>
+        <option value="my-MM" {{#is metadata.lang
+        "my-MM"}}selected{{/is}}>Burmese</option>
+        <option value="nb-NO" {{#is metadata.lang
+        "nb-NO"}}selected{{/is}}>Norwegian (Bokmål)</option>
+        <option value="ne-IN" {{#is metadata.lang
+        "ne-IN"}}selected{{/is}}>Nepali (India)</option>
+        <option value="ne-NP" {{#is metadata.lang
+        "ne-NP"}}selected{{/is}}>Nepali (Nepal)</option>
+        <option value="nl-BE" {{#is metadata.lang
+        "nl-BE"}}selected{{/is}}>Dutch (Belgium)</option>
+        <option value="nl-NL" {{#is metadata.lang
+        "nl-NL"}}selected{{/is}}>Dutch (Netherlands)</option>
+        <option value="nn-NO" {{#is metadata.lang
+        "nn-NO"}}selected{{/is}}>Norwegian (Nynorsk)</option>
+        <option value="nso-ZA" {{#is metadata.lang
+        "nso-ZA"}}selected{{/is}}>Sesotho sa Leboa</option>
+        <option value="oc-FR" {{#is metadata.lang
+        "oc-FR"}}selected{{/is}}>Occitan</option>
+        <option value="om-ET" {{#is metadata.lang
+        "om-ET"}}selected{{/is}}>Oromo</option>
+        <option value="or-IN" {{#is metadata.lang
+        "or-IN"}}selected{{/is}}>Odia</option>
+        <option value="pa-Arab-PK" {{#is metadata.lang
+        "pa-Arab-PK"}}selected{{/is}}>Punjabi (Arabic)</option>
+        <option value="pa-IN" {{#is metadata.lang
+        "pa-IN"}}selected{{/is}}>Punjabi (India)</option>
+        <option value="pl-PL" {{#is metadata.lang "pl-PL"}}selected{{/is}}>Polish</option>
+        <option value="prs-AF" {{#is metadata.lang "prs-AF"}}selected{{/is}}>Dari</option>
+        <option value="ps-AF" {{#is metadata.lang "ps-AF"}}selected{{/is}}>Pashto</option>
+        <option value="pt-BR" {{#is metadata.lang "pt-BR"}}selected{{/is}}>Portuguese (Brazil)</option>
+        <option value="pt-PT" {{#is metadata.lang "pt-PT"}}selected{{/is}}>Portuguese (Portugal)</option>
+        <option value="quc-Latn-GT" {{#is metadata.lang "quc-Latn-GT"}}selected{{/is}}>K'iche'</option>
+        <option value="quz-BO" {{#is metadata.lang "quz-BO"}}selected{{/is}}>Quechua (Bolivia)</option>
+        <option value="quz-EC" {{#is metadata.lang "quz-EC"}}selected{{/is}}>Quechua (Ecuador)</option>
+        <option value="quz-PE" {{#is metadata.lang "quz-PE"}}selected{{/is}}>Quechua (Peru)</option>
+        <option value="rm-CH" {{#is metadata.lang "rm-CH"}}selected{{/is}}>Romansh</option>
+        <option value="ro-MD" {{#is metadata.lang "ro-MD"}}selected{{/is}}>Romanian (Moldova)</option>
+        <option value="ro-RO" {{#is metadata.lang "ro-RO"}}selected{{/is}}>Romanian (Romania)</option>
+        <option value="ru-MD" {{#is metadata.lang "ru-MD"}}selected{{/is}}>Russian (Moldova)</option>
+        <option value="ru-RU" {{#is metadata.lang "ru-RU"}}selected{{/is}}>Russian</option>
+        <option value="rw-RW" {{#is metadata.lang "rw-RW"}}selected{{/is}}>Kinyarwanda</option>
+        <option value="sa-IN" {{#is metadata.lang "sa-IN"}}selected{{/is}}>Sanskrit</option>
+        <option value="sah-RU" {{#is metadata.lang "sah-RU"}}selected{{/is}}>Yakut</option>
+        <option value="sd-Arab-PK" {{#is metadata.lang "sd-Arab-PK"}}selected{{/is}}>Sindhi</option>
+        <option value="se-FI" {{#is metadata.lang "se-FI"}}selected{{/is}}>Sami Northern (Finland)</option>
+        <option value="se-NO" {{#is metadata.lang "se-NO"}}selected{{/is}}>Sami Northern (Norway)</option>
+        <option value="se-SE" {{#is metadata.lang "se-SE"}}selected{{/is}}>Sami Northern (Sweden)</option>
+        <option value="si-LK" {{#is metadata.lang "si-LK"}}selected{{/is}}>Sinhala</option>
+        <option value="sk-SK" {{#is metadata.lang "sk-SK"}}selected{{/is}}>Slovak</option>
+        <option value="sl-SI" {{#is metadata.lang "sl-SI"}}selected{{/is}}>Slovenian</option>
+        <option value="sma-NO" {{#is metadata.lang "sma-NO"}}selected{{/is}}>Sami Southern (Norway)</option>
+        <option value="sma-SE" {{#is metadata.lang "sma-SE"}}selected{{/is}}>Sami Southern (Sweden)</option>
+        <option value="smj-NO" {{#is metadata.lang "smj-NO"}}selected{{/is}}>Sami Lule (Norway)</option>
+        <option value="smj-SE" {{#is metadata.lang "smj-SE"}}selected{{/is}}>Sami Lule (Sweden)</option>
+        <option value="smn-FI" {{#is metadata.lang "smn-FI"}}selected{{/is}}>Sami Inari (Finland)</option>
+        <option value="sms-FI" {{#is metadata.lang "sms-FI"}}selected{{/is}}>Sami Skolt (Finland)</option>
+        <option value="so-SO" {{#is metadata.lang "so-SO"}}selected{{/is}}>Somali</option>
+        <option value="sq-AL" {{#is metadata.lang "sq-AL"}}selected{{/is}}>Albanian</option>
+        <option value="sr-Cyrl-BA" {{#is metadata.lang "sr-Cyrl-BA"}}selected{{/is}}>Serbian (Cyrillic, Bosnia)</option>
+        <option value="sr-Cyrl-ME" {{#is metadata.lang "sr-Cyrl-ME"}}selected{{/is}}>Serbian (Cyrillic, Montenegro)</option>
+        <option value="sr-Cyrl-RS" {{#is metadata.lang "sr-Cyrl-RS"}}selected{{/is}}>Serbian (Cyrillic, Serbia)</option>
+        <option value="sr-Latn-BA" {{#is metadata.lang "sr-Latn-BA"}}selected{{/is}}>Serbian (Latin, Bosnia)</option>
+        <option value="sr-Latn-ME" {{#is metadata.lang "sr-Latn-ME"}}selected{{/is}}>Serbian (Latin, Montenegro)</option>
+        <option value="sr-Latn-RS" {{#is metadata.lang "sr-Latn-RS"}}selected{{/is}}>Serbian (Latin, Serbia)</option>
+        <option value="st-ZA" {{#is metadata.lang "st-ZA"}}selected{{/is}}>Sesotho</option>
+        <option value="sv-FI" {{#is metadata.lang "sv-FI"}}selected{{/is}}>Swedish (Finland)</option>
+        <option value="sv-SE" {{#is metadata.lang "sv-SE"}}selected{{/is}}>Swedish (Sweden)</option>
+        <option value="sw-KE" {{#is metadata.lang "sw-KE"}}selected{{/is}}>Kiswahili</option>
+        <option value="syr-SY" {{#is metadata.lang "syr-SY"}}selected{{/is}}>Syriac</option>
+        <option value="ta-IN" {{#is metadata.lang "ta-IN"}}selected{{/is}}>Tamil (India)</option>
+        <option value="ta-LK" {{#is metadata.lang "ta-LK"}}selected{{/is}}>Tamil (Sri Lanka)</option>
+        <option value="te-IN" {{#is metadata.lang "te-IN"}}selected{{/is}}>Telugu</option>
+        <option value="tg-Cyrl-TJ" {{#is metadata.lang "tg-Cyrl-TJ"}}selected{{/is}}>Tajik</option>
+        <option value="th-TH" {{#is metadata.lang "th-TH"}}selected{{/is}}>Thai</option>
+        <option value="ti-ER" {{#is metadata.lang "ti-ER"}}selected{{/is}}>Tigrinya (Eritrea)</option>
+        <option value="ti-ET" {{#is metadata.lang "ti-ET"}}selected{{/is}}>Tigrinya (Ethiopia)</option>
+        <option value="tk-TM" {{#is metadata.lang "tk-TM"}}selected{{/is}}>Turkmen</option>
+        <option value="tn-BW" {{#is metadata.lang "tn-BW"}}selected{{/is}}>Setswana (Botswana)</option>
+        <option value="tn-ZA" {{#is metadata.lang "tn-ZA"}}selected{{/is}}>Setswana (South Africa)</option>
+        <option value="tr-TR" {{#is metadata.lang "tr-TR"}}selected{{/is}}>Turkish</option>
+        <option value="ts-ZA" {{#is metadata.lang "ts-ZA"}}selected{{/is}}>Tsonga</option>
+        <option value="tt-RU" {{#is metadata.lang "tt-RU"}}selected{{/is}}>Tatar</option>
+        <option value="tzm-Arab-MA" {{#is metadata.lang "tzm-Arab-MA"}}selected{{/is}}>Central Atlas Tamazight (Arabic)</option>
+        <option value="tzm-Latn-DZ" {{#is metadata.lang "tzm-Latn-DZ"}}selected{{/is}}>Central Atlas Tamazight (Latin)</option>
+        <option value="ug-CN" {{#is metadata.lang "ug-CN"}}selected{{/is}}>Uyghur</option>
+        <option value="uk-UA" {{#is metadata.lang "uk-UA"}}selected{{/is}}>Ukrainian</option>
+        <option value="ur-IN" {{#is metadata.lang "ur-IN"}}selected{{/is}}>Urdu (India)</option>
+        <option value="ur-PK" {{#is metadata.lang "ur-PK"}}selected{{/is}}>Urdu (Pakistan)</option>
+        <option value="uz-Cyrl-UZ" {{#is metadata.lang "uz-Cyrl-UZ"}}selected{{/is}}>Uzbek (Cyrillic)</option>
+        <option value="uz-Latn-UZ" {{#is metadata.lang "uz-Latn-UZ"}}selected{{/is}}>Uzbek (Latin)</option>
+        <option value="ve-ZA" {{#is metadata.lang "ve-ZA"}}selected{{/is}}>Venda</option>
+        <option value="vi-VN" {{#is metadata.lang "vi-VN"}}selected{{/is}}>Vietnamese</option>
+        <option value="wo-SN" {{#is metadata.lang "wo-SN"}}selected{{/is}}>Wolof</option>
+        <option value="xh-ZA" {{#is metadata.lang "xh-ZA"}}selected{{/is}}>isiXhosa</option>
+        <option value="yi-001" {{#is metadata.lang "yi-001"}}selected{{/is}}>Yiddish</option>
+        <option value="yo-NG" {{#is metadata.lang "yo-NG"}}selected{{/is}}>Yoruba</option>
+        <option value="zh-CN" {{#is metadata.lang "zh-CN"}}selected{{/is}}>Chinese (Simplified)</option>
+        <option value="zh-HK" {{#is metadata.lang "zh-HK"}}selected{{/is}}>Chinese (Hong Kong)</option>
+        <option value="zh-MO" {{#is metadata.lang "zh-MO"}}selected{{/is}}>Chinese (Macau)</option>
+        <option value="zh-SG" {{#is metadata.lang "zh-SG"}}selected{{/is}}>Chinese (Singapore)</option>
+        <option value="zh-TW" {{#is metadata.lang "zh-TW"}}selected{{/is}}>Chinese (Traditional)</option>
+        <option value="zu-ZA" {{#is metadata.lang "zu-ZA"}}selected{{/is}}>isiZulu</option>
     </select>
     <label>Publish Date</label>
     <input type="date" class="form-control form-control-sm quickchange" value="{{metadata.published}}" id="section_metadata_published">

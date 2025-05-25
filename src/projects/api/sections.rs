@@ -1,26 +1,29 @@
+/// Contains API routes to view and modify sections inside a project
+
 use std::sync::Arc;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use rocket::serde::{Deserialize, Serialize};
 use rocket::serde::json::Json;
 use rocket::State;
-use vb_exchange::projects::{Identifier, Language, Person};
+use vb_exchange::projects::{Identifier, Person};
 use crate::data_storage::{DataStorage, ProjectStorage};
 use crate::projects::api::{ApiError, ApiResult, Patch};
-use crate::projects::{NewContentBlock, SectionMetadataV3, SectionV3};
+use crate::projects::{NewContentBlock, SectionMetadataV4, SectionV4};
 use crate::projects::api::ApiError::InternalServerError;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::utils::dedup::dedup_vec;
+use language::Language;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`SectionV3`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`SectionV4`] with optional expansion of sub_sections and some metadata fields
 pub struct APISectionResult{
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Option<Vec<SectionV3>>,
+    pub sub_sections: Option<Vec<SectionV4>>,
     // Holds all content blocks
     pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
@@ -30,7 +33,7 @@ pub struct APISectionResult{
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API version for [`SectionMetadataV3`] with optional expansion of authors and editors
+/// API version for [`SectionMetadataV4`] with optional expansion of authors and editors
 pub struct APISectionMetadataResult{
     pub title: String,
     pub toc_title_override: Option<String>,
@@ -47,8 +50,13 @@ pub struct APISectionMetadataResult{
     pub lang: Option<Language>,
 }
 
-/// GET /api/projects/<project_id>/sections/<content_id>?<expand>
+/// GET /api/projects/<project_id>/sections/<content_path>?<expand>
 ///
+/// Parameters:
+/// * project_id (string) - the projects uuid
+/// * content_path (string) - path to a specific section, split by ':'
+/// * expand (string, optional) - optionally expand one of these fields: authors, editors, subsections
+/// 
 /// By default strips out subsections & only returns id's for authors and editors.
 /// Use the optional expand query parameter to expand these fields
 /// E.g. ?expand=authors,editors,subsections will show the full data
@@ -349,11 +357,12 @@ pub struct PatchSectionMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     pub last_changed: Option<Option<NaiveDateTime>>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
+    #[bincode(with_serde)]
     pub lang: Option<Option<Language>>,
 }
 
-impl Patch<PatchSectionMetadata, SectionMetadataV3> for SectionMetadataV3 {
-    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV3 {
+impl Patch<PatchSectionMetadata, SectionMetadataV4> for SectionMetadataV4 {
+    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV4 {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title{
@@ -415,8 +424,8 @@ impl Patch<PatchSectionMetadata, SectionMetadataV3> for SectionMetadataV3 {
 }
 
 // Implement patch for PatchSection
-impl Patch<PatchSection, SectionV3> for SectionV3 {
-    fn patch(&mut self, patch: PatchSection) -> SectionV3 {
+impl Patch<PatchSection, SectionV4> for SectionV4 {
+    fn patch(&mut self, patch: PatchSection) -> SectionV4 {
         let mut new_section = self.clone();
 
         if let Some(id) = patch.id{

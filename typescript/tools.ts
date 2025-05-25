@@ -106,3 +106,18 @@ export function add_search(searchbar: HTMLInputElement, search_result_overlay: H
 
     });
 }
+
+/**
+ * Adds event listeners to all elements matching the specified query selector.
+ *
+ * @param {string} query_selector - A DOMString containing one or more selectors to match.
+ * @param {string} event - The name of the event to listen for (e.g., 'click', 'mouseover').
+ * @param {EventListener} listener - The callback function that will be invoked when the event is triggered on the target elements.
+ * @return {void} Does not return a value.
+ */
+export function add_event_listeners(query_selector: string, event: string, listener: EventListener){
+    let targets = document.querySelectorAll(query_selector);
+    targets.forEach(target => {
+        target.addEventListener(event, listener);
+    })
+}

@@ -117,23 +117,6 @@ export async function send_delete_user(user_id: string) {
     }
 }
 
-export async function send_import_from_upload(data: any) {
-    const response = await fetch(`/api/import/upload`, {
-        method: 'POST',
-        body: data,
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to upload: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to upload: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
-}
-
 export async function send_add_new_bib_entry(data: any, project_id: string) {
     const response = await fetch(`/api/projects/` + project_id + `/bibliography`, {
         method: 'POST',
@@ -1387,4 +1370,230 @@ function slugify(text: string): string {
         .replace(/[\u0300-\u036f]/g, '') // remove diacritics
         .replace(/[^a-z0-9 -]/g, '') // remove invalid characters
         .replace(/-+/g, '-'); // collapse multiple -'s
+}
+
+export interface HierarchicalCategory {
+    id: number;
+    count: number;
+    description: string;
+    name: string;
+    slug: string;
+    parent: number;
+    children: HierarchicalCategory[];
+}
+
+export interface CategoryTree {
+    categories: HierarchicalCategory[];
+}
+
+export interface PreviewRequest {
+    base_url: string;
+    include_categories?: number[];
+    exclude_categories?: number[];
+    before?: string; // ISO-8601 Datumsformat
+    modified_before?: string; // ISO-8601 Datumsformat
+    after?: string; // ISO-8601 Datumsformat
+    modified_after?: string; // ISO-8601 Datumsformat
+    per_page?: number;
+    page?: number;
+}
+
+export interface PostPreviewResponse {
+    number_of_posts: number;
+    previews: PostPreview[];
+}
+
+export interface PostPreview {
+    id: number;
+    date: string; // ISO-8601 Datumsformat
+    link: string;
+    slug: string;
+    post_type: string; // Umbenannt von "type"
+    title: RenderedContent;
+    author: number;
+    excerpt: RenderedContent;
+}
+
+export interface RenderedContent {
+    rendered: string;
+}
+
+export interface WordpressFilterData{
+    wp_host: string;
+    before?: string; // ISO-8601 Date Format
+    after?: string; // ISO-8601 Date Format
+    include_categories?: number[]; // Array of ids
+    exclude_categories?: number[];
+}
+
+export type WordpressImportData = {
+    WordpressLinks: string[];
+} | {
+    WordpressFilter: WordpressFilterData;
+};
+
+export interface WordpressImportRequest{
+    project_id: string;
+    data: WordpressImportData;
+    endnotes: boolean;
+    shift_headings: boolean;
+    convert_links: boolean;
+}
+
+export type WordpressAPIError =
+    | "SerdeParsingError"
+    | "ReqwestError"
+    | "InvalidURL"
+    | "NotFound"
+    | "UnexpectedResponse"
+    | {Unsupported: string};
+
+export type ImportError =
+    | "UnsupportedFileType"
+    | "InvalidFile"
+    | "BibFileInvalid"
+    | "PandocError"
+    | "HtmlConversionFailed"
+    | "ProjectNotFound"
+    | { WordPressApiError: WordpressAPIError };
+
+export interface ProcessingDetails{
+    current: number;
+    total?: number;
+}
+
+export type ImportStatus =
+    | "Pending"
+    | "RequestWPPosts"
+    | "Complete"
+    | {Processing: ProcessingDetails}
+    | {Failed: ImportError};
+
+export function ImportAPI(){
+    /**
+     * Loads the category tree from the specified host.
+     *
+     * @param {string} host - The base URL of the host to fetch the category tree from without protocol.
+     * @return {Promise<CategoryTree>} A promise that resolves to the category tree data.
+     * @throws {Error} If the request fails or if the response contains an error.
+     */
+    async function load_category_tree(host: string){
+        const response = await fetch(`/api/import/wordpress/categories?base_url=${host}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to retrieve category tree: ${response.status}`);
+        }
+
+        const response_data: ApiResult<CategoryTree> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to retrieve category tree: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
+    /**
+     * Sends a request to retrieve a preview of posts based on the provided preview request data.
+     *
+     * @param {PreviewRequest} preview_request - The preview request data to be sent to the API, including any necessary parameters for filtering or customizing the posts preview.
+     * @return {Promise<PostPreviewResponse>} A promise that resolves to the preview of posts, or throws an error if the API request fails or returns an error.
+     */
+    async function load_posts_preview(preview_request: PreviewRequest){
+        const response = await fetch(`/api/import/wordpress/posts-preview`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(preview_request)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to retrieve posts preview: ${response.status}`);
+        }
+
+        const response_data: ApiResult<PostPreviewResponse> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to retrieve posts preview: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
+    /**
+     * Adds a WordPress import job by sending the provided import data to the server.
+     *
+     * @param {WordpressImportRequest} import_data - The data required to initiate the WordPress import process.
+     * @return {Promise<string>} A promise that resolves to a job identifier string if the import job is successfully created.
+     * @throws {Error} If the request fails or if an error is returned by the server.
+     */
+    async function add_wp_import_job(import_data: WordpressImportRequest): Promise<string>{
+        const response = await fetch(`/api/import/wordpress`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(import_data)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to start import from wordpress: ${response.status}`);
+        }
+
+        const response_data: ApiResult<string> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to start import from wordpress: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
+    async function poll_import_status(job_id: string){
+        const response = await fetch(`/api/import/status/`+job_id, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to poll import status: ${response.status}`);
+        }
+
+        const response_data: ApiResult<ImportStatus> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to poll import status: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
+    async function add_file_import_job(data: FormData) {
+        const response = await fetch(`/api/import/upload`, {
+            method: 'POST',
+            body: data,
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to add file import job: ${response.status}`);
+        }
+
+        const response_data: ApiResult<string> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to add file import job: ${apiErrorToString(response_data.error)}`);
+        }
+
+        return response_data.data;
+    }
+    return{
+        load_category_tree,
+        load_posts_preview,
+        add_wp_import_job,
+        poll_import_status,
+        add_file_import_job,
+    }
 }

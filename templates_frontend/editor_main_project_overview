@@ -139,13 +139,17 @@
     <div class="form-group">
         <label>Languages</label>
         <div class="project_metadata_languages">
-            <div class="form-check form-check-inline">
-                <input class="form-check-input project_metadata_field project_metadata_language_checkbox" type="checkbox" id="project_metadata_languages_DE" value="DE" {{#if metadata.languages.DE}}checked="true"{{/if}}>
-                <label class="form-check-label" for="project_metadata_languages_DE">German</label>
-            </div>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input project_metadata_field project_metadata_language_checkbox" type="checkbox" id="project_metadata_languages_EN" value="EN" {{#if metadata.languages.EN}}checked="true"{{/if}}>
-                <label class="form-check-label" for="project_metadata_languages_EN">English</label>
+            <ul>
+                {{#each metadata.languages}}
+                <li>{{this}} <button class="img-btn project_metadata_languages_remove" data-language-tag="{{this}}"><svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="red"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg></button></li>
+                {{/each}}
+            </ul>
+            <div class="form-row d-flex align-items-center">
+                <label class="col-auto me-3">Add Language:</label>
+                <select class="col-auto me-3 form-select form-select-sm" style="width: auto;" id="project_metadata_languages_add_select">
+                    {{> languages_options}}
+                </select>
+                <button class="col-auto btn-sm btn btn-primary">Add</button>
             </div>
         </div>
     </div>

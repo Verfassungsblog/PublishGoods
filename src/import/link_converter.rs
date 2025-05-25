@@ -78,7 +78,7 @@ async fn send_export_translation_request(entry: serde_json::Value, settings: &Se
 }
 
 pub mod test{
-    use super::*;
+    
 
    /*
    Skip test because it fails on GitHub Actions
@@ -95,6 +95,8 @@ pub mod test{
     }
 
     */
+    use crate::import::link_converter::send_translation_request;
+    use crate::settings::Settings;
 
     #[tokio::test]
     async fn test_send_invald_translation_request(){
