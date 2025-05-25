@@ -201,6 +201,8 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
     res
 }
 
+
+
 #[async_recursion]
 pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
     let published = match section.metadata.published{
@@ -235,15 +237,7 @@ pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, 
     // Load hyphenation dictionary for the language
     let dict = match &section.metadata.lang{
         Some(lang) => {
-            match lang{
-                Language::DeDe => Standard::from_embedded(hyphenation::Language::German1996).unwrap(),
-                Language::EnGb => Standard::from_embedded(hyphenation::Language::EnglishGB).unwrap(),
-                Language::EnUs => Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap(),
-                _ => {
-                    error!("Unimplemented match for language!!!");
-                    Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap()
-                }
-            }
+            get_hyphenation_dict(lang).unwrap_or_else(|| Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap())
         }
         None => Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap()
     };
@@ -305,6 +299,87 @@ pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, 
         metadata,
         visible_in_toc: section.visible_in_toc,
         endnotes
+    }
+}
+
+fn get_hyphenation_dict(language: &Language) -> Option<Standard>{
+    let lang = match language {
+        Language::AfZa => Some(hyphenation::Language::Afrikaans),
+        Language::SqAl => Some(hyphenation::Language::Albanian),
+        Language::HyAm => Some(hyphenation::Language::Armenian),
+        Language::AsIn => Some(hyphenation::Language::Assamese),
+        Language::EuEs => Some(hyphenation::Language::Basque),
+        Language::BeBy => Some(hyphenation::Language::Belarusian),
+        Language::BnBd => Some(hyphenation::Language::Bengali),
+        Language::BnIn => Some(hyphenation::Language::Bengali),
+        Language::CaEs => Some(hyphenation::Language::Catalan),
+        Language::CaEsValencia => Some(hyphenation::Language::Catalan),
+        Language::ZhCn => Some(hyphenation::Language::Chinese),
+        Language::ZhHk => Some(hyphenation::Language::Chinese),
+        Language::ZhMo => Some(hyphenation::Language::Chinese),
+        Language::ZhSg => Some(hyphenation::Language::Chinese),
+        Language::ZhTw => Some(hyphenation::Language::Chinese),
+        Language::HrBa => Some(hyphenation::Language::Croatian),
+        Language::HrHr => Some(hyphenation::Language::Croatian),
+        Language::CsCz => Some(hyphenation::Language::Czech),
+        Language::DaDk => Some(hyphenation::Language::Danish),
+        Language::NlNl => Some(hyphenation::Language::Dutch),
+        Language::NlBe => Some(hyphenation::Language::Dutch),
+        Language::EnGb => Some(hyphenation::Language::EnglishGB),
+        Language::EnUs => Some(hyphenation::Language::EnglishUS),
+        Language::EtEe => Some(hyphenation::Language::Estonian),
+        Language::FiFi => Some(hyphenation::Language::Finnish),
+        Language::Fr029 | Language::FrBe | Language::FrCa | Language::FrCd | Language::FrCh | Language::FrCi | Language::FrCm | Language::FrFr | Language::FrHt | Language::FrLu | Language::FrMa | Language::FrMc | Language::FrMl | Language::FrRe | Language::FrSn => Some(hyphenation::Language::French),
+        Language::GlEs => Some(hyphenation::Language::Galician),
+        Language::KaGe => Some(hyphenation::Language::Georgian),
+        Language::DeDe | Language::DeAt | Language::DeLi | Language::DeLu => Some(hyphenation::Language::German1996),
+        Language::DeCh => Some(hyphenation::Language::GermanSwiss),
+        Language::GuIn => Some(hyphenation::Language::Gujarati),
+        Language::HiIn => Some(hyphenation::Language::Hindi),
+        Language::HuHu => Some(hyphenation::Language::Hungarian),
+        Language::IsIs => Some(hyphenation::Language::Icelandic),
+        Language::IdId => Some(hyphenation::Language::Indonesian),
+        Language::GaIe => Some(hyphenation::Language::Irish),
+        Language::ItCh | Language::ItIt => Some(hyphenation::Language::Italian),
+        Language::KnIn => Some(hyphenation::Language::Kannada),
+        Language::LaVa => Some(hyphenation::Language::Latin),
+        Language::LvLv => Some(hyphenation::Language::Latvian),
+        Language::LtLt => Some(hyphenation::Language::Lithuanian),
+        Language::MkMk => Some(hyphenation::Language::Macedonian),
+        Language::MlIn => Some(hyphenation::Language::Malayalam),
+        Language::MrIn => Some(hyphenation::Language::Marathi),
+        Language::MnMn | Language::MnMongMn => Some(hyphenation::Language::Mongolian),
+        Language::NbNo => Some(hyphenation::Language::NorwegianBokmal),
+        Language::NnNo => Some(hyphenation::Language::NorwegianNynorsk),
+        Language::OcFr => Some(hyphenation::Language::Occitan),
+        Language::OrIn => Some(hyphenation::Language::Oriya),
+        Language::PaIn | Language::PaArabPk => Some(hyphenation::Language::Panjabi),
+        Language::PlPl => Some(hyphenation::Language::Polish),
+        Language::PtPt | Language::PtBr => Some(hyphenation::Language::Portuguese),
+        Language::RoMd | Language::RoRo => Some(hyphenation::Language::Romanian),
+        Language::RmCh => Some(hyphenation::Language::Romansh),
+        Language::RuMd | Language::RuRu => Some(hyphenation::Language::Russian),
+        Language::SaIn => Some(hyphenation::Language::Sanskrit),
+        Language::SrCyrlBa | Language::SrCyrlMe | Language::SrCyrlRs => Some(hyphenation::Language::SerbianCyrillic),
+        Language::SkSk => Some(hyphenation::Language::Slovak),
+        Language::SlSi => Some(hyphenation::Language::Slovenian),
+        Language::Es419 | Language::EsAr | Language::EsBo | Language::EsCl | Language::EsCo | Language::EsCr | Language::EsCu | Language::EsDo | Language::EsEc | Language::EsEs | Language::EsGt | Language::EsHn | Language::EsMx | Language::EsNi | Language::EsPa | Language::EsPe | Language::EsPr | Language::EsPy | Language::EsSv | Language::EsUs | Language::EsUy | Language::EsVe => Some(hyphenation::Language::Spanish),
+        Language::SvFi | Language::SvSe => Some(hyphenation::Language::Swedish),
+        Language::TaIn | Language::TaLk => Some(hyphenation::Language::Tamil),
+        Language::TeIn => Some(hyphenation::Language::Telugu),
+        Language::ThTh => Some(hyphenation::Language::Thai),
+        Language::TrTr => Some(hyphenation::Language::Turkish),
+        Language::TkTm => Some(hyphenation::Language::Turkmen),
+        Language::UkUa => Some(hyphenation::Language::Ukrainian),
+        Language::HsbDe => Some(hyphenation::Language::Uppersorbian),
+        Language::CyGb => Some(hyphenation::Language::Welsh),
+        _ => {
+            None
+        }
+    };
+    match lang{
+        Some(lang) => Some(Standard::from_embedded(lang).unwrap()),
+        None => None
     }
 }
 
