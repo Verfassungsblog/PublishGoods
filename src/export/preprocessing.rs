@@ -302,6 +302,21 @@ pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, 
     }
 }
 
+/// Returns the hyphenation dictionary for the given language, if available.
+///
+/// The function attempts to map the provided `Language` enum variant to its corresponding
+/// `hyphenation::Language` variant. If a supported mapping is found, it loads and returns
+/// the hyphenation dictionary using `Standard::from_embedded`.  
+/// If the language is not supported, `None` is returned.
+///
+/// # Arguments
+/// * `language` - A reference to a `Language` enum variant indicating the language for which
+///   the hyphenation dictionary should be retrieved.
+///
+/// # Returns
+/// An `Option<Standard>` instance containing the hyphenation dictionary if available,
+/// or `None` if the language has no hyphenation support.
+///
 fn get_hyphenation_dict(language: &Language) -> Option<Standard>{
     let lang = match language {
         Language::AfZa => Some(hyphenation::Language::Afrikaans),
@@ -383,6 +398,20 @@ fn get_hyphenation_dict(language: &Language) -> Option<Standard>{
     }
 }
 
+/// Hyphenates each word in the provided text using the given hyphenation dictionary,
+/// inserting soft hyphens (`\u{00ad}`) at appropriate positions. 
+///
+/// Words that appear to be part of HTML tags or contain certain special characters
+/// (`<`, `>`, `=`, `&`) are excluded from hyphenation and copied verbatim to the output.
+/// The function preserves whitespace between words.
+///
+/// # Arguments
+/// * `text` - The input text as a String, containing words to hyphenate.
+/// * `dict` - A reference to a hyphenation dictionary implementing `hyphenation::Standard`.
+///
+/// # Returns
+/// A new String with hyphenation applied, containing soft hyphens in the hyphenated positions
+/// for eligible words.
 pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String{
     let mut res = String::new();
     let mut word_iter = text.split_whitespace().peekable();
@@ -410,7 +439,32 @@ pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String{
     res
 }
 
-
+/// Renders a content block into an HTML string wrapped within a `PreparedContentBlock`.
+///
+/// Accepts the content block structure, a mutable storage for endnotes,
+/// a dictionary for text processing, citation mapping, the associated project ID, 
+/// and a flag to optionally add soft hyphens during rendering.
+///
+/// The rendering logic varies depending on the `BlockData` variant of the input block:
+/// - For paragraphs, outputs formatted text with optional soft hyphens and processes endnotes and citations.
+/// - For headings, wraps rendered text in the appropriate heading tag and level.
+/// - For raw HTML, includes the provided HTML string as-is.
+/// - For lists, renders the items as an ordered or unordered list, processing content as plain text.
+/// - For quotes, applies alignment and processes both the quoted text and the caption.
+/// - For images, asynchronously loads the image from disk, encodes it as base64, and embeds it as a data URI; on failure, emits no output and logs the error.
+///
+/// The function incorporates optional CSS classes for each element where applicable.
+/// If image loading or processing fails, an error is logged to standard error and an empty string is rendered for that block.
+///
+/// # Arguments
+/// * `block` - The content block to be rendered.
+/// * `endnote_storage` - A mutable vector for endnote references, used in paragraph and text blocks.
+/// * `dict` - Dictionary used for text rendering and possible hyphenation.
+/// * `citation_bib` - Mapping for citations occurring in the content.
+/// * `project_id` - The UUID of the project, needed to locate uploaded image files.
+/// * `add_soft_hyphens` - If true, optionally insert soft hyphens in rendered text for hyphenation if vivliostyle is used (weasyprint supports hyphenation out of the box).
+///
+/// Returns a `PreparedContentBlock` containing the HTML string and associated metadata.
 pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedContentBlock{
     let css_classes_raw = block.css_classes.join(" ");
     let css_classes = if block.css_classes.len() > 0{
@@ -450,8 +504,10 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
                     let img = image::load_from_memory(file.as_slice());
                     match img{
                         Ok(img) => {
-                            let img_as_base64 = image_to_base64(&img);
-                            format!("<img id='{}' src=\"{}\" alt=\"{}\" {}/>", block.id, img_as_base64, caption.unwrap_or_default(), css_classes)
+                            match image_to_base64(&img){
+                                Some(str) => format!("<img id='{}' src=\"{}\" alt=\"{}\" {}/>", block.id, str, caption.unwrap_or_default(), css_classes),
+                                None => String::new()
+                            }
                         },
                         Err(e) => {
                             eprintln!("Couldn't load image: {}", e);
@@ -473,12 +529,27 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
     }
 }
 
-fn image_to_base64(img: &DynamicImage) -> String {
+/// Converts a given `DynamicImage` to a PNG image and returns its data as a base64-encoded string with a data URL prefix.
+///
+/// The returned string is prefixed with `"data:image/png;base64,"` to be used directly as a data URL, suitable for embedding in HTML or other contexts that accept base64-encoded images.
+///
+/// # Arguments
+///
+/// * `img` - Reference to a `DynamicImage` that will be converted to base64.
+///
+/// # Returns
+/// 
+/// * Some with data:image/png;base64,+base64-value if successful 
+/// * None if image couldn't be converted to png
+fn image_to_base64(img: &DynamicImage) -> Option<String> {
     let mut image_data: Vec<u8> = Vec::new();
-    img.write_to(&mut Cursor::new(&mut image_data), ImageOutputFormat::Png)
-        .unwrap();
+    if let Err(e) = img.write_to(&mut Cursor::new(&mut image_data), ImageOutputFormat::Png){
+        eprintln!("Couldn't convert image to png: {}", e);
+        return None;
+    }
+        
     let res_base64 = general_purpose::STANDARD.encode(image_data);
-    format!("data:image/png;base64,{}", res_base64)
+    Some(format!("data:image/png;base64,{}", res_base64))
 }
 
 
@@ -567,9 +638,30 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
     }
 }
 
+/// Escapes special HTML characters in the input text by replacing:
+/// - '&' with '&amp;'
+/// - '<' with '&lt;'
+/// - '>' with '&gt;'
+/// - '"' with '&quot;'
+///
+/// # Arguments
+/// * `text` - The input string that should be escaped.
+///
+/// # Returns
+/// A new `String` with special HTML characters replaced by their respective HTML entities.
 fn escape_html(text: &str) -> String{
     text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }
+
+/// Replaces common HTML escape sequences in the input string with their respective characters.
+///
+/// Specifically, this function converts:
+/// - `&amp;` to `&`
+/// - `&lt;` to `<`
+/// - `&gt;` to `>`
+/// - `&quot;` to `"`
+///
+/// Returns a new `String` with the replacements applied.
 fn unescape_html(text: &str) -> String{
     text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
 }
