@@ -11,7 +11,7 @@ use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
-use crate::data_storage::{BibEntryV2, ProjectData, ProjectStorage};
+use crate::storage::project_storage::{ProjectStorage, ProjectData};
 use crate::settings::Settings;
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
@@ -19,6 +19,7 @@ use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
 use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV4, SectionV4};
+use crate::storage::BibEntryV2;
 use crate::utils::block_id_generator::generate_id;
 
 /// Struct wrapping all import jobs

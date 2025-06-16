@@ -7,7 +7,7 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket::serde::json::Json;
 use rocket::State;
 use vb_exchange::projects::{Identifier, Person};
-use crate::data_storage::{DataStorage, ProjectStorage};
+use crate::storage::data_storage::DataStorage;
 use crate::projects::api::{ApiError, ApiResult, Patch};
 use crate::projects::{NewContentBlock, SectionMetadataV4, SectionV4};
 use crate::projects::api::ApiError::InternalServerError;
@@ -15,6 +15,8 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::utils::dedup::dedup_vec;
 use language::Language;
+use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
+use crate::storage::project_storage::ProjectStorage;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 /// API struct variant for [`SectionV4`] with optional expansion of sub_sections and some metadata fields
@@ -125,7 +127,7 @@ pub async fn get_section(
 
     let project_read_guard = project_entry.read().unwrap();
 
-    let section = crate::data_storage::get_section_by_path(&project_read_guard, &path);
+    let section = get_section_by_path(&project_read_guard, &path);
 
     match section {
         Ok(section) => {
@@ -150,7 +152,7 @@ pub async fn get_section(
             if metadata != old_metadata {
                 // Save edited metadata
                 let mut project_write_guard = project_entry.write().unwrap();
-                let mut_section = match crate::data_storage::get_section_by_path_mut(&mut project_write_guard, &path) {
+                let mut_section = match get_section_by_path_mut(&mut project_write_guard, &path) {
                     Ok(section) => section,
                     Err(e) => return ApiResult::new_error(e),
                 };
@@ -279,7 +281,7 @@ pub async fn update_section(project_id: String, content_path: String, section_pa
 
     let mut project = project.write().unwrap();
 
-    let section = crate::data_storage::get_section_by_path_mut(&mut project, &path);
+    let section = get_section_by_path_mut(&mut project, &path);
 
     match section{
         Ok(section) => {

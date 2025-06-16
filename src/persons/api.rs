@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 use rocket::serde::json::Json;
 use rocket::State;
-use crate::data_storage::DataStorage;
+use crate::storage::data_storage::DataStorage;
 use crate::projects::api::{ApiError, ApiResult};
 use vb_exchange::projects::Person;
 use crate::session::session_guard::Session;

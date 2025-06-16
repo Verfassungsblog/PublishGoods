@@ -7,7 +7,7 @@ use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::data_storage::ProjectStorage;
+use crate::storage::project_storage::ProjectStorage;
 use crate::import::processing::{FileImportData, ImportJob, ImportJobData, ImportProcessor, ImportStatus, WordpressFilterData};
 use crate::import::wordpress::{CategoryTree, PostDataType, PostPreview, WordpressAPI, WordpressAPIContext, WordpressAPIError};
 use crate::projects::api::{ApiError, ApiResult};

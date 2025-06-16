@@ -34,7 +34,7 @@ pub struct ExportServer{
 }
 
 impl Settings{
-    pub fn new() -> Result<Self, ConfigError>{
+    pub fn builder() -> Result<Self, ConfigError>{
         let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
         // Read version String from version.txt
         let version = std::fs::read_to_string("version.txt").unwrap_or_else(|_| "unknown".into());

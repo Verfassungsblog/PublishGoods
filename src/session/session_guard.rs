@@ -22,7 +22,7 @@ impl<'r> FromRequest<'r> for Session {
             Outcome::Success(storage) => storage,
             _ => return Outcome::Error((Status::Unauthorized,LoginError::Unavailable)),
         };
-        println!("Cookies: {}", request.cookies().iter().map(|cookie|cookie.to_string()).collect::<String>());
+        debug!("Cookies: {}", request.cookies().iter().map(|cookie|cookie.to_string()).collect::<String>());
         match request.cookies().get_private("session") {
             Some(cookie) => match storage.get_session(cookie.value().to_string(), true) {
                 Some(cookie) => {

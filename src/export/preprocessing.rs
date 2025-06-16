@@ -16,7 +16,8 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectData};
+use crate::storage::project_storage::ProjectData;
+use crate::storage::data_storage::{DataStorage};
 use crate::projects::{BlockData, NewContentBlock, SectionV4, SectionOrTocV4};
 use crate::utils::csl::CslData;
 

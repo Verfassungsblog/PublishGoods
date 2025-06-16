@@ -1,4 +1,4 @@
-use crate::data_storage::{DataStorage, ProjectTemplateV2};
+use crate::storage::data_storage::DataStorage;
 use rocket::http::Status;
 use uuid::Uuid;
 use rocket::State;
@@ -13,6 +13,7 @@ use std::io;
 use std::fs;
 use std::path::PathBuf;
 use vb_exchange::export_formats::{ExportFormat, ExportStep};
+use crate::storage::ProjectTemplateV2;
 
 /// Contains API endpoints for the templates editor.
 

@@ -14,7 +14,7 @@ use argon2::password_hash::rand_core::OsRng;
 //noinspection RsMainFunctionNotFound
 use rocket_dyn_templates::Template;
 use rocket::response::Redirect;
-use crate::data_storage::User;
+use crate::storage::data_storage::current::User;
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
 use rand::Rng;
@@ -23,14 +23,16 @@ use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
 use crate::utils::csl::CslData;
 use log::{debug, info};
-
+use crate::storage::{data_storage, save_data_worker};
+use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::ProjectStorage;
 
 mod settings;
 pub mod session;
 pub mod projects;
 pub mod templates_editor;
 pub mod persons;
-pub mod data_storage;
+pub mod storage;
 pub mod utils;
 pub mod settings_page;
 pub mod import;
@@ -51,7 +53,7 @@ async fn rocket() -> _ {
     env_logger::init();
     debug!("Initialized Logger, starting application.");
 
-    let settings = Settings::new().unwrap();
+    let settings = Settings::builder().unwrap();
 
     //Check if data directory exists, if not create it
     if !std::path::Path::new(&format!("{}/projects", settings.data_path)).exists() {
@@ -99,9 +101,9 @@ async fn rocket() -> _ {
     std::fs::create_dir(temp_dir).unwrap();
 
     info!("Loading data storage...");
-    let data_storage = Arc::new(data_storage::DataStorage::load_from_disk(&settings).await.unwrap());
+    let data_storage = Arc::new(DataStorage::load_from_disk(&settings).await.unwrap());
     info!("Loading project storage...");
-    let project_storage = Arc::new(data_storage::ProjectStorage::new());
+    let project_storage = Arc::new(ProjectStorage::new());
     project_storage.load_from_directory(&settings).await.unwrap();
 
     info!("Loading Citation Locale Files & Styles...");
@@ -109,7 +111,7 @@ async fn rocket() -> _ {
 
     info!("Starting auto-save worker...");
     // Start seperate thread for auto-saving
-    data_storage::save_data_worker(data_storage.clone(), project_storage.clone(), settings.clone()).await;
+    save_data_worker(data_storage.clone(), project_storage.clone(), settings.clone()).await;
 
     info!("Starting cleanup worker...");
     cleaner::worker();

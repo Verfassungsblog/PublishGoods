@@ -1,4 +1,4 @@
-use crate::data_storage::{DataStorage, ProjectStorageError, ProjectTemplateV2};
+use crate::data_storage::DataStorage;
 use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, SectionOrTocV4};
 use rocket::serde::json::Json;
 use std::sync::Arc;
@@ -11,10 +11,12 @@ use rocket::http::Status;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use vb_exchange::projects::ProjectSettingsV5;
-use crate::data_storage::ProjectStorage;
 use crate::projects::{Identifier, Keyword, License, ProjectMetadata};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
+use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
+use crate::storage::ProjectTemplateV2;
 
 pub mod sections;
 
@@ -84,10 +86,10 @@ pub async fn delete_project(project_id: String, _session: Session, settings: &St
         Ok(_) =>
             ApiResult::new_data(()),
         Err(e) => match e{
-            ProjectStorageError::IOError(_) => {
+            ProjectStorageError::ProjectNotFound => ApiResult::new_error(ApiError::BadRequest("Project not Found".to_string())),
+            _ => {
                 ApiResult::new_error(ApiError::InternalServerError)
             }
-            ProjectStorageError::ProjectNotFound => ApiResult::new_error(ApiError::BadRequest("Project not Found".to_string()))
         }
     }
 }
@@ -1155,7 +1157,7 @@ pub async fn get_content_blocks_in_section(project_id: String, content_path: Str
 
     let project = project.read().unwrap();
 
-    let section = crate::data_storage::get_section_by_path(&project, &path);
+    let section = get_section_by_path(&project, &path);
 
     match section{
         Ok(section) => {
@@ -1211,7 +1213,7 @@ pub async fn set_content_blocks_in_section(project_id: String, content_path: Str
 
     let mut project = project.write().unwrap();
 
-    let section = crate::data_storage::get_section_by_path_mut(&mut project, &path);
+    let section = get_section_by_path_mut(&mut project, &path);
 
     match section{
         Ok(section) => {

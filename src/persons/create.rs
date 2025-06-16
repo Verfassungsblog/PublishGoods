@@ -2,7 +2,7 @@ use std::sync::Arc;
 use rocket::http::Status;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use crate::data_storage::DataStorage;
+use crate::storage::data_storage::DataStorage;
 use crate::session::session_guard::Session;
 
 #[get("/persons/create")]

@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use rocket::http::Status;
 use rocket::State;
-use crate::data_storage::{DataStorage, ProjectTemplateV2};
+use crate::storage::data_storage::DataStorage;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::ProjectTemplateV2;
 
 /// Get a list of all templates
 #[get("/templates")]
