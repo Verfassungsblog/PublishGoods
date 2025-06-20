@@ -9,23 +9,24 @@ use rocket::State;
 use vb_exchange::projects::{Identifier, Person};
 use crate::storage::data_storage::DataStorage;
 use crate::projects::api::{ApiError, ApiResult, Patch};
-use crate::projects::{NewContentBlock, SectionMetadataV4, SectionV4};
+use crate::projects::{NewContentBlock, PersonOrString, PersonUuidOrString, SectionMetadataV4, SectionMetadataV5, SectionV5};
 use crate::projects::api::ApiError::InternalServerError;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::utils::dedup::dedup_vec;
 use language::Language;
+use rocket::form::validate::Contains;
 use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
 use crate::storage::project_storage::ProjectStorage;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`SectionV4`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`SectionV5`] with optional expansion of sub_sections and some metadata fields
 pub struct APISectionResult{
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Option<Vec<SectionV4>>,
+    pub sub_sections: Option<Vec<SectionV5>>,
     // Holds all content blocks
     pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
@@ -38,13 +39,12 @@ pub struct APISectionResult{
 /// API version for [`SectionMetadataV4`] with optional expansion of authors and editors
 pub struct APISectionMetadataResult{
     pub title: String,
-    pub toc_title_override: Option<String>,
+    pub toc_title_subtitle_override: Option<String>,
     pub subtitle: Option<String>,
-    pub toc_subtitle_override: Option<String>,
-    pub authors: Vec<uuid::Uuid>,
-    pub authors_expanded: Option<Vec<Person>>,
-    pub editors: Vec<uuid::Uuid>,
-    pub editors_expanded: Option<Vec<Person>>,
+    pub authors: Vec<PersonUuidOrString>,
+    pub authors_expanded: Option<Vec<PersonOrString>>,
+    pub editors: Vec<PersonUuidOrString>,
+    pub editors_expanded: Option<Vec<PersonOrString>>,
     pub web_url: Option<String>,
     pub identifiers: Vec<Identifier>,
     pub published: Option<NaiveDate>,
@@ -146,8 +146,18 @@ pub async fn get_section(
             };
 
             let mut metadata = section.metadata.clone();
-            metadata.authors.retain_mut(|x| valid_persons.contains(x));
-            metadata.editors.retain_mut(|x| valid_persons.contains(x));
+            metadata.authors.retain_mut(|x| { match x {
+                PersonUuidOrString::PersonUuid(id) => {
+                    valid_persons.contains(id.clone())
+                }
+                PersonUuidOrString::NameString(_) => true
+            }});
+            metadata.editors.retain_mut(|x| { match x {
+                PersonUuidOrString::PersonUuid(id) => {
+                    valid_persons.contains(id.clone())
+                }
+                PersonUuidOrString::NameString(_) => true
+            }});
 
             if metadata != old_metadata {
                 // Save edited metadata
@@ -161,17 +171,25 @@ pub async fn get_section(
             }
 
             let authors_expanded = if expand_authors{
-                let mut authors_detailed: Vec<Person> = Vec::new();
-                for author_id in &section.metadata.authors{
-                    match data_storage.get_person(author_id){
-                        Some(person) => {
-                            authors_detailed.push(person.read().unwrap().clone())
-                        },
-                        None => {
-                            error!("Couldn't extend author details, author_id {} not found.", author_id);
-                            return ApiResult::new_error(ApiError::InternalServerError)
+                let mut authors_detailed: Vec<PersonOrString> = Vec::new();
+                for person_or_string in section.metadata.authors.iter_mut(){
+                    match person_or_string{
+                        PersonUuidOrString::PersonUuid(id) => {
+                            match data_storage.get_person(&id){
+                                Some(person) => {
+                                    authors_detailed.push(PersonOrString::Person(person.read().unwrap().clone()))
+                                },
+                                None => {
+                                    error!("Couldn't extend author details, author_id {} not found.", id);
+                                    return ApiResult::new_error(ApiError::InternalServerError)
+                                }
+                            }
+                        }
+                        PersonUuidOrString::NameString(namestr) => {
+                            authors_detailed.push(PersonOrString::NameString(namestr.clone()))
                         }
                     }
+
                 }
 
                 Some(authors_detailed)
@@ -179,17 +197,25 @@ pub async fn get_section(
                 None
             };
             let editors_expanded = if expand_editors {
-                let mut editors_detailed: Vec<Person> = Vec::new();
-                for editor_id in &section.metadata.editors{
-                    match data_storage.get_person(editor_id){
-                        Some(person) => {
-                            editors_detailed.push(person.read().unwrap().clone())
-                        },
-                        None => {
-                            error!("Couldn't extend editor details, editor_id {} not found.", editor_id);
-                            return ApiResult::new_error(ApiError::InternalServerError)
+                let mut editors_detailed: Vec<PersonOrString> = Vec::new();
+                for person_or_string in section.metadata.editors.iter_mut(){
+                    match person_or_string{
+                        PersonUuidOrString::PersonUuid(id) => {
+                            match data_storage.get_person(&id){
+                                Some(person) => {
+                                    editors_detailed.push(PersonOrString::Person(person.read().unwrap().clone()))
+                                },
+                                None => {
+                                    error!("Couldn't extend author details, author_id {} not found.", id);
+                                    return ApiResult::new_error(ApiError::InternalServerError)
+                                }
+                            }
+                        }
+                        PersonUuidOrString::NameString(namestr) => {
+                            editors_detailed.push(PersonOrString::NameString(namestr.clone()))
                         }
                     }
+
                 }
 
                 Some(editors_detailed)
@@ -199,9 +225,7 @@ pub async fn get_section(
             
             let metadata_res = APISectionMetadataResult{
                 title: section.metadata.title,
-                toc_title_override: section.metadata.toc_title_override,
                 subtitle: section.metadata.subtitle,
-                toc_subtitle_override: section.metadata.toc_subtitle_override,
                 authors: section.metadata.authors,
                 authors_expanded,
                 editors: section.metadata.editors,
@@ -211,6 +235,7 @@ pub async fn get_section(
                 published: section.metadata.published,
                 last_changed: section.metadata.last_changed,
                 lang: section.metadata.lang,
+                toc_title_subtitle_override: section.metadata.toc_title_subtitle_override,
             };
             let section_id = match section.id{
                 Some(id) => id,
@@ -289,15 +314,19 @@ pub async fn update_section(project_id: String, content_path: String, section_pa
             // Check if new section data is valid
             // Check authors
             for author in new_section_data.metadata.authors.iter(){
-                if !data_storage.person_exists(author){
-                    return ApiResult::new_error(ApiError::BadRequest(format!("Author {} does not exist", author)));
+                if let PersonUuidOrString::PersonUuid(id) = author {
+                    if !data_storage.person_exists(id) {
+                        return ApiResult::new_error(ApiError::BadRequest(format!("Author {} does not exist", id)));
+                    }
                 }
             }
 
             // Check editors
             for editor in new_section_data.metadata.editors.iter(){
-                if !data_storage.person_exists(editor){
-                    return ApiResult::new_error(ApiError::BadRequest(format!("Editor {} does not exist", editor)));
+                if let PersonUuidOrString::PersonUuid(id) = editor {
+                    if !data_storage.person_exists(id) {
+                        return ApiResult::new_error(ApiError::BadRequest(format!("Editor {} does not exist", id)));
+                    }
                 }
             }
 
@@ -340,15 +369,13 @@ pub struct PatchSection{
 pub struct PatchSectionMetadata {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
-    pub toc_title_override: Option<Option<String>>,
+    pub toc_title_subtitle_override: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     pub subtitle: Option<Option<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
-    pub toc_subtitle_override: Option<Option<String>>,
     #[bincode(with_serde)]
-    pub authors: Option<Vec<uuid::Uuid>>,
+    pub authors: Option<Vec<PersonUuidOrString>>,
     #[bincode(with_serde)]
-    pub editors: Option<Vec<uuid::Uuid>>,
+    pub editors: Option<Vec<PersonUuidOrString>>,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     pub web_url: Option<Option<String>>,
     pub identifiers: Option<Vec<Identifier>>,
@@ -363,24 +390,20 @@ pub struct PatchSectionMetadata {
     pub lang: Option<Option<Language>>,
 }
 
-impl Patch<PatchSectionMetadata, SectionMetadataV4> for SectionMetadataV4 {
-    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV4 {
+impl Patch<PatchSectionMetadata, SectionMetadataV5> for SectionMetadataV5 {
+    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV5 {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title{
             new_metadata.title = title;
         }
 
-        if let Some(toc_title_override) = patch.toc_title_override{
-            new_metadata.toc_title_override = toc_title_override;
+        if let Some(toc_title_subtitle_override) = patch.toc_title_subtitle_override{
+            new_metadata.toc_title_subtitle_override = toc_title_subtitle_override;
         }
 
         if let Some(subtitle) = patch.subtitle{
             new_metadata.subtitle = subtitle;
-        }
-
-        if let Some(toc_subtitle_override) = patch.toc_subtitle_override{
-            new_metadata.toc_subtitle_override = toc_subtitle_override;
         }
 
         if let Some(authors) = patch.authors{
@@ -426,8 +449,8 @@ impl Patch<PatchSectionMetadata, SectionMetadataV4> for SectionMetadataV4 {
 }
 
 // Implement patch for PatchSection
-impl Patch<PatchSection, SectionV4> for SectionV4 {
-    fn patch(&mut self, patch: PatchSection) -> SectionV4 {
+impl Patch<PatchSection, SectionV5> for SectionV5 {
+    fn patch(&mut self, patch: PatchSection) -> SectionV5 {
         let mut new_section = self.clone();
 
         if let Some(id) = patch.id{

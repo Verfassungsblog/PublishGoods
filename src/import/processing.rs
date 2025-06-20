@@ -18,7 +18,7 @@ use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
 use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionOrTocV4, SectionV4};
+use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionMetadataV5, SectionOrTocV4, SectionOrTocV5, SectionV5};
 use crate::storage::BibEntryV2;
 use crate::utils::block_id_generator::generate_id;
 
@@ -469,17 +469,16 @@ impl ImportProcessor{
         };
 
 
-        let section = SectionV4 {
+        let section = SectionV5 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV4 {
+            metadata: SectionMetadataV5 {
                 title: post.title.rendered.clone(),
-                toc_title_override: None,
+                toc_title_subtitle_override: None,
                 subtitle,
-                toc_subtitle_override: None,
                 authors: vec![],
                 editors: vec![],
                 web_url: Some(post.link.clone()),
@@ -600,7 +599,7 @@ impl ImportProcessor{
             }
     }
 
-    async fn import_html_from_wp(&self, mut section: SectionV4, input: String, project_data: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
+    async fn import_html_from_wp(&self, mut section: SectionV5, input: String, project_data: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings: bool, convert_links: bool) -> Result<(), ImportError> {
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -812,7 +811,7 @@ impl ImportProcessor{
         }
 
         section.metadata.lang = detect_language_for_section(&section);
-        project_data.write().unwrap().sections.push(SectionOrTocV4::Section(section));
+        project_data.write().unwrap().sections.push(SectionOrTocV5::Section(section));
         Ok(())
 
     }
@@ -829,17 +828,16 @@ impl ImportProcessor{
             return Err(ImportError::HtmlConversionFailed)
         } //TODO support a full html document
         
-        let mut section = SectionV4 {
+        let mut section = SectionV5 {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV4 {
+            metadata: SectionMetadataV5 {
                 title: "Imported Section".to_string(),
-                toc_title_override: None,
+                toc_title_subtitle_override: None,
                 subtitle: None,
-                toc_subtitle_override: None,
                 authors: vec![],
                 editors: vec![],
                 web_url: None,
@@ -1059,7 +1057,7 @@ impl ImportProcessor{
             section.metadata.lang = lang;
         }
         
-        project_data.write().unwrap().sections.push(SectionOrTocV4::Section(section));
+        project_data.write().unwrap().sections.push(SectionOrTocV5::Section(section));
         Ok(())
     }
 

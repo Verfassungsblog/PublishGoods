@@ -16,7 +16,7 @@ use bincode::{Encode, Decode};
 use bincode::error::DecodeError;
 use hayagriva::types::EntryType;
 use vb_exchange::projects::*;
-use crate::projects::{ProjectMetadataV2, SectionOrTocV2, SectionOrTocV1, SectionV4, ProjectMetadataV1, SectionOrTocV3, SectionOrTocV4, ProjectMetadataV3};
+use crate::projects::{ProjectMetadataV2, SectionOrTocV2, SectionOrTocV1, SectionV5, ProjectMetadataV1, SectionOrTocV3, SectionOrTocV4, ProjectMetadataV3};
 use crate::projects::api::ApiError;
 use crate::settings::Settings;
 use reqwest::Url;

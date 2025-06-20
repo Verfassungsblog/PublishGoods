@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::fs::File;
 use bincode::{Decode, Encode};
+use rocket::http::hyper::body::HttpBody;
 use rocket::serde::{Deserialize, Serialize};
 use vb_exchange::deprecated::projects::project_settings::{ProjectSettingsV2, ProjectSettingsV3, ProjectSettingsV4};
 use vb_exchange::projects::ProjectSettingsV5;
-use crate::projects::{ProjectMetadataV1, ProjectMetadataV2, SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4};
+use crate::projects::{ProjectMetadataV1, ProjectMetadataV2, ProjectMetadataV3, SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4};
 use crate::storage::{BibEntryV2, OldBibEntry};
-use crate::storage::project_storage::current::ProjectDataV7;
+use crate::storage::project_storage::current::ProjectDataV8;
 use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
 
 pub fn load_project_data(mut file: File, mut version: u64) -> Result<ProjectData, ProjectStorageError>{
@@ -71,10 +72,19 @@ pub fn load_project_data(mut file: File, mut version: u64) -> Result<ProjectData
         } else {
             Some(bincode::decode_from_std_read::<ProjectDataV7, _, _>(&mut file, bincode::config::standard())?)
         };
+        version = 8;
+    }
+    let mut v8_data: Option<ProjectDataV8> = None;
+    if version == 8{
+        v8_data = if let Some(v7_data) = v7_data {
+            Some(v7_data.into())
+        } else {
+            Some(bincode::decode_from_std_read::<ProjectDataV8, _, _>(&mut file, bincode::config::standard())?)
+        };
     }
 
-    match v7_data{
-        Some(v7_data) => Ok(v7_data),
+    match v8_data{
+        Some(data) => Ok(data),
         None => Err(ProjectStorageError::InvalidVersionNumber)
     }
 }
@@ -174,6 +184,35 @@ impl From<ProjectDataV6> for ProjectDataV7{
             metadata: value.metadata.map(|v|v.into()),
             settings: value.settings,
             sections: value.sections.iter().map(|section| section.clone().into()).collect(),
+            bibliography: value.bibliography,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectDataV7 {
+    pub name: String,
+    pub description: Option<String>,
+    #[bincode(with_serde)]
+    pub template_id: uuid::Uuid,
+    pub last_interaction: u64,
+    pub metadata: Option<ProjectMetadataV3>,
+    pub settings: Option<ProjectSettingsV5>,
+    pub sections: Vec<SectionOrTocV4>,
+    #[bincode(with_serde)]
+    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+}
+
+impl From<ProjectDataV7> for ProjectDataV8{
+    fn from(value: ProjectDataV7) -> Self {
+        ProjectDataV8{
+            name: value.name,
+            description: value.description,
+            template_id: value.template_id,
+            last_interaction: value.last_interaction,
+            metadata: value.metadata.map(|v|v.into()),
+            settings: value.settings,
+            sections: value.sections.into_iter().map(|section|section.into()).collect(),
             bibliography: value.bibliography,
         }
     }
