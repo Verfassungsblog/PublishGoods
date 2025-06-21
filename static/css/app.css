@@ -772,6 +772,8 @@ customstyle{
     padding: 5px;
     margin-right: 2px;
     margin-bottom: 3px;
+    display: flex;
+    align-items: center;
 }
 .section_metadata_person_div_after{
     width: 10px;

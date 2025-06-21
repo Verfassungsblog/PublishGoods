@@ -66,6 +66,17 @@ Handlebars.registerHelper("is", function (arg1, arg2, options) {
     // @ts-ignore
     return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
 });
+/**
+ * Creates a base64 string from any utf-8 string
+ */
+// @ts-ignore
+Handlebars.registerHelper("base64", function (arg1) {
+    let bytes = new TextEncoder().encode(arg1);
+    // @ts-ignore
+    let binstring = Array.from(bytes, (byte) => // @ts-ignore
+     String.fromCodePoint(byte)).join("");
+    return btoa(binstring);
+});
 ///<reference path="./General.ts"/>
 var Persons;
 ///<reference path="./General.ts"/>

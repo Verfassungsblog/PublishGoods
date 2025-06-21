@@ -1,6 +1,14 @@
 import * as Tools from "./tools";
-import {PatchSection, PatchSectionMetadata, PersonsAPI, SectionAPI} from "./api_requests"
+import {
+    PatchSection,
+    PatchSectionMetadata,
+    PersonsAPI,
+    SectionAPI,
+    PersonUuidOrString
+} from "./api_requests"
 import {show_editor} from "./Editor";
+
+//TODO: Use a State Model which always reflects the current section data + dirty flags
 
 let typing_timer : number|null;
 let section_api = SectionAPI();
@@ -98,30 +106,30 @@ let add_identifier_listener = function(){
     add_remove_identifier_listeners();
 }
 
-let add_search_listeners = function(){
+let add_search_listeners = function () {
     // Add search listeners:
     // Add search for authors
     let authors_searchbar = document.getElementById("section_metadata_search_authors") as HTMLInputElement;
     let search_result_overlay = document.getElementById("section_metadata_search_authors_results") as HTMLElement;
 
-    let author_search_callback = async function(selected: HTMLElement){
-        let author_to_add = selected.getAttribute("data-person-id");
-        if(section_data.metadata.authors.includes(author_to_add)){
+    let author_search_callback = async function (selected: HTMLElement) {
+        let author_to_add: PersonUuidOrString = {PersonUuid: selected.getAttribute("data-person-id")};
+        if (section_data.metadata.authors.includes(author_to_add)) {
             Tools.show_alert("Author already added.", "warning");
             return;
         }
 
-        try{
+        try {
             Tools.start_loading_spinner();
-            let person_data = await person_api.send_get_person_request(author_to_add);
+            let person_data = await person_api.send_get_person_request(author_to_add.PersonUuid);
             Tools.stop_loading_spinner();
 
             let authors_div = document.getElementById("section_metadata_authors_div") as HTMLElement;
             // @ts-ignore
-            authors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_section_authors_li(person_data));
-            metadata_change_handler().then();
+            authors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_section_authors_li({Person: person_data}));
+            await metadata_change_handler();
             add_authors_editors_listeners();
-        }catch(e){
+        } catch (e) {
             Tools.show_alert("Error adding author: " + e, "danger");
             Tools.stop_loading_spinner();
         }
@@ -129,28 +137,53 @@ let add_search_listeners = function(){
     // @ts-ignore
     Tools.add_search(authors_searchbar, search_result_overlay, person_api.send_search_person_request, Handlebars.templates.search_person_li, author_search_callback);
 
+    let search_input = document.getElementById("section_metadata_search_authors") as HTMLInputElement;
+
+    // Add Person as NameString if Enter pressed in search bar
+    search_input.addEventListener("keydown", async function (e) {
+        if (e.key !== "Enter") {
+            return;
+        }
+
+        let name_to_add: PersonUuidOrString = {NameString: (search_input.value)};
+        search_input.value = "";
+
+        let authors_div = document.getElementById("section_metadata_authors_div") as HTMLElement;
+        // @ts-ignore
+        authors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_section_authors_li(name_to_add));
+
+        try {
+            Tools.start_loading_spinner();
+            await metadata_change_handler();
+            add_authors_editors_listeners();
+        } catch (e) {
+            Tools.show_alert("Error adding author name: " + e.toString(), "danger");
+        }
+        Tools.stop_loading_spinner();
+    });
+
     // Add search for editors
     let editors_searchbar = document.getElementById("section_metadata_search_editors") as HTMLInputElement;
     let editors_search_result_overlay = document.getElementById("section_metadata_search_editors_results") as HTMLElement;
 
-    let editor_search_callback = async function(selected: HTMLElement){
-        let editor_to_add = selected.getAttribute("data-person-id");
-        if(section_data.metadata.editors.includes(editor_to_add)){
+    let editor_search_callback = async function (selected: HTMLElement) {
+        let editor_to_add: PersonUuidOrString = {PersonUuid: selected.getAttribute("data-person-id")};
+        if (section_data.metadata.editors.includes(editor_to_add)) {
             Tools.show_alert("Editor already added.", "warning");
             return;
         }
 
-        try{
+        try {
             Tools.start_loading_spinner();
-            let person_data = await person_api.send_get_person_request(editor_to_add);
+            let person_data = await person_api.send_get_person_request(editor_to_add.PersonUuid);
             Tools.stop_loading_spinner();
 
             let editors_div = document.getElementById("section_metadata_editors_div") as HTMLElement;
             // @ts-ignore
-            editors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_section_editors_li(person_data));
-            metadata_change_handler().then();
+            editors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_section_editors_li({Person: person_data}));
+            await metadata_change_handler();
             add_authors_editors_listeners();
-        }catch(e){
+        } catch (e) {
             Tools.show_alert("Error adding editor: " + e, "danger");
             Tools.stop_loading_spinner();
         }
@@ -158,6 +191,31 @@ let add_search_listeners = function(){
 
     // @ts-ignore
     Tools.add_search(editors_searchbar, editors_search_result_overlay, person_api.send_search_person_request, Handlebars.templates.search_person_li, editor_search_callback);
+
+    let editors_search_input = document.getElementById("section_metadata_search_editors") as HTMLInputElement;
+
+    // Add Person as NameString if Enter pressed in search bar
+    editors_search_input.addEventListener("keydown", async function (e) {
+        if (e.key !== "Enter") {
+            return;
+        }
+
+        let name_to_add: PersonUuidOrString = {NameString: (editors_search_input.value)};
+        editors_search_input.value = "";
+
+        let editors_div = document.getElementById("section_metadata_editors_div") as HTMLElement;
+        // @ts-ignore
+        editors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_section_editors_li(name_to_add));
+
+        try {
+            Tools.start_loading_spinner();
+            await metadata_change_handler();
+            add_authors_editors_listeners();
+        } catch (e) {
+            Tools.show_alert("Error adding editor name: " + e.toString(), "danger");
+        }
+        Tools.stop_loading_spinner();
+    });
 }
 
 let quickchange_handler = async function(){
@@ -216,9 +274,9 @@ let metadata_change_handler = async function () {
         metadata.title = title;
     }
 
-    let toc_title_override = (document.getElementById("section_metadata_toc_title_override") as HTMLInputElement)?.value || null;
-    if (toc_title_override !== section_data.metadata.title_toc_override) {
-        metadata.toc_title_override = toc_title_override;
+    let toc_title_subtitle_override = (document.getElementById("section_metadata_toc_title_subtitle_override") as HTMLInputElement)?.value || null;
+    if (toc_title_subtitle_override !== section_data.metadata.toc_title_subtitle_override) {
+        metadata.toc_title_subtitle_override = toc_title_subtitle_override;
     }
 
     let subtitle = document.getElementById("section_metadata_subtitle")?.innerText || null;
@@ -226,29 +284,40 @@ let metadata_change_handler = async function () {
         metadata.subtitle = subtitle;
     }
 
-    let toc_subtitle_override = (document.getElementById("section_metadata_toc_subtitle_override") as HTMLInputElement)?.value || null;
-    if (toc_subtitle_override !== section_data.metadata.subtitle_toc_override) {
-        metadata.toc_subtitle_override = toc_subtitle_override;
-    }
-
     let web_url = (document.getElementById("section_metadata_web_url") as HTMLInputElement)?.value || null;
     if (web_url !== section_data.metadata.web_url) {
         metadata.web_url = web_url;
     }
 
-    let authors = [];
-    for(let author of Array.from(document.getElementsByClassName("section_metadata_authors_div"))){
-        authors.push(author.getAttribute("data-id"));
+    let authors : PersonUuidOrString[] = [];
+    for(let author_div of Array.from(document.getElementsByClassName("section_metadata_authors_div"))){
+        if(author_div.getAttribute("data-entry-type") === "Person"){
+            const id = author_div.getAttribute("data-id");
+            if(id !== null) {
+                authors.push({PersonUuid: id});
+            }
+        }else if(author_div.getAttribute("data-entry-type") === "NameString"){
+            let name = author_div.getAttribute("data-name");
+            authors.push({NameString: name})
+        }
     }
     if (authors !== section_data.metadata.authors){
         metadata.authors = authors;
     }
 
-    let editors = [];
-    for(let editor of Array.from(document.getElementsByClassName("section_metadata_editors_div"))){
-        editors.push(editor.getAttribute("data-id"));
+    let editors: PersonUuidOrString[] = [];
+    for (let editor_div of Array.from(document.getElementsByClassName("section_metadata_editors_div"))) {
+        if (editor_div.getAttribute("data-entry-type") === "Person") {
+            const id = editor_div.getAttribute("data-id");
+            if (id !== null) {
+                editors.push({PersonUuid: id});
+            }
+        } else if (editor_div.getAttribute("data-entry-type") === "NameString") {
+            let name = editor_div.getAttribute("data-name");
+            editors.push({NameString: name})
+        }
     }
-    if (editors !== section_data.metadata.editors){
+    if (editors !== section_data.metadata.editors) {
         metadata.editors = editors;
     }
 
