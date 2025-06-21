@@ -287,7 +287,8 @@ async function wordpress_show_settings(import_data: WordpressImportData){
             endnotes: (document.getElementById("wizard-wordpress-settings-convert-to-endnotes") as HTMLInputElement).checked,
             // @ts-ignore
             project_id: globalThis.project_id,
-            shift_headings: (document.getElementById("wizard-wordpress-settings-shift-levels-up") as HTMLInputElement).checked
+            shift_headings: (document.getElementById("wizard-wordpress-settings-shift-levels-up") as HTMLInputElement).checked,
+            import_author_names: (document.getElementById("wizard-wordpress-settings-import-authors") as HTMLInputElement).checked,
         };
 
         let api = API.ImportAPI();

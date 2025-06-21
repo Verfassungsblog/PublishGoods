@@ -1444,6 +1444,7 @@ export interface WordpressImportRequest{
     endnotes: boolean;
     shift_headings: boolean;
     convert_links: boolean;
+    import_author_names: boolean;
 }
 
 export type WordpressAPIError =

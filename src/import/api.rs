@@ -50,7 +50,9 @@ struct WordpressImportRequest{
     /// Whether to decrease heading levels by one so h2 becomes h1
     shift_headings: bool,
     /// Whether to convert links to citations
-    convert_links: bool
+    convert_links: bool,
+    /// Whether to import author names
+    import_author_names: bool,
 }
 
 /// POST /api/import/upload
@@ -108,6 +110,7 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
         convert_footnotes_to_endnotes: upload.convert_footnotes_to_endnotes,
         shift_headings_up: upload.shift_headings_up,
         convert_links: upload.convert_links,
+        import_author_names: false,
         import_data: ImportJobData::FileImport(FileImportData{
             files_to_process: file_paths,
             bib_file: bib_file_path,
@@ -150,8 +153,11 @@ pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: 
         convert_footnotes_to_endnotes: job.endnotes,
         shift_headings_up: job.shift_headings,
         convert_links: job.convert_links,
+        import_author_names: job.import_author_names,
         import_data: import_job_data,
     };
+
+    debug!("Adding job to import from wordpress: {:?}", import_job);
 
     import_processor.job_queue.write().unwrap().push_back(import_job);
     ApiResult::new_data(id)

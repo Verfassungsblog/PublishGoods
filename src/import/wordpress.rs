@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 use chrono::NaiveTime;
 use reqwest::header::HeaderValue;
+use reqwest::{Error, Response};
 use serde::{Deserialize, Serialize};
 
 /// Import from Wordpress API
@@ -34,6 +36,16 @@ pub struct PostData{
     pub number_of_records: usize,
     pub total_pages: usize,
     pub data: PostDataType,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WordpressUser{
+    pub id: usize,
+    pub name: String,
+    pub url: String,
+    pub description: String,
+    pub link: String,
+    pub slug: String
 }
 
 #[derive(Debug, Default)]
@@ -102,6 +114,34 @@ impl WordpressAPI {
             Ok(client) => Ok(client),
             Err(e) => {
                 eprintln!("Error building client: {}", e);
+                Err(WordpressAPIError::ReqwestError)
+            }
+        }
+    }
+
+    pub async fn get_user(&self, id: usize) -> Result<WordpressUser, WordpressAPIError>{
+        let url = format!("https://{}/wp-json/wp/v2/users/{}", self.base_url, id);
+
+        let client = self.client.clone();
+        let request = client.request(reqwest::Method::GET, &url);
+
+        match request.send().await{
+            Ok(response) => {
+                debug!("Got user response status: {:?}", response.status());
+                if response.status() == 404 {
+                    Err(WordpressAPIError::NotFound)
+                }else{
+                    match response.json::<WordpressUser>().await{
+                        Ok(res) => Ok(res),
+                        Err(e) => {
+                            error!("Couldn't parse user response from wordpress: {}", e);
+                            Err(WordpressAPIError::SerdeParsingError)
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Couldn't parse user response from wordpress: {}", e);
                 Err(WordpressAPIError::ReqwestError)
             }
         }
@@ -401,7 +441,9 @@ pub struct Post{
     pub featured_media: usize,
     pub categories: Vec<usize>,
     pub tags: Vec<usize>,
+    /// Optionally additional fields from the Advanced Custom Fields Plugin
     pub acf: Option<PostAcf>,
+    /// Optionally additional co-authors (Co-Authors Plus WP Plugin)
     pub coauthors: Option<Vec<CoAuthor>>
 }
 

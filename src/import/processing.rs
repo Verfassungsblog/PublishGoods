@@ -17,8 +17,8 @@ use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
-use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
-use crate::projects::{BlockData, NewContentBlock, SectionMetadataV4, SectionMetadataV5, SectionOrTocV4, SectionOrTocV5, SectionV5};
+use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError, WordpressUser};
+use crate::projects::{BlockData, NewContentBlock, PersonUuidOrString, Section, SectionMetadataV4, SectionMetadataV5, SectionOrTocV4, SectionOrTocV5, SectionV5};
 use crate::storage::BibEntryV2;
 use crate::utils::block_id_generator::generate_id;
 
@@ -84,6 +84,7 @@ pub enum ImportError {
 }
 
 /// Represents a import job with settings and an ['ImportJobData'] variant.
+#[derive(Debug)]
 pub struct ImportJob{
     /// ImportJob id, randomly generated
     pub id: uuid::Uuid,
@@ -95,11 +96,14 @@ pub struct ImportJob{
     pub shift_headings_up: bool,
     /// Whether we should try to convert links into citations
     pub convert_links: bool,
+    /// Whether we should import author names
+    pub import_author_names: bool,
     /// References where to find the items to imports
     pub import_data: ImportJobData,
 }
 
 /// Contains the references to Links/Files/Wordpress Filters to import
+#[derive(Debug)]
 pub enum ImportJobData{
     /// Import by a list of links to wordpress posts
     WordpressLinks(Vec<String>),
@@ -110,7 +114,7 @@ pub enum ImportJobData{
 }
 
 /// Filter settings for WordPress imports
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WordpressFilterData{
     /// Host (without protocol) to get posts from
     pub wp_host: String,
@@ -125,6 +129,7 @@ pub struct WordpressFilterData{
 }
 
 /// Holds data for an import from files to convert via pandoc
+#[derive(Debug)]
 pub struct FileImportData{
     /// List of (Path, ContentType) entries (one per section)
     pub files_to_process: VecDeque<(String, ContentType)>,
@@ -133,9 +138,36 @@ pub struct FileImportData{
 }
 
 impl ImportProcessor{
+    /// Updates the import status of a job in the job archive.
+    ///
+    /// Acquires a write lock on the job archive and sets the status of the specified job ID to the given `new_status`.
+    /// Overwrites any existing status for the job ID.
+    ///
+    /// # Arguments
+    /// * `job_id` - The unique identifier of the import job to update.
+    /// * `new_status` - The new status to assign to the job.
     fn update_import_status(&self, job_id: &uuid::Uuid, new_status: ImportStatus){
         self.job_archive.write().unwrap().insert(job_id.clone(), new_status);
     }
+
+    /// Starts the background import processor and returns a shared instance of the processor.
+    ///
+    /// This function initializes an [`ImportProcessor`] with the given application [`Settings`] and a reference
+    /// to the [`ProjectStorage`]. It then spawns an asynchronous task that continuously monitors the import job queue.
+    /// Whenever there are pending jobs and the number of running import threads is less than the configured maximum,
+    /// it starts new asynchronous worker threads to process each import job concurrently. Each job is tracked in
+    /// the `job_archive` map with its current [`ImportStatus`]. The thread count is adjusted atomically as jobs are picked up and finished.
+    /// If no immediate job can be picked up, the loop waits for one second before checking again.
+    ///
+    /// # Arguments
+    /// * `settings` - The application configuration containing, e.g., the maximum number of concurrent import threads.
+    /// * `project_storage` - An atomically reference-counted pointer to the global project storage instance.
+    ///
+    /// # Returns
+    /// An `Arc<ImportProcessor>` that can be used to schedule new import jobs or query their progress.
+    ///
+    /// The background worker will run for the process lifetime, picking up and processing import jobs as
+    /// they become available in the queue.
     pub fn start(settings: Settings, project_storage: Arc<ProjectStorage>) -> Arc<ImportProcessor>{
         let processor = Arc::new(ImportProcessor{
             settings,
@@ -217,7 +249,7 @@ impl ImportProcessor{
             debug!("Importing wordpress URL: {}", link);
             // Update import status
             self.update_import_status(&job.id, ImportStatus::Processing(ProcessingDetails::new(num, Some(total_num))));
-            if let Err(e) = self.import_by_url(link, Arc::clone(&project), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await{
+            if let Err(e) = self.import_by_url(link, Arc::clone(&project), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links, job.import_author_names).await{
                 error!("Import failed: {:?}", e);
                 self.update_import_status(&job.id, ImportStatus::Failed(e));
                 break;
@@ -356,7 +388,14 @@ impl ImportProcessor{
 
         for (num, post) in posts.into_iter().enumerate(){
             self.update_import_status(&job.id, ImportStatus::Processing(ProcessingDetails::new(num+1, Some(number_of_posts))));
-            if let Err(e) = self.import_wp_post(post, project.clone(), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links).await{
+
+            let additional_author_names = if job.import_author_names{
+                self.resolve_wp_authors(&post, &api).await
+            }else{
+                vec![]
+            };
+
+            if let Err(e) = self.import_wp_post(post, project.clone(), job.convert_footnotes_to_endnotes, job.shift_headings_up, job.convert_links, additional_author_names).await{
                 eprintln!("Error processing post for import: {:?}", e);
                 self.update_import_status(&job.id, ImportStatus::Failed(e));
                 break;
@@ -365,6 +404,17 @@ impl ImportProcessor{
         self.update_import_status(&job.id, ImportStatus::Complete);
     }
 
+    /// Processes an import job by delegating the job to the appropriate handler based on the type of import data.
+    ///
+    /// This asynchronous function accepts an `ImportJob` and a reference to the shared `ProjectStorage`.
+    /// Depending on the `import_data` variant present in the job, it will call the corresponding asynchronous processing function:
+    /// - For `ImportJobData::WordpressLinks`, it processes links to WordPress posts.
+    /// - For `ImportJobData::FileImport`, it processes file imports using Pandoc.
+    /// - For `ImportJobData::WordpressFilter`, it processes filtered post imports from a WordPress host.
+    ///
+    /// # Arguments
+    /// * `job` - The `ImportJob` to be processed, containing configuration and import data.
+    /// * `project_storage` - Shared reference to the `ProjectStorage`, which manages project data and resources.
     async fn process_job(&self, job: ImportJob, project_storage: Arc<ProjectStorage>){
         match job.import_data{
             ImportJobData::WordpressLinks(_) => self.process_wordpress_links(job, project_storage).await,
@@ -373,7 +423,7 @@ impl ImportProcessor{
         }
     }
 
-    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
+    pub async fn import_by_url(&self, url: &str, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, import_author_names: bool) -> Result<(), ImportError>{
         let url = if url.ends_with("/"){
             url[..url.len()-1].to_string()
         }else{
@@ -423,15 +473,72 @@ impl ImportProcessor{
             }
         }else{
         TODO: reimplement category link importing
-        */
-            debug!("Found non-category link. Trying to import single post");
-            let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
-            self.import_wp_post(post, project.clone(), endnotes, shift_headings_up, convert_links).await?;
-        //}
+         */
+
+        debug!("Found non-category link. Trying to import single post");
+        let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
+
+        let additional_author_names = if import_author_names{
+            self.resolve_wp_authors(&post, &api).await
+        }else{
+            vec![]
+        };
+
+        self.import_wp_post(post, project.clone(), endnotes, shift_headings_up, convert_links, additional_author_names).await?;
+
         Ok(())
     }
 
-    async fn import_wp_post(&self, post: Post, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool) -> Result<(), ImportError>{
+    /// Tries to resolve the author id from the wordpress api
+    ///
+    /// Returns a Vec with ['PersonUuidOrString'] with the authors (and optional co authors) as NameString variants
+    async fn resolve_wp_authors(&self, post: &Post, api: &WordpressAPI) -> Vec<PersonUuidOrString>{
+        debug!("Trying to resolve author names for post.");
+        let mut author_names = vec![];
+
+        // Resolve author name
+        if let Ok(author) = api.get_user(post.author).await{
+            author_names.push(PersonUuidOrString::NameString(author.name));
+
+            // Add co authors if any
+            if let Some(co_authors) = &post.coauthors{
+                for co_author in co_authors{
+                    author_names.push(PersonUuidOrString::NameString(co_author.display_name.clone()));
+                }
+            }
+        }
+        
+        author_names.dedup();
+        
+        debug!("Resolved author names: {:?}", author_names);
+
+        author_names
+    }
+
+    /// Imports a WordPress post into a project as a new section.
+    ///
+    /// This function takes a WordPress post along with additional metadata and configuration flags,
+    /// constructs a `Section` struct containing the imported content and metadata,
+    /// then asynchronously imports the HTML content into the given project.
+    ///
+    /// - Extracts the subtitle from the post's advanced custom fields (ACF) if present.
+    /// - Collects and attaches DOI identifiers from the ACF, preferring `crossref_doi` over `doi`.
+    /// - If the `language_detection` feature is enabled, attempts to detect the post's language using the rendered HTML content.
+    /// - Assembles section metadata including title, authors, identifiers, publishing dates, web URL, and language.
+    /// - Finally, passes the section and the rendered HTML to `import_html_from_wp`, propagating any import errors.
+    ///
+    /// # Arguments
+    /// * `post` - The WordPress post to import. Can include custom ACF fields and co-authors.
+    /// * `project` - An atomic, shareable handle to the project data to which this post should be imported.
+    /// * `endnotes` - Whether to convert inline footnotes to endnotes in the imported content.
+    /// * `shift_headings_up` - Whether to increase the level of all headings in the imported content by one.
+    /// * `convert_links` - Whether to convert any internal WordPress links to project-internal links.
+    /// * `imported_authors` - List of author identifiers or names to set as authors for this section.
+    ///
+    /// # Errors
+    /// Returns an [`ImportError`] if the import process fails, for example when the project is not found,
+    /// importing the HTML fails, or the input contains unsupported content types.
+    async fn import_wp_post(&self, post: Post, project: Arc<RwLock<ProjectData>>, endnotes: bool, shift_headings_up: bool, convert_links: bool, imported_authors: Vec<PersonUuidOrString>) -> Result<(), ImportError>{
         let subtitle = match &post.acf{
             None => None,
             Some(acf) => {
@@ -469,7 +576,7 @@ impl ImportProcessor{
         };
 
 
-        let section = SectionV5 {
+        let section = Section {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
@@ -479,7 +586,7 @@ impl ImportProcessor{
                 title: post.title.rendered.clone(),
                 toc_title_subtitle_override: None,
                 subtitle,
-                authors: vec![],
+                authors: imported_authors,
                 editors: vec![],
                 web_url: Some(post.link.clone()),
                 identifiers,
@@ -488,6 +595,8 @@ impl ImportProcessor{
                 lang,
             },
         };
+
+        debug!("{:?}", section);
 
         self.import_html_from_wp(section, post.content.rendered.clone(), project, endnotes, shift_headings_up, convert_links).await
     }
