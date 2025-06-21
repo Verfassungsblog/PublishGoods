@@ -1,5 +1,5 @@
-use crate::data_storage::{DataStorage, ProjectStorageError, ProjectTemplateV2};
-use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, SectionOrTocV4};
+use crate::data_storage::DataStorage;
+use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, PersonUuidOrString, SectionOrTocV4, SectionOrTocV5};
 use rocket::serde::json::Json;
 use std::sync::Arc;
 use bincode::{Decode, Encode};
@@ -11,10 +11,12 @@ use rocket::http::Status;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use vb_exchange::projects::ProjectSettingsV5;
-use crate::data_storage::ProjectStorage;
 use crate::projects::{Identifier, Keyword, License, ProjectMetadata};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
+use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
+use crate::storage::ProjectTemplateV2;
 
 pub mod sections;
 
@@ -84,10 +86,10 @@ pub async fn delete_project(project_id: String, _session: Session, settings: &St
         Ok(_) =>
             ApiResult::new_data(()),
         Err(e) => match e{
-            ProjectStorageError::IOError(_) => {
+            ProjectStorageError::ProjectNotFound => ApiResult::new_error(ApiError::BadRequest("Project not Found".to_string())),
+            _ => {
                 ApiResult::new_error(ApiError::InternalServerError)
             }
-            ProjectStorageError::ProjectNotFound => ApiResult::new_error(ApiError::BadRequest("Project not Found".to_string()))
         }
     }
 }
@@ -122,11 +124,25 @@ pub async fn get_project_metadata(project_id: String, _session: Session, setting
             data_read.persons.keys().cloned().collect()
         };
         if let Some(mut authors) = metadata.authors{
-            authors.retain_mut(|author| valid_persons.contains(&author));
+            authors.retain_mut(|author| {
+                match author{
+                    PersonUuidOrString::PersonUuid(uuid) => {
+                        valid_persons.contains(uuid)
+                    }
+                    PersonUuidOrString::NameString(_) => true
+                }
+            });
             metadata.authors = Some(authors);
         }
         if let Some(mut editors) = metadata.editors{
-            editors.retain_mut(|editor| valid_persons.contains(&editor));
+            editors.retain_mut(|editor| {
+                match editor{
+                    PersonUuidOrString::PersonUuid(uuid) => {
+                        valid_persons.contains(uuid)
+                    }
+                    PersonUuidOrString::NameString(_) => true
+                }
+            });
             metadata.editors = Some(editors);
         }
 
@@ -256,11 +272,11 @@ pub struct PatchProjectMetadata{
     /// List of ids of authors of the book
     #[bincode(with_serde)]
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
-    pub authors: Option<Option<Vec<uuid::Uuid>>>,
+    pub authors: Option<Option<Vec<PersonUuidOrString>>>,
     /// List of ids of editors of the book
     #[bincode(with_serde)]
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
-    pub editors: Option<Option<Vec<uuid::Uuid>>>,
+    pub editors: Option<Option<Vec<PersonUuidOrString>>>,
     /// URL to a web version of the book or reference
     #[serde(default, skip_serializing_if = "Option::is_none", with = "::serde_with::rust::double_option")]
     pub web_url: Option<Option<String>>,
@@ -369,16 +385,20 @@ pub async fn patch_project_metadata(project_id: String, _session: Session, setti
     // Validate authors: Check if each author exists
     if let Some(ref authors) = new_metadata.authors {
         for author in authors.iter() {
-            if !data_storage.person_exists(author){
-                return ApiResult::new_error(ApiError::BadRequest(format!("Author {} does not exist", author)));
+            if let PersonUuidOrString::PersonUuid(author_id) = author {
+                if !data_storage.person_exists(author_id) {
+                    return ApiResult::new_error(ApiError::BadRequest(format!("Author {} does not exist", author_id)));
+                }
             }
         }
     }
     // Validate editors: Check if each editor exists
     if let Some(ref editors) = new_metadata.editors {
         for editor in editors.iter() {
-            if !data_storage.person_exists(editor){
-                return ApiResult::new_error(ApiError::BadRequest(format!("Editor {} does not exist", editor)));
+            if let PersonUuidOrString::PersonUuid(editor_id) = editor {
+                if !data_storage.person_exists(editor_id) {
+                    return ApiResult::new_error(ApiError::BadRequest(format!("Editor {} does not exist", editor_id)));
+                }
             }
         }
     }
@@ -526,8 +546,8 @@ pub async fn add_author_to_project(project_id: String, author_id: String, _sessi
         project.metadata.as_mut().unwrap().authors = Some(Vec::new());
     }
 
-    if !project.metadata.as_ref().unwrap().authors.as_ref().unwrap().contains(&author_id){
-        project.metadata.as_mut().unwrap().authors.as_mut().unwrap().push(author_id);
+    if !project.metadata.as_ref().unwrap().authors.clone().unwrap().contains(&PersonUuidOrString::PersonUuid(author_id.clone())) {
+        project.metadata.as_mut().unwrap().authors.as_mut().unwrap().push(PersonUuidOrString::PersonUuid(author_id));
     }
 
     ApiResult::new_data(())
@@ -574,8 +594,8 @@ pub async fn add_editor_to_project(project_id: String, editor_id: String, _sessi
         project.metadata.as_mut().unwrap().editors = Some(Vec::new());
     }
 
-    if !project.metadata.as_ref().unwrap().editors.as_ref().unwrap().contains(&editor_id){
-        project.metadata.as_mut().unwrap().editors.as_mut().unwrap().push(editor_id);
+    if !project.metadata.as_ref().unwrap().editors.as_ref().unwrap().contains(&PersonUuidOrString::PersonUuid(editor_id)){
+        project.metadata.as_mut().unwrap().editors.as_mut().unwrap().push(PersonUuidOrString::PersonUuid(editor_id));
     }
 
     ApiResult::new_data(())
@@ -621,7 +641,7 @@ pub async fn remove_author_from_project(project_id: String, author_id: String, _
         return ApiResult::new_error(ApiError::NotFound);
     }
 
-    if let Some(index) = project.metadata.as_ref().unwrap().authors.as_ref().unwrap().iter().position(|x| *x == author_id){
+    if let Some(index) = project.metadata.as_ref().unwrap().authors.as_ref().unwrap().iter().position(|x| *x == PersonUuidOrString::PersonUuid(author_id)){
         project.metadata.as_mut().unwrap().authors.as_mut().unwrap().remove(index);
     }
 
@@ -668,7 +688,7 @@ pub async fn remove_editor_from_project(project_id: String, editor_id: String, _
         return ApiResult::new_error(ApiError::NotFound);
     }
 
-    if let Some(index) = project.metadata.as_ref().unwrap().editors.as_ref().unwrap().iter().position(|x| *x == editor_id){
+    if let Some(index) = project.metadata.as_ref().unwrap().editors.as_ref().unwrap().iter().position(|x| *x == PersonUuidOrString::PersonUuid(editor_id)){
         project.metadata.as_mut().unwrap().editors.as_mut().unwrap().remove(index);
     }else{
         return ApiResult::new_error(ApiError::NotFound);
@@ -913,7 +933,7 @@ pub async fn update_identifier_in_project(project_id: String, identifier_id: Str
 /// Returns a list of all contents (sections or toc placeholder) in the project
 /// Strips out the inner content of ContentBlocks
 #[get("/api/projects/<project_id>/contents")]
-pub async fn get_project_contents(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<SectionOrTocV4>>> {
+pub async fn get_project_contents(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<SectionOrTocV5>>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -937,11 +957,11 @@ pub async fn get_project_contents(project_id: String, _session: Session, setting
     let mut contents = Vec::new();
     for entry in project.sections.iter(){
         match entry{
-            SectionOrTocV4::Toc => {
+            SectionOrTocV5::Toc => {
                 contents.push(entry.clone());
             },
-            SectionOrTocV4::Section(section) => {
-                contents.push(SectionOrTocV4::Section(section.clone_without_contentblocks()));
+            SectionOrTocV5::Section(section) => {
+                contents.push(SectionOrTocV5::Section(section.clone_without_contentblocks()));
             }
         }
     }
@@ -952,7 +972,7 @@ pub async fn get_project_contents(project_id: String, _session: Session, setting
 /// POST /api/projects/<project_id>/contents
 /// Add a new section or toc placeholder to the project
 #[post("/api/projects/<project_id>/contents", data = "<content>")]
-pub async fn add_content(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, content: Json<SectionOrTocV4>) -> Json<ApiResult<SectionOrTocV4>>{
+pub async fn add_content(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>, content: Json<SectionOrTocV5>) -> Json<ApiResult<SectionOrTocV5>>{
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -964,12 +984,12 @@ pub async fn add_content(project_id: String, _session: Session, settings: &State
     // Check if Section or Toc, generate uuid if section
     let mut content = content.into_inner();
     match &mut content{
-        SectionOrTocV4::Section(section) => {
+        SectionOrTocV5::Section(section) => {
             if let None = section.id{
                 section.id = Some(uuid::Uuid::new_v4());
             }
         },
-        SectionOrTocV4::Toc => {},
+        SectionOrTocV5::Toc => {},
     }
 
     let project_storage = Arc::clone(project_storage);
@@ -1045,7 +1065,7 @@ pub async fn move_content_after(project_id: String, content_id: String, after_id
         Err(_) => {
             println!("Couldn't find content with id {}", after_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrTocV4::Section(content));
+            project.sections.push(SectionOrTocV5::Section(content));
             ApiResult::new_error(ApiError::NotFound)
         }
     }
@@ -1108,7 +1128,7 @@ pub async fn move_content_child_of(project_id: String, content_id: String, paren
         Err(_) => {
             println!("Couldn't find content with id {}", parent_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrTocV4::Section(content));
+            project.sections.push(SectionOrTocV5::Section(content));
             ApiResult::new_error(ApiError::NotFound)
         }
     }
@@ -1155,7 +1175,7 @@ pub async fn get_content_blocks_in_section(project_id: String, content_path: Str
 
     let project = project.read().unwrap();
 
-    let section = crate::data_storage::get_section_by_path(&project, &path);
+    let section = get_section_by_path(&project, &path);
 
     match section{
         Ok(section) => {
@@ -1211,7 +1231,7 @@ pub async fn set_content_blocks_in_section(project_id: String, content_path: Str
 
     let mut project = project.write().unwrap();
 
-    let section = crate::data_storage::get_section_by_path_mut(&mut project, &path);
+    let section = get_section_by_path_mut(&mut project, &path);
 
     match section{
         Ok(section) => {

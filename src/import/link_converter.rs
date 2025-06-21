@@ -1,5 +1,5 @@
-use crate::data_storage::BibEntryV2;
 use crate::settings::Settings;
+use crate::storage::BibEntryV2;
 
 /// Module to generate a Citation from a Link.
 
@@ -100,7 +100,7 @@ pub mod test{
 
     #[tokio::test]
     async fn test_send_invald_translation_request(){
-        let settings = Settings::new().unwrap();
+        let settings = Settings::builder().unwrap();
         let link = "https://asdfpjaflgj.de";
         let res = send_translation_request(link, &settings).await;
         println!("{:?}", res);

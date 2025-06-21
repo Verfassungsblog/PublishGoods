@@ -3,6 +3,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use bincode::{Encode, Decode};
 use language::Language;
 use serde::{Serialize, Deserialize};
+use uuid::Uuid;
 use vb_exchange::deprecated::projects::data_storage::OldLanguage;
 use vb_exchange::projects::*;
 
@@ -81,12 +82,28 @@ pub enum SectionOrTocV4 {
     Toc,
 }
 
+impl From<SectionOrTocV4> for SectionOrTocV5{
+    fn from(value: SectionOrTocV4) -> Self {
+        match value {
+            SectionOrTocV4::Section(section) => SectionOrTocV5::Section(section.into()),
+            SectionOrTocV4::Toc => SectionOrTocV5::Toc,
+        }
+    }
+}
 
-impl SectionOrTocV4 {
-    pub fn into_section(self) -> Option<SectionV4> {
+
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub enum SectionOrTocV5 {
+    Section(SectionV5),
+    Toc,
+}
+
+
+impl SectionOrTocV5 {
+    pub fn into_section(self) -> Option<SectionV5> {
         match self {
-            SectionOrTocV4::Section(section) => Some(section),
-            SectionOrTocV4::Toc => None,
+            SectionOrTocV5::Section(section) => Some(section),
+            SectionOrTocV5::Toc => None,
         }
     }
 }
@@ -206,7 +223,7 @@ pub struct ProjectMetadataV2 {
     pub publisher: Option<String>,
 }
 
-pub type ProjectMetadata = ProjectMetadataV3;
+pub type ProjectMetadata = ProjectMetadataV4;
 
 /// Struct holds all project-level metadata
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
@@ -279,7 +296,88 @@ impl From<ProjectMetadataV2> for ProjectMetadataV3 {
     }
 }
 
+/// Struct holds all project-level metadata
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV4 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of ids of authors of the book
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<PersonUuidOrString>>,
+    /// List of ids of editors of the book
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<PersonUuidOrString>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    // TODO: build identifier validator
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    #[bincode(with_serde)]
+    pub languages: Option<Vec<Language>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>, //TODO: validate DDC on api set
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+}
 
+/// is either the uuid to a person or just a string with a name
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
+pub enum PersonUuidOrString{
+    PersonUuid(#[bincode(with_serde)] Uuid),
+    NameString(String)
+}
+
+impl From<ProjectMetadataV3> for ProjectMetadataV4{
+    fn from(value: ProjectMetadataV3) -> Self {
+        let authors = value.authors.map(|authors| authors.into_iter().map(|a|PersonUuidOrString::PersonUuid(a)).collect());
+        let editors = value.editors.map(|editors| editors.into_iter().map(|e|PersonUuidOrString::PersonUuid(e)).collect());
+
+        ProjectMetadataV4{
+            title: value.title,
+            subtitle: value.subtitle,
+            authors,
+            editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            languages: value.languages,
+            number_of_pages: value.number_of_pages,
+            short_abstract: value.short_abstract,
+            long_abstract: value.long_abstract,
+            keywords: value.keywords,
+            ddc: value.ddc,
+            license: value.license,
+            series: value.series,
+            volume: value.volume,
+            edition: value.edition,
+            publisher: value.publisher,
+        }
+    }
+}
+
+pub type Section = SectionV5;
 
 /// Struct holds all data for a section (e.g. chapter, part, ...)
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
@@ -345,7 +443,6 @@ impl From<SectionV2> for SectionV3 {
     }
 }
 
-/// Struct holds all data for a section (e.g. chapter, part, ...)
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct SectionV4 {
     /// Unique id of the section
@@ -364,12 +461,45 @@ pub struct SectionV4 {
     pub metadata: SectionMetadataV4,
 }
 
+
+/// Struct holds all data for a section (e.g. chapter, part, ...)
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct SectionV5 {
+    /// Unique id of the section
+    /// Only None if the section is not yet saved in the database
+    #[bincode(with_serde)]
+    pub id: Option<uuid::Uuid>,
+    /// Additional classes to style the Section
+    pub css_classes: Vec<String>,
+    /// Holds all subsections
+    pub sub_sections: Vec<SectionV5>,
+    // Holds all content blocks
+    pub children: Vec<NewContentBlock>,
+    /// If true, the section is visible in the table of contents
+    pub visible_in_toc: bool,
+    /// Metadata of the section
+    pub metadata: SectionMetadataV5,
+}
+
 impl From<SectionV3> for SectionV4 {
     fn from(value: SectionV3) -> Self {
         SectionV4 {
             id: value.id,
             css_classes: value.css_classes,
             sub_sections: value.sub_sections.into_iter().map(|s| SectionV4::from(s)).collect(),
+            children: value.children,
+            visible_in_toc: value.visible_in_toc,
+            metadata: value.metadata.into(),
+        }
+    }
+}
+
+impl From<SectionV4> for SectionV5 {
+    fn from(value: SectionV4) -> Self {
+        SectionV5 {
+            id: value.id,
+            css_classes: value.css_classes,
+            sub_sections: value.sub_sections.into_iter().map(|s| SectionV5::from(s)).collect(),
             children: value.children,
             visible_in_toc: value.visible_in_toc,
             metadata: value.metadata.into(),
@@ -396,20 +526,20 @@ pub struct SectionV3 {
     pub metadata: SectionMetadataV3,
 }
 
-impl SectionV4 {
-    pub fn clone_without_contentblocks(&self) -> SectionV4 {
+impl SectionV5 {
+    pub fn clone_without_contentblocks(&self) -> SectionV5 {
         let mut new_section = self.clone();
         new_section.children = vec![];
         new_section
     }
 
-    pub fn clone_without_subsections(&self) -> SectionV4 {
+    pub fn clone_without_subsections(&self) -> SectionV5 {
         let mut new_section = self.clone();
         new_section.sub_sections = vec![];
         new_section
     }
 
-    pub fn insert_child_section_as_child(&mut self, parent_section_id: &uuid::Uuid, new_section: &SectionV4) -> Option<()>{
+    pub fn insert_child_section_as_child(&mut self, parent_section_id: &uuid::Uuid, new_section: &SectionV5) -> Option<()>{
         for section in self.sub_sections.iter_mut(){
                     if section.id == Some(*parent_section_id){
                         section.sub_sections.push(new_section.clone());
@@ -426,7 +556,7 @@ impl SectionV4 {
         None
     }
 
-    pub fn insert_child_section_after(&mut self, section_id: &uuid::Uuid, new_section: &SectionV4) -> Option<()>{
+    pub fn insert_child_section_after(&mut self, section_id: &uuid::Uuid, new_section: &SectionV5) -> Option<()>{
         for (i, section) in self.sub_sections.iter_mut().enumerate(){
                     if section.id == Some(*section_id){
                         self.sub_sections.insert(i+1,new_section.clone());
@@ -443,7 +573,7 @@ impl SectionV4 {
         None
     }
 
-    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<SectionV4>{
+    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<SectionV5>{
         let mut index = None;
         for (i, section) in self.sub_sections.iter_mut().enumerate(){
                     if section.id == Some(*section_id){
@@ -722,6 +852,68 @@ pub struct SectionMetadataV4 {
     pub last_changed: Option<NaiveDateTime>,
     #[bincode(with_serde)]
     pub lang: Option<Language>,
+}
+
+/// Struct holds all metadata of a section
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct SectionMetadataV5 {
+    pub title: String,
+    pub toc_title_subtitle_override: Option<String>,
+    pub subtitle: Option<String>,
+    #[bincode(with_serde)]
+    pub authors: Vec<PersonUuidOrString>,
+    #[bincode(with_serde)]
+    pub editors: Vec<PersonUuidOrString>,
+    pub web_url: Option<String>,
+    pub identifiers: Vec<Identifier>,
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    #[bincode(with_serde)]
+    pub last_changed: Option<NaiveDateTime>,
+    #[bincode(with_serde)]
+    pub lang: Option<Language>,
+}
+
+impl From<SectionMetadataV4> for SectionMetadataV5 {
+    fn from(value: SectionMetadataV4) -> Self {
+        let toc_title_subtitle_override= if value.toc_title_override.is_none() && value.toc_subtitle_override.is_none() {
+            None
+        }else{
+            let mut combined_override = String::new();
+
+            // Add title or toc_title_override as first part
+            if let Some(title_override) = value.toc_title_override{
+                combined_override.push_str(&title_override);
+            }else{
+                combined_override.push_str(&value.title)
+            }
+
+            if let Some(subtitle_override) = value.toc_subtitle_override{
+                combined_override.push_str(": ");
+                combined_override.push_str(&subtitle_override);
+            }else if let Some(subtitle) = &value.subtitle{
+                combined_override.push_str(": ");
+                combined_override.push_str(&subtitle);
+            }
+            Some(combined_override)
+        };
+
+        let authors = value.authors.into_iter().map(|x|PersonUuidOrString::PersonUuid(x)).collect();
+        let editors = value.editors.into_iter().map(|x|PersonUuidOrString::PersonUuid(x)).collect();
+
+        SectionMetadataV5{
+            title: value.title,
+            toc_title_subtitle_override,
+            subtitle: value.subtitle,
+            authors,
+            editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            last_changed: value.last_changed,
+            lang: value.lang,
+        }
+    }
 }
 
 /// Struct holds all metadata of a section

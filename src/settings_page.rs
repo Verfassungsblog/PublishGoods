@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use crate::data_storage::{DataStorage, User};
+use crate::storage::data_storage::DataStorage;
 use crate::session::session_guard::Session;
+use crate::storage::User;
 
 #[get("/settings")]
 pub async fn settings_page(_session: Session, data_storage: &State<Arc<DataStorage>>) -> Template {
@@ -17,10 +18,11 @@ pub mod api{
     use argon2::password_hash::rand_core::OsRng;
     use rocket::serde::json::Json;
     use rocket::State;
-    use crate::data_storage::{DataStorage, User};
+    use crate::storage::data_storage::DataStorage;
     use crate::projects::api::{ApiError, ApiResult, Patch};
     use crate::session::session_guard::Session;
     use crate::settings::Settings;
+    use crate::storage::User;
 
     #[derive(serde::Deserialize)]
     struct NewUser{

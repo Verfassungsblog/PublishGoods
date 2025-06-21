@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 use rocket::serde::json::Json;
 use rocket::State;
-use crate::data_storage::{ProjectData, ProjectStorage};
+use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::projects::api::{ApiError, ApiResult};
 use crate::settings::Settings;
 

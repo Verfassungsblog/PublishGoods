@@ -1,10 +1,10 @@
-use crate::data_storage::ProjectListEntry;
 use std::sync::Arc;
 use rocket_dyn_templates::Template;
 use rocket::State;
-use crate::data_storage::ProjectStorage;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::project_storage::ProjectStorage;
+use crate::storage::ProjectListEntry;
 
 #[get("/")]
 pub async fn list_projects(_session: Session, project_storage: &State<Arc<ProjectStorage>>, settings: &State<Settings>) -> Template {

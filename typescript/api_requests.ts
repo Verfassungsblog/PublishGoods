@@ -375,11 +375,10 @@ export interface PatchSection{
 
 export interface PatchSectionMetadata{
     title?: string;
-    toc_title_override?: string|null;
+    toc_title_subtitle_override?: string|null;
     subtitle?: string|null;
-    toc_subtitle_override?: string|null;
-    authors?: string[];
-    editors?: string[];
+    authors?: PersonUuidOrString[];
+    editors?: PersonUuidOrString[];
     web_url?: string|null;
     identifiers?: Identifier[];
     published?: string|null;
@@ -410,10 +409,10 @@ enum Language {
 type APISectionMetadataResult = {
     title: string,
     subtitle: string | null,
-    authors: string[],
-    authors_expanded?: Person[],
-    editors: string[],
-    editors_expanded?: Person[],
+    authors: PersonUuidOrString[],
+    authors_expanded?: PersonOrString[],
+    editors: PersonUuidOrString,
+    editors_expanded?: PersonOrString[],
     web_url: string | null,
     identifiers: Identifier[],
     published: Date | null,
@@ -440,17 +439,24 @@ enum BlockType {
 
 type SectionMetadata = {
     title: string,
-    toc_title_override: string|null,
+    toc_title_subtitle_override: string|null,
     subtitle: string | null,
-    toc_subtitle_override: string|null,
-    authors: string[],
-    editors: string[],
+    authors: PersonOrString[],
+    editors: PersonOrString[],
     web_url: string | null,
     identifiers: Identifier[],
     published: Date | null,
     last_changed: Date | null,
     lang: string | null,
 };
+
+type PersonOrString =
+    | {Person: Person}
+    | {NameString: string};
+
+export type PersonUuidOrString =
+    | {PersonUuid: string}
+    | {NameString: string};
 
 type Identifier = {
     id: string | null,
@@ -1438,6 +1444,7 @@ export interface WordpressImportRequest{
     endnotes: boolean;
     shift_headings: boolean;
     convert_links: boolean;
+    import_author_names: boolean;
 }
 
 export type WordpressAPIError =

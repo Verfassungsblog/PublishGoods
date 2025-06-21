@@ -78,6 +78,12 @@
 <div id="wizard-wordpress-settings" class="hide">
     <p>Import Settings:</p>
     <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="wizard-wordpress-settings-import-authors" checked>
+        <label class="form-check-label" for="wizard-wordpress-settings-import-authors">
+            Import author names from Wordpress
+        </label>
+    </div>
+    <div class="form-check">
         <input class="form-check-input" type="checkbox" id="wizard-wordpress-settings-convert-to-endnotes">
         <label class="form-check-label" for="wizard-wordpress-settings-convert-to-endnotes">
             Convert Footnotes to Endnotes

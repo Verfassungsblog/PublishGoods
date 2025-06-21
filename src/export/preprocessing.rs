@@ -1,5 +1,5 @@
 use hayagriva::{BufWriteFormat, CitationItem, CitationRequest};
-use vb_exchange::projects::{Person, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
+use vb_exchange::projects::{Person, PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
 use vb_exchange::projects::PreparedLicense;
 use language::Language;
 use std::collections::HashMap;
@@ -16,8 +16,9 @@ use image::{DynamicImage, ImageOutputFormat};
 use regex::Regex;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
-use crate::data_storage::{DataStorage, ProjectData};
-use crate::projects::{BlockData, NewContentBlock, SectionV4, SectionOrTocV4};
+use crate::storage::project_storage::ProjectData;
+use crate::storage::data_storage::{DataStorage};
+use crate::projects::{BlockData, NewContentBlock, SectionV5, SectionOrTocV4, PersonUuidOrString, SectionOrTocV5};
 use crate::utils::csl::CslData;
 
 pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
@@ -37,26 +38,40 @@ pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataSt
 
     let mut authors = vec![];
     for author in metadata.authors.unwrap_or_default(){
-        let person = match data_storage.get_person(&author){
-            Some(person) => person.read().unwrap().clone(),
-            None => {
-                eprintln!("Author with id {} not found while rendering section for export!", author);
-                continue
+        match author{
+            PersonUuidOrString::PersonUuid(id) => {
+                let person = match data_storage.get_person(&id){
+                    Some(person) => person.read().unwrap().clone(),
+                    None => {
+                        eprintln!("Author with id {} not found while rendering section for export!", id);
+                        continue
+                    }
+                };
+                authors.push(PersonOrString::Person(person));
             }
-        };
-        authors.push(person);
+            PersonUuidOrString::NameString(name_str) => {
+                authors.push(PersonOrString::NameString(name_str));
+            }
+        }
     }
 
     let mut editors = vec![];
     for editor in metadata.editors.unwrap_or_default(){
-        let person = match data_storage.get_person(&editor){
-            Some(person) => person.read().unwrap().clone(),
-            None => {
-                eprintln!("Editor with id {} not found while rendering section for export!", editor);
-                continue
+        match editor{
+            PersonUuidOrString::PersonUuid(id) => {
+                let person = match data_storage.get_person(&id){
+                    Some(person) => person.read().unwrap().clone(),
+                    None => {
+                        eprintln!("Editor with id {} not found while rendering section for export!", id);
+                        continue
+                    }
+                };
+                editors.push(PersonOrString::Person(person));
             }
-        };
-        editors.push(person);
+            PersonUuidOrString::NameString(name_str) => {
+                editors.push(PersonOrString::NameString(name_str));
+            }
+        }
     }
 
     let license = if let Some(license) = metadata.license{
@@ -67,7 +82,7 @@ pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataSt
 
     let mut data = vec![];
     for section in project_data.sections{
-        if let SectionOrTocV4::Section(section) = section{
+        if let SectionOrTocV5::Section(section) = section{
             if let Some(id) = section.id{
                 // Check if only specified sections should be included
                 match &sections_to_include{
@@ -88,8 +103,8 @@ pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataSt
     }
 
     // Sort authors and editors by last name
-    authors.sort_by(|a, b| a.last_names.cmp(&b.last_names));
-    editors.sort_by(|a, b| a.last_names.cmp(&b.last_names));
+    authors.sort();
+    editors.sort();
 
     let published = match metadata.published{
         Some(date) => Some(date.into()),
@@ -204,7 +219,7 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
 
 
 #[async_recursion]
-pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
+pub async fn render_section(section: SectionV5, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
     let published = match section.metadata.published{
         Some(date) => Some(date.into()),
         None => None
@@ -212,25 +227,37 @@ pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, 
 
     let mut authors = vec![];
     for author in section.metadata.authors{
-        let person = match data_storage.get_person(&author){
-            Some(person) => person.read().unwrap().clone(),
-            None => {
-                eprintln!("Author with id {} not found while rendering section for export!", author);
-                continue
+        let person = match author{
+            PersonUuidOrString::PersonUuid(id) => {
+                match data_storage.get_person(&id){
+                    Some(person) => PersonOrString::Person(person.read().unwrap().clone()),
+                    None => {
+                        eprintln!("Author with id {} not found while rendering section for export!", id);
+                        continue
+                    }
+                }
             }
+            PersonUuidOrString::NameString(name) => PersonOrString::NameString(name),
         };
+
         authors.push(person);
     }
 
     let mut editors = vec![];
     for editor in section.metadata.editors{
-        let person = match data_storage.get_person(&editor){
-            Some(person) => person.read().unwrap().clone(),
-            None => {
-                eprintln!("Editor with id {} not found while rendering section for export!", editor);
-                continue
+        let person = match editor{
+            PersonUuidOrString::PersonUuid(id) => {
+                match data_storage.get_person(&id){
+                    Some(person) => PersonOrString::Person(person.read().unwrap().clone()),
+                    None => {
+                        eprintln!("Author with id {} not found while rendering section for export!", id);
+                        continue
+                    }
+                }
             }
+            PersonUuidOrString::NameString(name) => PersonOrString::NameString(name),
         };
+
         editors.push(person);
     }
 
@@ -261,9 +288,8 @@ pub async fn render_section(section: SectionV4, data_storage: Arc<DataStorage>, 
 
     let metadata = PreparedSectionMetadata{
         title,
-        toc_title_override: section.metadata.toc_title_override,
+        toc_title_subtitle_override: section.metadata.toc_title_subtitle_override,
         subtitle,
-        toc_subtitle_override: section.metadata.toc_subtitle_override,
         authors,
         editors,
         web_url: section.metadata.web_url,
@@ -666,7 +692,7 @@ fn unescape_html(text: &str) -> String{
     text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
 }
 
-fn add_remaining_authors_editors_from_section(section: &PreparedSection, authors: &mut Vec<Person>, editors: &mut Vec<Person>){
+fn add_remaining_authors_editors_from_section(section: &PreparedSection, authors: &mut Vec<PersonOrString>, editors: &mut Vec<PersonOrString>){
     for author in section.metadata.authors.iter(){
         if !authors.contains(author){
             authors.push(author.clone());

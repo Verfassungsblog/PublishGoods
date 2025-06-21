@@ -54,7 +54,9 @@ namespace Editor{
                     let promises = [];
 
                     for (let author of data["metadata"]["authors"]) {
-                        promises.push(send_get_person_request(author));
+                        if(author["PersonUuid"] != null){
+                            promises.push(send_get_person_request(author["PersonUuid"]));
+                        }
                     }
                     //TODO: implement sort feature
                     Tools.start_loading_spinner();
@@ -81,7 +83,9 @@ namespace Editor{
                     let promises = [];
 
                     for (let editor of data["metadata"]["editors"]) {
-                        promises.push(send_get_person_request(editor));
+                        if(editor["PersonUuid"] != null){
+                            promises.push(send_get_person_request(editor["PersonUuid"]));
+                        }
                     }
 
                     Tools.start_loading_spinner();

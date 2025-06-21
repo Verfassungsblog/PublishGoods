@@ -2,9 +2,9 @@ use std::sync::Arc;
 use rocket::http::Status;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use crate::data_storage::ProjectStorage;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::project_storage::ProjectStorage;
 
 #[get("/projects/<project_id>/bibliography")]
 pub async fn show_bib_editor(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Result<Template, Status> {
@@ -38,10 +38,11 @@ pub mod api{
     use rocket::serde::json::Json;
     use rocket::State;
     use serde::{Deserialize, Serialize};
-    use crate::data_storage::{BibEntryV2, ProjectStorage};
+    use crate::storage::project_storage::ProjectStorage;
     use crate::projects::api::{ApiError, ApiResult};
     use crate::session::session_guard::Session;
     use crate::settings::Settings;
+    use crate::storage::BibEntryV2;
 
     #[derive(Deserialize, Serialize)]
     struct NewBibEntry{

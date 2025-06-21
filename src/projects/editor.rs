@@ -2,9 +2,9 @@ use std::sync::Arc;
 use rocket::http::Status;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use crate::data_storage::ProjectStorage;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::project_storage::ProjectStorage;
 
 #[get("/projects/<project_id>")]
 pub async fn show_editor(project_id: String, _session: Session, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Result<Template, Status> {

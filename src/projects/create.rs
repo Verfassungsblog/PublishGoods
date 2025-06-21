@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::collections::BTreeMap;
-use crate::data_storage::{ProjectData, ProjectTemplateV2};
 use std::sync::Arc;
 use rocket::http::Status;
 use rocket::response::Redirect;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use crate::data_storage::{DataStorage, ProjectStorage};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::{ProjectData, ProjectStorage};
+use crate::storage::ProjectTemplateV2;
 
 /// Show create project form
 #[get("/projects/create")]

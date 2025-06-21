@@ -9,7 +9,7 @@ use rocket::http::CookieJar;
 use argon2::{password_hash::{
     PasswordHash, PasswordVerifier
 }, Argon2};
-use crate::data_storage::DataStorage;
+use crate::storage::data_storage::DataStorage;
 use crate::session::session_storage::SessionStorage;
 
 /// Show login page
