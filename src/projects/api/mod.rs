@@ -1,5 +1,5 @@
 use crate::data_storage::DataStorage;
-use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, PersonUuidOrString, SectionOrTocV4, SectionOrTocV5};
+use crate::projects::{NewContentBlock, NewContentBlockEditorJSFormat, PersonUuidOrString, SectionOrTocV5};
 use rocket::serde::json::Json;
 use std::sync::Arc;
 use bincode::{Decode, Encode};

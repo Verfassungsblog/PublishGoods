@@ -17,8 +17,8 @@ use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
-use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError, WordpressUser};
-use crate::projects::{BlockData, NewContentBlock, PersonUuidOrString, Section, SectionMetadataV4, SectionMetadataV5, SectionOrTocV4, SectionOrTocV5, SectionV5};
+use crate::import::wordpress::{Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError};
+use crate::projects::{BlockData, NewContentBlock, PersonUuidOrString, Section, SectionMetadataV5, SectionOrTocV5, SectionV5};
 use crate::storage::BibEntryV2;
 use crate::utils::block_id_generator::generate_id;
 

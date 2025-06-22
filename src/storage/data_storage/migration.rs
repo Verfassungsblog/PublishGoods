@@ -4,7 +4,6 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use bincode::{Decode, Encode};
-use bincode::error::DecodeError;
 use rocket::serde::{Deserialize, Serialize};
 use vb_exchange::deprecated::projects::data_storage::PersonV1;
 use vb_exchange::projects::PersonV2;

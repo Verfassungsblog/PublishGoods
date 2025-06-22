@@ -3,27 +3,19 @@ pub mod data_storage;
 
 use hayagriva::types::{Date, Duration, DurationRange, FormatString, MaybeTyped, Numeric, NumericDelimiter, NumericValue, QualifiedUrl, SerialNumber};
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
-use std::path::Path;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use bincode::{Encode, Decode};
-use bincode::error::DecodeError;
 use hayagriva::types::EntryType;
-use vb_exchange::projects::*;
-use crate::projects::{ProjectMetadataV2, SectionOrTocV2, SectionOrTocV1, SectionV5, ProjectMetadataV1, SectionOrTocV3, SectionOrTocV4, ProjectMetadataV3};
-use crate::projects::api::ApiError;
 use crate::settings::Settings;
 use reqwest::Url;
 
 use unic_langid_impl::LanguageIdentifier;
-use vb_exchange::deprecated::projects::data_storage::PersonV1;
-use vb_exchange::deprecated::projects::project_settings::{ProjectSettingsV2, ProjectSettingsV3, ProjectSettingsV4};
 use vb_exchange::export_formats::ExportFormat;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;

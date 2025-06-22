@@ -1,5 +1,5 @@
 use crate::projects::api::ApiError;
-use crate::projects::{ProjectMetadataV3, ProjectMetadataV4, SectionOrTocV4, SectionOrTocV5, SectionV5};
+use crate::projects::{ProjectMetadataV4, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
 use crate::storage::project_storage::{
@@ -7,7 +7,6 @@ use crate::storage::project_storage::{
 };
 use crate::storage::{BibEntryV2, MultipleFileLocks, ProjectListEntry};
 use bincode::{Decode, Encode};
-use rocket::outcome::IntoOutcome;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;

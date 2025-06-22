@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 use std::fmt::Display;
 use chrono::NaiveTime;
 use reqwest::header::HeaderValue;
-use reqwest::{Error, Response};
 use serde::{Deserialize, Serialize};
 
 /// Import from Wordpress API
