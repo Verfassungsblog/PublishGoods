@@ -31,13 +31,21 @@ pub struct LocalRenderingRequest {
 }
 
 pub struct RenderingManager{
+    /// Settings loaded from configuration files, containing global application settings such as titles, data paths, and server configurations.
     pub settings: Settings,
+    /// Persistent memory storage for small data such as users, passwords, or login attempts, shared between tasks.
     pub data_storage: Arc<DataStorage>,
+    /// In-memory project storage, holding and managing the state of all projects loaded at startup.
     pub project_storage: Arc<ProjectStorage>,
+    /// Loaded Citation Style Language (CSL) data, including available locales and styles.
     pub csl_data: Arc<CslData>,
+    /// Archive of rendering requests, storing their UUIDs with corresponding rendering status
     pub requests_archive: RwLock<HashMap<uuid::Uuid, RenderingStatus>>,
+    /// Queue of rendering requests, storing each local rendering request in the order they are to be processed.
     pub rendering_queue: RwLock<VecDeque<LocalRenderingRequest>>,
+    /// Atomic counter managing round-robin selection of the next rendering server to be used for distributing rendering tasks.
     pub next_rendering_server_to_use: Arc<AtomicU64>,
+    /// Loaded configuration for the rendering client, including certificates, paths, and connection settings.
     pub client_config: Arc<ClientConfig>,
 }
 

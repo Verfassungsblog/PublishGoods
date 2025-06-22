@@ -1,5 +1,5 @@
 use hayagriva::{BufWriteFormat, CitationItem, CitationRequest};
-use vb_exchange::projects::{Person, PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
+use vb_exchange::projects::{PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection, PreparedSectionMetadata};
 use vb_exchange::projects::PreparedLicense;
 use language::Language;
 use std::collections::HashMap;
@@ -18,9 +18,34 @@ use vb_exchange::projects::PreparedProject;
 use vb_exchange::RenderingError;
 use crate::storage::project_storage::ProjectData;
 use crate::storage::data_storage::{DataStorage};
-use crate::projects::{BlockData, NewContentBlock, SectionV5, SectionOrTocV4, PersonUuidOrString, SectionOrTocV5};
+use crate::projects::{BlockData, NewContentBlock, PersonUuidOrString, SectionOrTocV5, Section};
 use crate::utils::csl::CslData;
 
+/// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
+///
+/// This function takes the given `project_data` along with references to necessary shared data
+/// like `data_storage` and `csl_data`. Optionally, a subset of section UUIDs can be specified
+/// in `sections_to_include` in order to only prepare and render those sections.
+/// The current project's UUID must be provided.
+///
+/// The preparation process includes:
+///  - Rendering citations for the project
+///  - Validating and collecting the project metadata
+///  - Gathering and resolving authors and editors (resolving UUIDs to stored persons, or keeping name strings)
+///  - Selecting and preparing the relevant sections (either all, or only those listed in `sections_to_include`)
+///  - Collecting any additional authors and editors mentioned in the rendered sections, ensuring all relevant contributors are included
+///  - Sorting the final lists of authors and editors
+///
+/// # Arguments
+/// * `project_data` - Full data of the project to be prepared.
+/// * `data_storage` - Shared reference to user and entity storage for resolving person UUIDs.
+/// * `csl_data` - Shared reference for citation style language data required for rendering citations.
+/// * `sections_to_include` - Optional list of UUIDs representing the sections to include in preparation.
+/// * `project_id` - The UUID of the current project.
+///
+/// # Returns
+/// Returns `Ok(PreparedProject)` on success with all relevant data ready for export or further processing.
+/// Returns `Err(RenderingError)` if required metadata is missing or other preparation steps fail.
 pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataStorage>, csl_data: Arc<CslData>, sections_to_include: Option<Vec<uuid::Uuid>>, project_id: &uuid::Uuid) -> Result<PreparedProject, RenderingError>{
     let citation_bib = render_citations(&project_data, csl_data);
 
@@ -139,6 +164,30 @@ pub async fn prepare_project(project_data: ProjectData, data_storage: Arc<DataSt
     })
 }
 
+/// Renders formatted citation strings for all bibliography entries in a project according to the current CSL style and language settings.
+///
+/// This function iterates over all bibliography entries from the provided `project` data,
+/// collecting them into a Hayagriva library. It determines the correct CSL style and locale from the
+/// project's settings or falls back to default values from `csl_data` as necessary. For each entry,
+/// it then generates a formatted citation string using the determined CSL style and locale, writing
+/// the output as HTML. 
+///
+/// The resulting citations are returned as a `HashMap` mapping each citation key (as a `String`)
+/// to its rendered HTML representation (as a `String`).
+///
+/// # Parameters
+/// - `project`: Reference to the loaded project data, which includes bibliography entries and citation style settings.
+/// - `csl_data`: Shared reference to the loaded CSL style and locale data used for formatting citations.
+///
+/// # Returns
+/// A `HashMap` containing for each citation key its rendered citation as a HTML `String`.
+///
+/// # Warnings
+/// - If a CSL style specified in the project settings cannot be found, a fallback style is used and a warning is logged.
+/// - If any citations exist without a matching entry, a warning is logged for them.
+///
+/// # Panics
+/// - Panics if no CSL style is available in `csl_data`.
 pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMap<String, String>{
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
@@ -217,9 +266,22 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
 }
 
 
-
+/// Renders a `Section` into a `PreparedSection`, resolving metadata, author/editor references, and formatting content.
+///
+/// This function processes a section and all of its subsections, recursively rendering their content blocks, metadata, and endnotes,
+/// and optionally adds soft hyphens for better text breaking based on language hyphenation dictionaries.
+///
+/// # Arguments
+/// * `section` - The section to render.
+/// * `data_storage` - Shared access to the `DataStorage`, used for resolving author/editor UUIDs.
+/// * `citation_bib` - A map from citation keys to their corresponding bibliography data.
+/// * `project_id` - The UUID identifying the project this section belongs to.
+/// * `add_soft_hyphens` - If true, adds soft hyphens to title and subtitle based on the detected language.
+///
+/// # Returns
+/// Returns a `PreparedSection` with all processed information, content blocks, metadata, authors/editors with resolved names, and endnotes.
 #[async_recursion]
-pub async fn render_section(section: SectionV5, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
+pub async fn render_section(section: Section, data_storage: Arc<DataStorage>, citation_bib: &HashMap<String, String>, project_id: &uuid::Uuid, add_soft_hyphens: bool) -> PreparedSection{
     let published = match section.metadata.published{
         Some(date) => Some(date.into()),
         None => None
@@ -578,7 +640,36 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
     Some(format!("data:image/png;base64,{}", res_base64))
 }
 
-
+/// Renders a text string into HTML, handling citations, footnotes, endnotes, and optional soft hyphens.
+///
+/// This function performs the following steps on the input text:
+/// 1. Converts inline citations (in the form `<citation data-key="...">C</citation>`) into endnote placeholders,
+///    replacing them with endnote HTML spans. If the citation key is not found in `citation_bib`, a warning is printed
+///    and a placeholder is inserted.
+/// 2. Processes elements marked as footnotes or endnotes by replacing `<span>` tags with corresponding HTML for footnotes
+///    or endnotes. Endnotes are appended to `endnote_storage` with a generated UUID and their content.
+/// 3. Transforms custom inline-style and class tags (`<customstyle>`) into `<span>` elements, including inline CSS and classes.
+/// 4. After all transformations, the function optionally performs soft hyphenation on the final HTML text if
+///    `add_soft_hyphens` is set to true, using the given hyphenation `dict`.
+///
+/// # Arguments
+/// * `text` - The input text, potentially containing special markers for citations, footnotes, endnotes, and styles.
+/// * `endnote_storage` - Mutable reference to a vector that will be populated with UUIDs and contents of endnotes processed from the text.
+/// * `dict` - Hyphenation dictionary used for soft hyphenation if `add_soft_hyphens` is true.
+/// * `citation_bib` - Bibliography mapping citation keys to citation strings, used for rendering citations found in the text.
+/// * `add_soft_hyphens` - Flag indicating if soft hyphens should be conditionally inserted for hyphenation in the output.
+///
+/// # Returns
+/// A string containing the rendered HTML representation of the input text, with citations, footnotes, endnotes,
+/// and custom styles processed.
+///
+/// # Panics
+/// This function panics if any of the regular expressions used for parsing (citations, endnotes/footnotes, custom styles)
+/// fail to compile.
+///
+/// # Side Effects
+/// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
+/// - Prints warnings to stderr if a citation key is not found.
 pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool) -> String{
     let re: Regex = Regex::new(r#"<span(?:[^>]*?\bnote-type="([^"]+)")?(?:[^>]*?\bnote-content="([^"]+)")?[^>]*>.*?</span>"#).unwrap(); //TODO: DO NOT RECOMPILE REGEX, it's bad for performance
     let re3 = Regex::new(r#"<citation data-key="([^"]*)">C</citation>"#).unwrap();
@@ -692,6 +783,14 @@ fn unescape_html(text: &str) -> String{
     text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
 }
 
+/// Recursively adds any authors and editors from the given `section`
+/// and its sub-sections to the provided `authors` and `editors` lists,
+/// ensuring that each author and editor is only added once.
+///
+/// # Arguments
+/// * `section` - The section whose authors and editors are to be added.
+/// * `authors` - The list to which unique authors will be appended.
+/// * `editors` - The list to which unique editors will be appended.
 fn add_remaining_authors_editors_from_section(section: &PreparedSection, authors: &mut Vec<PersonOrString>, editors: &mut Vec<PersonOrString>){
     for author in section.metadata.authors.iter(){
         if !authors.contains(author){

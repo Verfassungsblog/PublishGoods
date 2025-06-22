@@ -49,15 +49,25 @@ pub fn add_local_rendering_request(_session: Session, rendering_manager: &State<
 /// Simplified version of [RenderingStatus]
 #[derive(Serialize, Deserialize)]
 pub enum APIRenderingStatus{
+    /// Awaiting a worker to prepare the project
     QueuedOnLocal,
+    /// The project is being pre-processed
     PreparingOnLocal,
+    /// The project was prepared and is waiting to be sent to a rendering server
     PreparedOnLocal,
+    /// The project was sent to a rendering server
     SendToRenderingServer,
+    /// The rendering server requested a template needed for rendering
     RequestingTemplate,
+    /// The template requested is being transmitted
     TransmittingTemplate,
+    /// The project is waiting for a worker on the rendering server
     QueuedOnRendering,
+    /// The rendering server is rendering the project
     Running,
+    /// The rendering was successful and was saved to the server
     SavedOnLocal,
+    /// The rendering failed
     Failed(String)
 }
 
