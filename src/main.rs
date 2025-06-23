@@ -23,6 +23,10 @@ use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
 use crate::utils::csl::CslData;
 use log::{debug, info};
+use rocket::Request;
+use rocket::serde::json::Json;
+use rocket::yansi::Color::Red;
+use crate::projects::api::ApiError;
 use crate::storage::{data_storage, save_data_worker};
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
@@ -43,8 +47,12 @@ pub mod cleaner;
 
 /// This is the catch-all route that redirects all 401 errors to the login page.
 #[catch(401)]
-fn forward_to_login<'r>() -> Redirect {
-    Redirect::to("/login")
+fn forward_to_login(req: &Request) -> Result<Redirect, Json<ApiError>> {
+    if req.uri().path().starts_with("/api/"){
+        Err(Json(ApiError::Unauthorized))
+    }else{
+        Ok(Redirect::to("/login"))
+    }
 }
 
 /// Starts the web server, mounts all routes and attaches the [SessionStorage][session::session_storage::SessionStorage] and [Settings][settings::Settings] structs.
