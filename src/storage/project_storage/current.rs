@@ -1,4 +1,3 @@
-use crate::projects::api::ApiError;
 use crate::projects::{ProjectMetadataV4, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
@@ -14,8 +13,8 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
-use tokio::io::AsyncReadExt;
 use vb_exchange::projects::ProjectSettingsV5;
+use crate::utils::api_helpers::{ApiError, ApiErrorType};
 
 impl MultipleFileLocks for ProjectStorage {
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool> {
@@ -254,47 +253,39 @@ impl ProjectStorage {
         &self,
         uuid: &uuid::Uuid,
         settings: &Settings,
-    ) -> Result<(), ()> {
-        let res = self.load_project_from_disk(uuid, settings).await;
+    ) -> Result<(), ProjectStorageError> {
+        let project = self.load_project_from_disk(uuid, settings).await?;
 
-        match res {
-            Ok(project) => {
-                println!("Loaded project, inserting into memory storage.");
-                if let Some(tproject) = self.projects.write().unwrap().get_mut(uuid) {
-                    // Update last edited to current time, so the project doesn't get unloaded immediately
-                    let mut project: ProjectData = project;
-                    project.last_interaction = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    tproject.name = project.name.clone();
-                    println!("Replacing project");
-                    tproject.data.replace(Arc::new(RwLock::new(project)));
-                    println!("Inserted project into memory storage.");
-                    return Ok(());
-                }
-
-                println!("Project not found in memory storage, creating new entry.");
-                let entry = ProjectStorageEntry {
-                    name: project.name.clone(),
-                    data: Some(Arc::new(RwLock::new(project))),
-                };
-                self.projects.write().unwrap().insert(uuid.clone(), entry);
-                println!("Created new entry in memory storage.");
-                Ok(())
-            }
-            Err(e) => {
-                error!("error while loading project file into memory: {:?}", e);
-                Err(())
-            }
+        println!("Loaded project, inserting into memory storage.");
+        if let Some(tproject) = self.projects.write().unwrap().get_mut(uuid) {
+            // Update last edited to current time, so the project doesn't get unloaded immediately
+            let mut project: ProjectData = project;
+            project.last_interaction = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            tproject.name = project.name.clone();
+            println!("Replacing project");
+            tproject.data.replace(Arc::new(RwLock::new(project)));
+            println!("Inserted project into memory storage.");
+            return Ok(());
         }
+
+        println!("Project not found in memory storage, creating new entry.");
+        let entry = ProjectStorageEntry {
+            name: project.name.clone(),
+            data: Some(Arc::new(RwLock::new(project))),
+        };
+        self.projects.write().unwrap().insert(uuid.clone(), entry);
+        println!("Created new entry in memory storage.");
+        Ok(())
     }
 
     pub async fn get_project(
         &self,
         uuid: &uuid::Uuid,
         settings: &Settings,
-    ) -> Result<Arc<RwLock<ProjectData>>, ()> {
+    ) -> Result<Arc<RwLock<ProjectData>>, ProjectStorageError> {
         // Check if project exists
         match self.projects.read().unwrap().get(uuid) {
             Some(project) => {
@@ -306,7 +297,7 @@ impl ProjectStorage {
                     return Ok(Arc::clone(project));
                 }
             }
-            None => return Err(()),
+            None => return Err(ProjectStorageError::ProjectNotFound),
         }
 
         // Project doesn't exist in memory, try to load from disk
@@ -318,7 +309,7 @@ impl ProjectStorage {
                 match &project.data {
                     None => {
                         //Still no project in memory, couldn't load from disk
-                        Err(())
+                        Err(ProjectStorageError::ProjectNotFound)
                     }
                     Some(project) => {
                         // Update last interaction time, so the project doesn't get unloaded immediately
@@ -330,7 +321,7 @@ impl ProjectStorage {
                     }
                 }
             }
-            None => return Err(()),
+            None => return Err(ProjectStorageError::ProjectNotFound),
         }
     }
 
@@ -374,7 +365,11 @@ impl ProjectStorage {
         Ok(())
     }
 
-    pub(crate) async fn save_project_to_disk(&self, uuid: &uuid::Uuid, settings: &Settings) -> Result<(), ()> {
+    pub(crate) async fn save_project_to_disk(
+        &self,
+        uuid: &uuid::Uuid,
+        settings: &Settings,
+    ) -> Result<(), ()> {
         // Get project
         let project = match self.projects.read().unwrap().get(&uuid) {
             Some(project) => match &project.data {
@@ -552,7 +547,7 @@ pub fn get_section_by_path_mut<'a>(
     // Return error if no first section found
     let mut current_section = first_section_opt.ok_or_else(|| {
         println!("Couldn't find section with id {}", path[0]);
-        ApiError::NotFound
+        ApiError::from(ApiErrorType::ResourceNotFound(String::from("section")))
     })?;
 
     // Iterate through the path
@@ -572,7 +567,7 @@ pub fn get_section_by_path_mut<'a>(
             }
             None => {
                 println!("Couldn't find section with id {}", part);
-                return Err(ApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound(String::from("section")).into());
             }
         }
     }
@@ -600,7 +595,7 @@ pub fn get_section_by_path<'a>(
         Some(first_section) => first_section,
         None => {
             println!("Couldn't find section with id {}", path[0]);
-            return Err(ApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound(String::from("section")).into());
         }
     };
 
@@ -619,7 +614,7 @@ pub fn get_section_by_path<'a>(
         }
         if !found {
             println!("Couldn't find section with id {}", part);
-            return Err(ApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound(String::from("section")).into());
         }
     }
 

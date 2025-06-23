@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::storage::project_storage::ProjectStorage;
 use crate::import::processing::{FileImportData, ImportJob, ImportJobData, ImportProcessor, ImportStatus, WordpressFilterData};
 use crate::import::wordpress::{CategoryTree, PostDataType, PostPreview, WordpressAPI, WordpressAPIContext, WordpressAPIError};
-use crate::projects::api::{ApiError, ApiResult};
+use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 
@@ -69,7 +69,7 @@ struct WordpressImportRequest{
 /// On error returns:
 /// - BadRequest if project_id is invalid or files have invalid content type
 #[post("/api/import/upload", data = "<upload>")]
-pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Session, settings: &State<Settings>, _project_storage: &State<Arc<ProjectStorage>>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<Uuid>>{
+pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Session, settings: &State<Settings>, _project_storage: &State<Arc<ProjectStorage>>, import_processor: &State<Arc<ImportProcessor>>) -> Json<DeprecatedApiResult<Uuid>>{
     debug!("Uploading file for import for project {}", upload.project_id);
 
     let mut file_paths: VecDeque<(String, ContentType)> = VecDeque::new();
@@ -82,7 +82,7 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
         file.copy_to(path.clone()).await.unwrap();
         let content_type = match file.content_type(){
             Some(content_type) => content_type,
-            None => return ApiResult::new_error(ApiError::BadRequest("Invalid file type".to_string()))
+            None => return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid file type".to_string()))
         };
 
         file_paths.push_back((path, content_type.clone()));
@@ -100,7 +100,7 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
 
     let project_id = match Uuid::parse_str(&upload.project_id){
         Ok(id) => id,
-        Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid project id".to_string()))
+        Err(_) => return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid project id".to_string()))
     };
 
     let id = Uuid::new_v4();
@@ -119,7 +119,7 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
 
     import_processor.job_queue.write().unwrap().push_back(import_job);
 
-    ApiResult::new_data(id)
+    DeprecatedApiResult::new_data(id)
 }
 
 /// POST /api/import/wordpress
@@ -133,7 +133,7 @@ pub async fn import_from_upload(mut upload: Form<FileUpload<'_>>, _session: Sess
 /// # Returns
 /// Returns a UUID identifying the created import job
 #[post("/api/import/wordpress", data = "<job>")]
-pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: Session, _settings: &State<Settings>, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<Uuid>>{
+pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: Session, _settings: &State<Settings>, import_processor: &State<Arc<ImportProcessor>>) -> Json<DeprecatedApiResult<Uuid>>{
     let id = Uuid::new_v4();
 
     let job = job.into_inner();
@@ -160,7 +160,7 @@ pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: 
     debug!("Adding job to import from wordpress: {:?}", import_job);
 
     import_processor.job_queue.write().unwrap().push_back(import_job);
-    ApiResult::new_data(id)
+    DeprecatedApiResult::new_data(id)
 }
 
 
@@ -192,12 +192,12 @@ pub async fn import_from_wordpress(job: Json<WordpressImportRequest>, _session: 
 /// - A valid but empty data set if no categories are found.
 ///
 #[get("/api/import/wordpress/categories?<base_url>")]
-pub async fn get_wordpress_categories(base_url: String, _session: Session) -> Json<ApiResult<CategoryTree>>{
+pub async fn get_wordpress_categories(base_url: String, _session: Session) -> Json<DeprecatedApiResult<CategoryTree>>{
     let wordpress_api = match WordpressAPI::new(base_url.clone()){
         Ok(api) => api,
         Err(e) => {
             error!("{:?}", e);
-            return ApiResult::new_error(ApiError::InternalServerError)
+            return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
         }
     };
 
@@ -206,30 +206,30 @@ pub async fn get_wordpress_categories(base_url: String, _session: Session) -> Js
         Err(e) => {
             return match e{
                 WordpressAPIError::SerdeParsingError => {
-                    ApiResult::new_error(ApiError::InternalServerError)
+                    DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
                 },
                 WordpressAPIError::ReqwestError => {
-                    ApiResult::new_error(ApiError::InternalServerError)
+                    DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
                 },
                 WordpressAPIError::InvalidURL => {
                     info!("Invalid url for wordpress api: {}", base_url);
-                    ApiResult::new_error(ApiError::BadRequest("Invalid URL".to_string()))
+                    DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid URL".to_string()))
                 },
                 WordpressAPIError::NotFound => {
                     info!("No categories found for wordpress api: {}", base_url);
-                    ApiResult::new_data(vec![].into())
+                    DeprecatedApiResult::new_data(vec![].into())
                 }
                 WordpressAPIError::Unsupported(_) => {
-                    ApiResult::new_error(ApiError::InternalServerError)
+                    DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
                 }
                 WordpressAPIError::UnexpectedResponse => {
-                    ApiResult::new_error(ApiError::InternalServerError)
+                    DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
                 }
             }
         }
     };
 
-    ApiResult::new_data(categories)
+    DeprecatedApiResult::new_data(categories)
 }
 
 /// Request parameters for generating a preview
@@ -273,23 +273,23 @@ pub struct PostPreviewReponse{
 /// 
 /// # Returns
 /// Returns a JSON response containing:
-/// - On success: [`ApiResult`] with [`PostPreviewReponse`] containing the total number of matched posts and previews
+/// - On success: [`DeprecatedApiResult`] with [`PostPreviewReponse`] containing the total number of matched posts and previews
 /// - On error:
-///   - [`ApiError::BadRequest`] if the provided URL is invalid
-///   - [`ApiError::NotFound`] if the WordPress site cannot be found
-///   - [`ApiError::InternalServerError`] for other errors
+///   - [`DeprecatedApiError::BadRequest`] if the provided URL is invalid
+///   - [`DeprecatedApiError::NotFound`] if the WordPress site cannot be found
+///   - [`DeprecatedApiError::InternalServerError`] for other errors
 /// 
 /// # Authentication
 /// Requires a valid session
 #[post("/api/import/wordpress/posts-preview", data = "<preview_request>")]
-pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, _session: Session) -> Json<ApiResult<PostPreviewReponse>> {
+pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, _session: Session) -> Json<DeprecatedApiResult<PostPreviewReponse>> {
     let preview_request = preview_request.into_inner();
 
     let wordpress_api = match WordpressAPI::new(preview_request.base_url.clone()){
         Ok(api) => api,
         Err(e) => {
             error!("{:?}", e);
-            return ApiResult::new_error(ApiError::InternalServerError)
+            return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
         }
     };
 
@@ -299,10 +299,10 @@ pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, 
         Ok(res) => {
             let data = match res.data{
                 PostDataType::PostPreviews(data) => data,
-                _ => return ApiResult::new_error(ApiError::InternalServerError),
+                _ => return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError),
             };
             
-            ApiResult::new_data(PostPreviewReponse{
+            DeprecatedApiResult::new_data(PostPreviewReponse{
                 number_of_posts: res.number_of_records,
                 previews: data,
             })
@@ -310,12 +310,12 @@ pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, 
         Err(e) => {
             warn!("WordpressAPIError occured getting posts preview: {:?}", e);
             match e{
-                WordpressAPIError::InvalidURL => {ApiResult::new_error(ApiError::BadRequest("Invalid URL".to_string()))}
+                WordpressAPIError::InvalidURL => { DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid URL".to_string()))}
                 WordpressAPIError::NotFound => {
-                    ApiResult::new_error(ApiError::NotFound)
+                    DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
                 },
                 _ => {
-                    ApiResult::new_error(ApiError::InternalServerError)
+                    DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
                 }
             }
         }
@@ -338,15 +338,15 @@ pub async fn get_wordpress_posts_preview(preview_request: Json<PreviewRequest>, 
 ///   - `BadRequest` if the provided ID is not a valid UUID
 ///   - `NotFound` if no job with the given ID exists
 #[get("/api/import/status/<id>")]
-pub async fn poll_import_status(id: String, _session: Session, import_processor: &State<Arc<ImportProcessor>>) -> Json<ApiResult<ImportStatus>>{
+pub async fn poll_import_status(id: String, _session: Session, import_processor: &State<Arc<ImportProcessor>>) -> Json<DeprecatedApiResult<ImportStatus>>{
     let id = match Uuid::parse_str(&id){
         Ok(id) => id,
-        Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid job id".to_string()))
+        Err(_) => return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid job id".to_string()))
     };
     // Try to find job with id in archive
     match import_processor.job_archive.read().unwrap().get(&id){
         Some(status) =>{
-            return ApiResult::new_data(status.clone());
+            return DeprecatedApiResult::new_data(status.clone());
         },
         None => ()
     }
@@ -354,7 +354,7 @@ pub async fn poll_import_status(id: String, _session: Session, import_processor:
     // Job not in archive yet, try to find it in job queue
     let job = job_queue.iter().find(|job| job.id == id);
     match job{
-        Some(_) => ApiResult::new_data(ImportStatus::Pending),
-        None => ApiResult::new_error(ApiError::NotFound)
+        Some(_) => DeprecatedApiResult::new_data(ImportStatus::Pending),
+        None => DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
     }
 }

@@ -19,7 +19,7 @@ pub mod api{
     use rocket::serde::json::Json;
     use rocket::State;
     use crate::storage::data_storage::DataStorage;
-    use crate::projects::api::{ApiError, ApiResult, Patch};
+    use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult, Patch};
     use crate::session::session_guard::Session;
     use crate::settings::Settings;
     use crate::storage::User;
@@ -33,18 +33,18 @@ pub mod api{
 
     /// Insert a new user
     #[post("/api/users", data = "<new_user>")]
-    pub async fn add_user(new_user: Json<NewUser>, _session: Session, data_storage: &State<Arc<DataStorage>>, settings: &State<Settings>) -> Json<ApiResult<User>>{
+    pub async fn add_user(new_user: Json<NewUser>, _session: Session, data_storage: &State<Arc<DataStorage>>, settings: &State<Settings>) -> Json<DeprecatedApiResult<User>>{
         let new_user = new_user.into_inner();
         let data_storage = data_storage;
 
         // Check if user with this email already exists
         if data_storage.data.read().unwrap().login_data.iter().any(|x| x.1.read().unwrap().email == new_user.email){
-            return ApiResult::new_error(ApiError::BadRequest("Email already in use".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Email already in use".to_string()));
         }
 
         let user = User::new(new_user.email, new_user.username, new_user.password);
         data_storage.insert_user(user.clone(), settings).await.unwrap();
-        ApiResult::new_data(user)
+        DeprecatedApiResult::new_data(user)
     }
 
     #[derive(serde::Deserialize)]
@@ -84,11 +84,11 @@ pub mod api{
 
     /// Update a user
     #[patch("/api/users/<id>", data = "<new_user>")]
-    pub fn update_user(id: String, new_user: Json<PatchUser>, _session: Session, data_storage: &State<Arc<DataStorage>>) -> Json<ApiResult<User>>{
+    pub fn update_user(id: String, new_user: Json<PatchUser>, _session: Session, data_storage: &State<Arc<DataStorage>>) -> Json<DeprecatedApiResult<User>>{
         // Parse id or return error
         let id = match uuid::Uuid::parse_str(&id){
             Ok(id) => id,
-            Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid id".to_string()))
+            Err(_) => return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid id".to_string()))
         };
 
         let new_user = new_user.into_inner();
@@ -100,7 +100,7 @@ pub mod api{
         if let Some(new_email) = new_user.email.clone(){
             if new_email != data.login_data.get(&id).unwrap().read().unwrap().email{
                 if data.login_data.iter().any(|x| x.1.read().unwrap().email == new_email){
-                    return ApiResult::new_error(ApiError::BadRequest("Email already in use".to_string()));
+                    return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Email already in use".to_string()));
                 }
             }
         }
@@ -110,31 +110,31 @@ pub mod api{
                 let mut user = user.write().unwrap();
                 let new_user = user.patch(new_user);
                 *user = new_user.clone();
-                ApiResult::new_data(new_user)
+                DeprecatedApiResult::new_data(new_user)
             },
-            None => ApiResult::new_error(ApiError::NotFound)
+            None => DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
         }
     }
 
     /// Delete a user
     #[delete("/api/users/<id>")]
-    pub async fn delete_user(id: String, session: Session, data_storage: &State<Arc<DataStorage>>) -> Json<ApiResult<()>>{
+    pub async fn delete_user(id: String, session: Session, data_storage: &State<Arc<DataStorage>>) -> Json<DeprecatedApiResult<()>>{
         // Parse id or return error
         let id = match uuid::Uuid::parse_str(&id){
             Ok(id) => id,
-            Err(_) => return ApiResult::new_error(ApiError::BadRequest("Invalid id".to_string()))
+            Err(_) => return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid id".to_string()))
         };
 
         if id == session.user_id{
-            return ApiResult::new_error(ApiError::BadRequest("Cannot delete own user".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Cannot delete own user".to_string()));
         }
 
         let data_storage = data_storage;
         let mut data = data_storage.data.write().unwrap();
 
         match data.login_data.remove(&id){
-            Some(_) => ApiResult::new_data(()),
-            None => ApiResult::new_error(ApiError::NotFound)
+            Some(_) => DeprecatedApiResult::new_data(()),
+            None => DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
         }
     }
 }

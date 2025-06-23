@@ -39,7 +39,7 @@ pub mod api{
     use rocket::State;
     use serde::{Deserialize, Serialize};
     use crate::storage::project_storage::ProjectStorage;
-    use crate::projects::api::{ApiError, ApiResult};
+    use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
     use crate::session::session_guard::Session;
     use crate::settings::Settings;
     use crate::storage::BibEntryV2;
@@ -52,12 +52,12 @@ pub mod api{
 
     /// Get a list of all bibliography entry keys in the project
     #[get("/api/projects/<project_id>/bibliography")]
-    pub async fn get_library(_session: Session, project_id: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<String>>>{
+    pub async fn get_library(_session: Session, project_id: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<DeprecatedApiResult<Vec<String>>>{
         let project_id = match uuid::Uuid::parse_str(&project_id) {
             Ok(project_id) => project_id,
             Err(e) => {
                 eprintln!("Couldn't parse project id: {}", e);
-                return ApiResult::new_error(ApiError::BadRequest("Couldn't parse project id".to_string()));
+                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse project id".to_string()));
             },
         };
 
@@ -65,23 +65,23 @@ pub mod api{
         let project = match project_storage_cpy.get_project(&project_id, &settings).await{
             Ok(project) => project.clone(),
             Err(_) => {
-                return ApiResult::new_error(ApiError::NotFound)
+                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
             }
         };
 
         let mut entries: Vec<String> =project.read().unwrap().bibliography.keys().map(|a|a.to_string()).collect();
         entries.sort();
-        return ApiResult::new_data(entries);
+        return DeprecatedApiResult::new_data(entries);
     }
 
     /// Get a bibliography entry by its key
     #[get("/api/projects/<project_id>/bibliography/<entry_key>")]
-    pub async fn get_bib_entry(_session: Session, project_id: String, entry_key: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<BibEntryV2>>{
+    pub async fn get_bib_entry(_session: Session, project_id: String, entry_key: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<DeprecatedApiResult<BibEntryV2>>{
         let project_id = match uuid::Uuid::parse_str(&project_id) {
             Ok(project_id) => project_id,
             Err(e) => {
                 eprintln!("Couldn't parse project id: {}", e);
-                return ApiResult::new_error(ApiError::BadRequest("Couldn't parse project id".to_string()));
+                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse project id".to_string()));
             },
         };
 
@@ -89,28 +89,28 @@ pub mod api{
         let project = match project_storage_cpy.get_project(&project_id, &settings).await{
             Ok(project) => project.clone(),
             Err(_) => {
-                return ApiResult::new_error(ApiError::NotFound)
+                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
             }
         };
 
         let entry = match project.read().unwrap().bibliography.get(&entry_key){
             Some(entry) => entry.clone(),
             None => {
-                return ApiResult::new_error(ApiError::NotFound)
+                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
             }
         };
 
-        return ApiResult::new_data(entry);
+        return DeprecatedApiResult::new_data(entry);
     }
 
     /// Search for bibliography entries by their key or title
     #[get("/api/projects/<project_id>/bibliography/search?<query>")]
-    pub async fn search_bib_entry(_session: Session, project_id: String, query: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<Vec<BibEntryV2>>>{
+    pub async fn search_bib_entry(_session: Session, project_id: String, query: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<DeprecatedApiResult<Vec<BibEntryV2>>>{
         let project_id = match uuid::Uuid::parse_str(&project_id) {
             Ok(project_id) => project_id,
             Err(e) => {
                 eprintln!("Couldn't parse project id: {}", e);
-                return ApiResult::new_error(ApiError::BadRequest("Couldn't parse project id".to_string()));
+                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse project id".to_string()));
             },
         };
 
@@ -118,7 +118,7 @@ pub mod api{
         let project = match project_storage_cpy.get_project(&project_id, &settings).await{
             Ok(project) => project.clone(),
             Err(_) => {
-                return ApiResult::new_error(ApiError::NotFound)
+                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
             }
         };
 
@@ -134,17 +134,17 @@ pub mod api{
             }
         }
 
-        return ApiResult::new_data(res);
+        return DeprecatedApiResult::new_data(res);
     }
 
 
     #[post("/api/projects/<project_id>/bibliography", data="<new_bib_entry>")]
-    pub async fn add_bib_entry(new_bib_entry: Json<NewBibEntry>, _session: Session, project_id: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<BibEntryV2>>{
+    pub async fn add_bib_entry(new_bib_entry: Json<NewBibEntry>, _session: Session, project_id: String, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<DeprecatedApiResult<BibEntryV2>>{
         let project_id = match uuid::Uuid::parse_str(&project_id) {
             Ok(project_id) => project_id,
             Err(e) => {
                 eprintln!("Couldn't parse project id: {}", e);
-                return ApiResult::new_error(ApiError::BadRequest("Couldn't parse project id".to_string()));
+                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse project id".to_string()));
             },
         };
 
@@ -155,25 +155,25 @@ pub mod api{
         let project = match project_storage_cpy.get_project(&project_id, &settings).await{
             Ok(project) => project.clone(),
             Err(_) => {
-                return ApiResult::new_error(ApiError::NotFound)
+                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
             }
         };
 
         if project.read().unwrap().bibliography.get(&new_bib_entry.key).is_some(){
-            return ApiResult::new_error(ApiError::BadRequest("There is already a bib entry with this key.".to_string()))
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("There is already a bib entry with this key.".to_string()))
         }
 
         project.write().unwrap().bibliography.insert(new_bib_entry.key.clone(), entry.clone());
-        return ApiResult::new_data(entry);
+        return DeprecatedApiResult::new_data(entry);
     }
 
     #[put("/api/projects/<project_id>/bibliography/<key>", data="<bib_entry>")]
-    pub async fn update_bib_entry(bib_entry: Json<BibEntryV2>, key: &str, _session: Session, project_id: &str, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<ApiResult<()>>{
+    pub async fn update_bib_entry(bib_entry: Json<BibEntryV2>, key: &str, _session: Session, project_id: &str, settings: &State<Settings>, project_storage: &State<Arc<ProjectStorage>>) -> Json<DeprecatedApiResult<()>>{
         let project_id = match uuid::Uuid::parse_str(&project_id) {
             Ok(project_id) => project_id,
             Err(e) => {
                 eprintln!("Couldn't parse project id: {}", e);
-                return ApiResult::new_error(ApiError::BadRequest("Couldn't parse project id".to_string()));
+                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse project id".to_string()));
             },
         };
 
@@ -183,17 +183,17 @@ pub mod api{
         let project = match project_storage_cpy.get_project(&project_id, &settings).await{
             Ok(project) => project.clone(),
             Err(_) => {
-                return ApiResult::new_error(ApiError::NotFound)
+                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
             }
         };
 
         if project.read().unwrap().bibliography.get(key).is_none(){
-            return ApiResult::new_error(ApiError::NotFound)
+            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
         }
 
         project.write().unwrap().bibliography.remove(key);
         project.write().unwrap().bibliography.insert(bib_entry.key.clone(), bib_entry.clone());
-        return ApiResult::new_data(());
+        return DeprecatedApiResult::new_data(());
     }
 
 }

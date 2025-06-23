@@ -6,7 +6,7 @@ use rocket::serde::json::Json;
 use rocket::State;
 use vb_exchange::RenderingStatus;
 use crate::export::rendering_manager::{LocalRenderingRequest, RenderingManager};
-use crate::projects::api::{ApiError, ApiResult};
+use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::session::session_guard::Session;
 use crate::templates_editor::api::safe_path_combine;
 
@@ -26,7 +26,7 @@ struct NewLocalRenderingRequest{
 ///
 /// Returns the [uuid::Uuid] of the created rendering request
 #[post("/api/export/request", data="<request>")]
-pub fn add_local_rendering_request(_session: Session, rendering_manager: &State<Arc<RenderingManager>>, request: Json<NewLocalRenderingRequest>) -> Json<ApiResult<uuid::Uuid>>{
+pub fn add_local_rendering_request(_session: Session, rendering_manager: &State<Arc<RenderingManager>>, request: Json<NewLocalRenderingRequest>) -> Json<DeprecatedApiResult<uuid::Uuid>>{
     let rendering_manager = Arc::clone(rendering_manager.inner());
     let request = request.into_inner();
 
@@ -43,7 +43,7 @@ pub fn add_local_rendering_request(_session: Session, rendering_manager: &State<
     rendering_manager.rendering_queue.write().unwrap().push_back(request);
     rendering_manager.requests_archive.write().unwrap().insert(request_id.clone(), RenderingStatus::QueuedOnLocal);
 
-    ApiResult::new_data(request_id)
+    DeprecatedApiResult::new_data(request_id)
 }
 
 /// Simplified version of [RenderingStatus]
@@ -92,11 +92,11 @@ impl From<&RenderingStatus> for APIRenderingStatus{
 /// GET /api/export/request/<request_id>/status
 /// Get the status of the request
 #[get("/api/export/request/<request_id>/status")]
-pub fn get_request_status(_session: Session, request_id: &str, rendering_manager: &State<Arc<RenderingManager>>) -> Json<ApiResult<APIRenderingStatus>>{
+pub fn get_request_status(_session: Session, request_id: &str, rendering_manager: &State<Arc<RenderingManager>>) -> Json<DeprecatedApiResult<APIRenderingStatus>>{
     let request_id = match uuid::Uuid::parse_str(request_id){
         Ok(res) => res,
         Err(_) => {
-            return ApiResult::new_error(ApiError::BadRequest("Invalid request_id.".to_string()))
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Invalid request_id.".to_string()))
         }
     };
 
@@ -107,11 +107,11 @@ pub fn get_request_status(_session: Session, request_id: &str, rendering_manager
             APIRenderingStatus::from(status)
         },
         None => {
-            return ApiResult::new_error(ApiError::NotFound)
+            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
         }
     };
 
-    ApiResult::new_data(status)
+    DeprecatedApiResult::new_data(status)
 }
 
 /// GET /export/<request_id>/<filename>

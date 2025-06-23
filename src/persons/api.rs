@@ -2,14 +2,14 @@ use std::sync::{Arc, RwLock};
 use rocket::serde::json::Json;
 use rocket::State;
 use crate::storage::data_storage::DataStorage;
-use crate::projects::api::{ApiError, ApiResult};
+use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use vb_exchange::projects::Person;
 use crate::session::session_guard::Session;
 
 /// POST /api/persons/
 /// Create a new person
 #[post("/api/persons", data = "<person>")]
-pub fn create_person(_session: Session, data_storage: &State<Arc<DataStorage>>, person: Json<Person>) -> Json<ApiResult<Person>> {
+pub fn create_person(_session: Session, data_storage: &State<Arc<DataStorage>>, person: Json<Person>) -> Json<DeprecatedApiResult<Person>> {
     let mut person = person.into_inner();
     let data_storage = Arc::clone(data_storage);
 
@@ -17,7 +17,7 @@ pub fn create_person(_session: Session, data_storage: &State<Arc<DataStorage>>, 
     match person.id{
         Some(_) => {
             eprintln!("Person already has an id");
-            return ApiResult::new_error(ApiError::BadRequest("Person is not supposed to have an id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Person is not supposed to have an id".to_string()));
         },
         None => {
             person.id = Some(uuid::Uuid::new_v4());
@@ -29,7 +29,7 @@ pub fn create_person(_session: Session, data_storage: &State<Arc<DataStorage>>, 
             gnd.id = Some(uuid::Uuid::new_v4());
         }else{
             eprintln!("Persons gnd already has a id");
-            return ApiResult::new_error(ApiError::BadRequest("GND is not supposed to have an id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("GND is not supposed to have an id".to_string()));
         }
     };
 
@@ -38,7 +38,7 @@ pub fn create_person(_session: Session, data_storage: &State<Arc<DataStorage>>, 
             orcid.id = Some(uuid::Uuid::new_v4());
         }else{
             eprintln!("Persons orcid already has a id");
-            return ApiResult::new_error(ApiError::BadRequest("ORCID is not supposed to have an id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("ORCID is not supposed to have an id".to_string()));
         }
     };
 
@@ -47,20 +47,20 @@ pub fn create_person(_session: Session, data_storage: &State<Arc<DataStorage>>, 
             ror.id = Some(uuid::Uuid::new_v4());
         }else{
             eprintln!("Persons ror already has a id");
-            return ApiResult::new_error(ApiError::BadRequest("ROR is not supposed to have an id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("ROR is not supposed to have an id".to_string()));
         }
     };
 
     // Insert into data storage
     data_storage.data.write().unwrap().persons.insert(person.id.unwrap(), Arc::new(RwLock::new(person.clone())));
 
-    ApiResult::new_data(person)
+    DeprecatedApiResult::new_data(person)
 }
 
 /// PUT /api/persons/<id>
 /// Update specified person
 #[put("/api/persons/<id>", data = "<person>")]
-pub fn update_person(_session: Session, data_storage: &State<Arc<DataStorage>>, person: Json<Person>, id: &str) -> Json<ApiResult<Person>> {
+pub fn update_person(_session: Session, data_storage: &State<Arc<DataStorage>>, person: Json<Person>, id: &str) -> Json<DeprecatedApiResult<Person>> {
     let person = person.into_inner();
     let data_storage = Arc::clone(data_storage);
 
@@ -71,37 +71,37 @@ pub fn update_person(_session: Session, data_storage: &State<Arc<DataStorage>>, 
                 Ok(id) => id,
                 Err(e) => {
                     eprintln!("Couldn't parse person id: {}", e);
-                    return ApiResult::new_error(ApiError::BadRequest("Couldn't parse person id".to_string()));
+                    return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse person id".to_string()));
                 },
             };
 
             if *person_id != id{
                 eprintln!("Person id in url doesn't match person id in body");
-                return ApiResult::new_error(ApiError::BadRequest("Person id in url doesn't match person id in body. ID change is not allowed".to_string()));
+                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Person id in url doesn't match person id in body. ID change is not allowed".to_string()));
             }
         },
         None => {
             eprintln!("Person doesn't have an id");
-            return ApiResult::new_error(ApiError::BadRequest("Person doesn't have an id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Person doesn't have an id".to_string()));
         },
     }
 
     // Insert into data storage
     data_storage.data.write().unwrap().persons.insert(person.id.unwrap(), Arc::new(RwLock::new(person.clone())));
 
-    ApiResult::new_data(person)
+    DeprecatedApiResult::new_data(person)
 }
 
 // GET /api/persons/<id>
 /// Get a person by id
 #[get("/api/persons/<id>")]
-pub fn get_person(_session: Session, data_storage: &State<Arc<DataStorage>>, id: String) -> Json<ApiResult<Person>> {
+pub fn get_person(_session: Session, data_storage: &State<Arc<DataStorage>>, id: String) -> Json<DeprecatedApiResult<Person>> {
     let data_storage = Arc::clone(data_storage);
     let id = match uuid::Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(e) => {
             eprintln!("Couldn't parse person id: {}", e);
-            return ApiResult::new_error(ApiError::BadRequest("Couldn't parse person id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse person id".to_string()));
         },
     };
 
@@ -109,11 +109,11 @@ pub fn get_person(_session: Session, data_storage: &State<Arc<DataStorage>>, id:
     let person = match data_storage.data.read().unwrap().persons.get(&id){
         Some(person) => person.read().unwrap().clone(),
         None => {
-            return ApiResult::new_error(ApiError::NotFound);
+            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
         },
     };
 
-    ApiResult::new_data(person)
+    DeprecatedApiResult::new_data(person)
 }
 
 /// GET /api/persons?q=<query>
@@ -126,7 +126,7 @@ pub fn get_person(_session: Session, data_storage: &State<Arc<DataStorage>>, id:
 /// Returns
 /// * `Json<ApiResult<Vec<Person>>>` - Api Result with Json List of persons matching the query
 #[get("/api/persons?<query>&<limit>")]
-pub fn search_persons(_session: Session, data_storage: &State<Arc<DataStorage>>, query: String, limit: Option<usize>) -> Json<ApiResult<Vec<Person>>> {
+pub fn search_persons(_session: Session, data_storage: &State<Arc<DataStorage>>, query: String, limit: Option<usize>) -> Json<DeprecatedApiResult<Vec<Person>>> {
     let data_storage = Arc::clone(data_storage);
 
     let query = query.to_lowercase();
@@ -179,19 +179,19 @@ pub fn search_persons(_session: Session, data_storage: &State<Arc<DataStorage>>,
         }
     }
 
-    ApiResult::new_data(result)
+    DeprecatedApiResult::new_data(result)
 }
 
 /// DELETE /api/persons/<id>
 /// Delete a person by id
 #[delete("/api/persons/<id>")]
-pub fn delete_person(_session: Session, data_storage: &State<Arc<DataStorage>>, id: String) -> Json<ApiResult<()>> {
+pub fn delete_person(_session: Session, data_storage: &State<Arc<DataStorage>>, id: String) -> Json<DeprecatedApiResult<()>> {
     let data_storage = Arc::clone(data_storage);
     let id = match uuid::Uuid::parse_str(&id) {
         Ok(id) => id,
         Err(e) => {
             eprintln!("Couldn't parse person id: {}", e);
-            return ApiResult::new_error(ApiError::BadRequest("Couldn't parse person id".to_string()));
+            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Couldn't parse person id".to_string()));
         },
     };
 
@@ -199,9 +199,9 @@ pub fn delete_person(_session: Session, data_storage: &State<Arc<DataStorage>>, 
     match data_storage.data.write().unwrap().persons.remove(&id){
         Some(_) => (),
         None => {
-            return ApiResult::new_error(ApiError::NotFound);
+            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
         },
     };
 
-    ApiResult::new_data(())
+    DeprecatedApiResult::new_data(())
 }
