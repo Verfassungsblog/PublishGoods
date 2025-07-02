@@ -48,7 +48,7 @@ pub async fn get_project(
 }
 
 /// Represents the new standard API result type, holding either a valid response or an error.
-pub type ApiResult<T> = Result<APIResponse<T>, ApiError>;
+pub type APIResult<T> = Result<APIResponse<T>, ApiError>;
 
 /// Enumeration of possible new-style API error types.
 #[derive(Serialize, Debug)]

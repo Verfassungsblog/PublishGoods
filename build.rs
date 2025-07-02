@@ -64,12 +64,6 @@ fn main() {
         .args(&["--prefix", "typescript", "run", "build"])
         .output()
         .expect("Failed to compile typescript to javascript with npm run build");
-
-    let res4 = std::process::Command::new("tsc")
-        .args(&["--module", "system", "--lib", "es2015,dom,dom.Iterable", "--target", "es6", "--outFile", "static/js/editor.js", "typescript_old/Sidebar.ts","typescript_old/Editor-old.ts"])
-        .output()
-        .expect("Failed to compile typescript to javascript with tsc");
-
     let res2 = std::process::Command::new("tsc")
         .args(&["--module", "system", "--lib", "es2015,dom,dom.Iterable", "--target", "es6", "--outFile", "static/js/persons.js", "typescript_old/Persons.ts"])
         .output()
@@ -78,8 +72,8 @@ fn main() {
     println!("cargo:rerun-if-changed=typescript");
     println!("cargo:rerun-if-changed=typescript_old");
     println!("cargo:rerun-if-changed=templates_frontend");
-    if !res1.status.success() || !res2.status.success() || !res3.status.success() || !res4.status.success() {
-        panic!("Failed to compile typescript to javascript with tsc:\n{}\n{}\n{}\n{}", String::from_utf8_lossy(&res1.stdout), String::from_utf8_lossy(&res2.stdout),String::from_utf8_lossy(&res3.stdout), String::from_utf8_lossy(&res4.stdout));
+    if !res1.status.success() || !res2.status.success() || !res3.status.success() {
+        panic!("Failed to compile typescript to javascript with tsc:\n{}\n{}\n{}", String::from_utf8_lossy(&res1.stdout), String::from_utf8_lossy(&res2.stdout),String::from_utf8_lossy(&res3.stdout));
     }
 
     // Copy pdf.worker.mjs to static/js to make sure the worker version is always up to date

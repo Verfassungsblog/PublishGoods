@@ -1,0 +1,180 @@
+body, html{
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body{
+    font-family: 'Nunito', sans-serif;
+}
+
+.main_wrapper{
+    display: flex;
+    height: 100%;
+    background-color: #F9F9F9;
+}
+
+.sidebar-full{
+    width: 300px;
+    min-width: 300px;
+    background-color: #F9F9F9;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-full-header{
+    display: flex;
+    align-items: center;
+    width: 270px;
+}
+.sidebar-full-header-collapse{
+    position: absolute;
+    border-radius: 3px !important;
+    left: 291px;
+    top: 14px;
+    height: 30px;
+    display: flex;
+    opacity: 0.5;
+    background-color: white;
+    box-shadow: none;
+    color: inherit;
+    border: none;
+    padding: 0;
+    margin: 0 3px 3px 0;
+    font: inherit;
+    outline: inherit;
+    align-items: center;
+    justify-content: center;
+}
+.sidebar-full-header-collapse:hover{
+    opacity: 1;
+    cursor: pointer;
+}
+.sidebar-header-logo{
+    width: 40px;
+    height: 40px;
+}
+
+.sidebar-header-logo-link{
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-full-header-project-name{
+    font-size: 12px;
+    margin-left: 10px;
+}
+
+.sidebar-full-bibliography-editor-switcher-wrapper{
+    width: 100%;
+    margin-top: 25px;
+}
+.sidebar-full-bibliography-editor-switcher{
+    display: flex;
+    background-color: white;
+}
+.sidebar-full-bibliography-editor-switcher > span{
+    width: 50%;
+    cursor: pointer;
+    padding: 5px;
+    color: lightgray;
+    text-align: center;
+    border-radius: 5px;
+    margin: 5px;
+    font-variant: all-petite-caps;
+    font-weight: bold;
+}
+.sidebar-full-bibliography-editor-switcher > span:first-of-type{
+    margin-left: 5px;
+    margin-right: 2.5px;
+}
+.sidebar-full-bibliography-editor-switcher > span:last-of-type{
+    margin-left: 2.5px;
+    margin-right: 5px;
+}
+.sidebar-full-bibliography-editor-switcher > span.active{
+    cursor: default;
+    background-color: #F9F9F9;
+    color: #4357AD;
+}
+.sidebar-full-bibliography-editor-switcher > span:hover{
+    background-color: #F9F9F9;
+}
+.sidebar-full-contents-panel{
+    flex-grow: 1;
+    background-color: white;
+    margin-top: 5px;
+    border-radius: 5px;
+    padding: 5px;
+}
+.sidebar-small{
+    width: 56px;
+    min-width: 56px;
+    background-color: #F9F9F9;
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.sidebar-small-items{
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.sidebar-small-items > button{
+    margin-bottom: 30px;
+}
+.iconbutton{
+    background-color: inherit;
+    box-shadow: none;
+    color: inherit;
+    border: none;
+    padding: 0;
+    margin: 0 3px 3px 0;
+    font: inherit;
+    outline: inherit;
+    width: 25px;
+    height: 25px;
+    cursor: pointer;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.75;
+}
+.iconbutton:hover{
+    background-color: #F9F9F9;
+    opacity: 1;
+}
+.sidebar-full-contents-panel-control-bar{
+    width: 100%;
+    display: flex;
+    border-bottom: 1px solid #F9F9F9;
+    justify-content: space-between;
+}
+.sidebar-full-contents-panel-control-bar > span{
+    display: flex;
+}
+.sidebar-contents-section-children{
+    margin-left: 20px;
+}
+
+.main-col{
+    background-color: white;
+    overflow: scroll;
+    width: 100%;
+}
+.divider{
+    cursor: col-resize;
+    width: 5px;
+}
+.preview-col{
+    background-color: white;
+    flex-grow: 1;
+}
+
+.hide{
+    display: none;
+}

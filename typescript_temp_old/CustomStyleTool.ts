@@ -1,4 +1,4 @@
-import {save_changes} from "./Editor";
+import {save_changes} from "./EditorOld";
 
 export class CustomStyleTool{
     private button: HTMLButtonElement;

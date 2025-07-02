@@ -8,7 +8,7 @@ use crate::settings::Settings;
 use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
 use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
 use crate::storage::ProjectTemplateV2;
-use crate::utils::api_helpers::{ApiErrorType, ApiResult};
+use crate::utils::api_helpers::{ApiErrorType, APIResult};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
 use language::Language;
@@ -28,6 +28,7 @@ pub mod sections;
 /// One of the fields error or data must be Some
 ///
 /// Return data: Some(()) if api call succeeded and you don't want to return anything
+#[deprecated(note = "Please use `crate::utils::api_helpers::APIResult` instead.")]
 #[derive(Serialize, Deserialize)]
 pub struct DeprecatedApiResult<T> {
     /// Error occured
@@ -39,6 +40,7 @@ pub struct DeprecatedApiResult<T> {
 }
 
 /// DEPRECATED! Errors that may occur when calling api routes
+#[deprecated]
 #[derive(Serialize, Deserialize)]
 pub enum DeprecatedApiError {
     /// The requested resource doesn't exist
@@ -1518,7 +1520,7 @@ pub async fn get_content_blocks_in_section(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> ApiResult<Vec<NewContentBlockEditorJSFormat>> {
+) -> APIResult<Vec<NewContentBlockEditorJSFormat>> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let mut path = vec![];
@@ -1561,7 +1563,7 @@ pub async fn set_content_blocks_in_section(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> ApiResult<()> {
+) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let mut path = vec![];

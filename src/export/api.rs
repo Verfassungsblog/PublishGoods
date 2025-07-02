@@ -9,6 +9,7 @@ use crate::export::rendering_manager::{LocalRenderingRequest, RenderingManager};
 use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::session::session_guard::Session;
 use crate::templates_editor::api::safe_path_combine;
+use crate::utils::api_helpers::APIResult;
 
 /// Just like [LocalRenderingRequest] but without an request_id
 #[derive(Serialize, Deserialize)]
@@ -25,29 +26,29 @@ struct NewLocalRenderingRequest{
 /// Create a new local rendering request and add it to the queue to be sent to the next available rendering server#
 ///
 /// Returns the [uuid::Uuid] of the created rendering request
-#[post("/api/export/request", data="<request>")]
-pub fn add_local_rendering_request(_session: Session, rendering_manager: &State<Arc<RenderingManager>>, request: Json<NewLocalRenderingRequest>) -> Json<DeprecatedApiResult<uuid::Uuid>>{
+#[post("/api/export/request", data = "<request>")]
+pub fn add_local_rendering_request(_session: Session, rendering_manager: &State<Arc<RenderingManager>>, request: Json<NewLocalRenderingRequest>) -> APIResult<uuid::Uuid> {
     let rendering_manager = Arc::clone(rendering_manager.inner());
     let request = request.into_inner();
 
     // Generate request id
     let request_id = uuid::Uuid::new_v4();
 
-    let request = LocalRenderingRequest{
-        request_id: request_id.clone(),
+    let request = LocalRenderingRequest {
+        request_id,
         project_id: request.project_id,
         export_formats: request.export_formats,
         sections: request.sections,
     };
 
     rendering_manager.rendering_queue.write().unwrap().push_back(request);
-    rendering_manager.requests_archive.write().unwrap().insert(request_id.clone(), RenderingStatus::QueuedOnLocal);
+    rendering_manager.requests_archive.write().unwrap().insert(request_id, RenderingStatus::QueuedOnLocal);
 
-    DeprecatedApiResult::new_data(request_id)
+    Ok(request_id.into())
 }
 
 /// Simplified version of [RenderingStatus]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum APIRenderingStatus{
     /// Awaiting a worker to prepare the project
     QueuedOnLocal,
@@ -172,12 +173,10 @@ pub async fn get_request_result(_session: Session, request_id: &str, rendering_m
     let rendering_manager = Arc::clone(rendering_manager);
 
     let path = match rendering_manager.requests_archive.read().unwrap().get(&request_id){
-        Some(status) => {
-            match status{
-                RenderingStatus::SavedOnLocal(path, _) => path.clone(),
-                _ => {
-                    return Err(Status::NotFound)
-                }
+        Some(status) => match status{
+            RenderingStatus::SavedOnLocal(path, _) => path.clone(),
+            _ => {
+                return Err(Status::NotFound)
             }
         },
         None => {

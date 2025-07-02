@@ -146,6 +146,7 @@ async fn rocket() -> _ {
         .attach(Template::fairing())
         .mount("/css", rocket::fs::FileServer::from("static/css"))
         .mount("/js", rocket::fs::FileServer::from("static/js"))
+        .mount("/assets", rocket::fs::FileServer::from("static/img"))
         .mount("/", routes![
             templates_editor::user_interface::list_templates,
             templates_editor::user_interface::create_template,
