@@ -2,7 +2,7 @@ use crate::projects::{ProjectMetadataV4, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
 use crate::storage::project_storage::{
-    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError,
+    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION
 };
 use crate::storage::{BibEntryV2, MultipleFileLocks, ProjectListEntry};
 use bincode::{Decode, Encode};
@@ -388,12 +388,10 @@ impl ProjectStorage {
             }
         }
 
-        let version = "7"; //TODO: auto detect latest version
-
         // Encode project data with bincode and save to disk
         let path = format!(
             "{}/projects/{}/project.{}.bincode",
-            settings.data_path, uuid, version
+            settings.data_path, uuid, CURRENT_VERSION
         );
 
         match self.wait_for_file_lock(&uuid, settings).await {

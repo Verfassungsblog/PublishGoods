@@ -7,7 +7,7 @@ use rocket::serde::{Deserialize, Serialize};
 use vb_exchange::projects::{Person, PersonV2};
 use crate::settings::Settings;
 pub(crate) use crate::storage::{ProjectTemplateV2, SingleFileLock, User};
-use crate::storage::data_storage::{DataStorage, DataStorageLoadError, InnerDataStorage};
+use crate::storage::data_storage::{DataStorage, DataStorageLoadError, InnerDataStorage, CURRENT_VERSION};
 use crate::storage::data_storage::migration::load_inner_data_storage;
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
@@ -173,7 +173,7 @@ impl DataStorage{
 
         // Save login data
         let cpy = self.data.read().unwrap().clone();
-        let path = format!("{}/data.3.bincode", settings.data_path);
+        let path = format!("{}/data.{}.bincode", settings.data_path, CURRENT_VERSION);
 
         match tokio::task::spawn_blocking(move || {
             let mut file = match std::fs::File::create(path) {
