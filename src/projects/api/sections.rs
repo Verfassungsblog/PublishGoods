@@ -7,7 +7,7 @@ use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
 use crate::storage::project_storage::ProjectStorage;
-use crate::utils::api_helpers::{ApiErrorType, ApiResult};
+use crate::utils::api_helpers::{ApiErrorType, APIResult};
 use crate::utils::dedup::dedup_vec;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
@@ -73,7 +73,7 @@ pub async fn get_section(
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
     data_storage: &State<Arc<DataStorage>>,
-) -> ApiResult<APISectionResult> {
+) -> APIResult<APISectionResult> {
     debug!(
         "get_section API request: project_id={:?}, content_path={:?}, expand={:?}",
         project_id, content_path, expand
@@ -260,7 +260,7 @@ pub async fn update_section(
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
     data_storage: &State<Arc<DataStorage>>,
-) -> ApiResult<()> {
+) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let mut path = vec![];

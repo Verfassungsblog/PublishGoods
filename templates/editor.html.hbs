@@ -1,80 +1,69 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <link rel="stylesheet" href="/css/bootstrap.min.css">
-    <link rel="stylesheet" href="/css/app.css">
+    <link rel="stylesheet" href="/css/editor.css">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verfassungsbooks - Editor</title>
 </head>
 <body>
-<nav class="navbar navbar-expand-lg">
-    <div class="container-fluid">
-        <div id="navbarSupportedContent">
-            <ul class="navbar-nav me-auto mb-lg-0">
-                <li class="nav-item">
-                    <a class="nav-link p-0" aria-current="page" href="/"><svg xmlns="http://www.w3.org/2000/svg" fill="black" height="20" viewBox="0 -960 960 960" width="20"><path d="m274-450 248 248-42 42-320-320 320-320 42 42-248 248h526v60H274Z"/></svg></a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link active p-0 ms-3" href="/projects/{{this}}">Editor</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link p-0 ms-3" href="/projects/{{this}}/bibliography">Bibliography</a>
-                </li>
-                <!--<li class="nav-item dropdown">
-                    <a class="nav-link dropbtn p-0 ms-3" href="#" role="button">
-                        Tools
-                    </a>
-                    <ul class="dropdown-content">
-                        <li><a class="dropdown-item" id="navbar_tools_convert_footnotes_endnotes">Convert Footnotes <-> Endnotes</a></li>
-                    </ul>
-                </li>-->
-
-            </ul>
+<div class="main_wrapper">
+    <div class="sidebar-full">
+        <button class="sidebar-full-header-collapse">
+            <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-chevron-left" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0"/>
+            </svg>
+        </button>
+        <div class="sidebar-full-header">
+            <a href="/" class="sidebar-header-logo-link"><img class="sidebar-header-logo" src="/assets/logo.png"
+                                                             alt="Logo"></a>
+            <span class="sidebar-full-header-project-name">Das ist ein sehr langer Projektname, aber gar nicht unrealistisch.</span>
         </div>
-        <div>
-            <button class="btn btn-sm btn-success" style="font-size: 10pt; padding: 0 5px 0 5px;" id="editor_render_project_btn">Render Preview</button>
-            <a class="img-btn hide" id="editor_download_pdf_btn" href="" download><svg xmlns="http://www.w3.org/2000/svg" height="22" viewBox="0 -960 960 960" fill="white" width="22"><path d="M480-313 287-506l43-43 120 120v-371h60v371l120-120 43 43-193 193ZM220-160q-24 0-42-18t-18-42v-143h60v143h520v-143h60v143q0 24-18 42t-42 18H220Z"/></svg></a>
-            <button class="btn btn-sm btn-secondary" style="font-size: 10pt; padding: 0 5px 0 5px;" id="editor_export_project_btn">Export Project</button>
-        </div>
-    </div>
-</nav>
-<div class="faded-out-background hide" id="overlay-wrapper">
-    <div class="overlay" id="overlay">
-        <button class="btn img-btn" id="overlay_close_btn"><svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg></button>
-        <div id="inner_overlay">
-        </div>
-    </div>
-</div>
-<div class="container-fluid editor">
-    <div class="row h-100">
-        <div class="col col-4 col-xl-2" id="editor-sidebar-wrapper">
-            <div id="editor-sidebar">
+        <div class="sidebar-full-bibliography-editor-switcher-wrapper">
+            <div class="sidebar-full-bibliography-editor-switcher">
+                <span class="active" id="sidebar-full-bibliography-editor-switcher-editor">Editor</span>
+                <span id="sidebar-full-bibliography-editor-switcher-bibliography">Bibliography</span>
             </div>
         </div>
-        <div class="col col-8 col-xl-10" id="editor-main-col">
-            <div class="row d-flex">
-                <div class="editor-details">
+        <div class="sidebar-full-contents-panel">
 
-                </div>
-                <div id="editor-render-preview" class="hide">
-                    <div style="overflow-y:scroll;" id="test">
-                        Loading Preview...
-                    </div>
-                </div>
-            </div>
         </div>
+    </div>
+    <div class="sidebar-small hide">
+        <a href="/" class="sidebar-header-logo-link"><img class="sidebar-header-logo" src="/assets/logo.png"
+                                                         alt="Logo"></a>
+        <div class="sidebar-small-items">
+            <button class="sidebar-small-extend iconbutton">
+                <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-chevron-right" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708"/>
+                </svg>
+            </button>
+            <button class="iconbutton">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" viewBox="0 0 512 512"><!--!Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path d="M128 64c0-35.3 28.7-64 64-64L352 0l0 128c0 17.7 14.3 32 32 32l128 0 0 288c0 35.3-28.7 64-64 64l-256 0c-35.3 0-64-28.7-64-64l0-112 174.1 0-39 39c-9.4 9.4-9.4 24.6 0 33.9s24.6 9.4 33.9 0l80-80c9.4-9.4 9.4-24.6 0-33.9l-80-80c-9.4-9.4-24.6-9.4-33.9 0s-9.4 24.6 0 33.9l39 39L128 288l0-224zm0 224l0 48L24 336c-13.3 0-24-10.7-24-24s10.7-24 24-24l104 0zM512 128l-128 0L384 0 512 128z"></path></svg>
+            </button>
+            <button class="iconbutton">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="bi bi-file-earmark-arrow-down-fill" viewBox="0 0 16 16">
+                    <path d="M9.293 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707A1 1 0 0 0 13.707 4L10 .293A1 1 0 0 0 9.293 0M9.5 3.5v-2l3 3h-2a1 1 0 0 1-1-1m-1 4v3.793l1.146-1.147a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2a.5.5 0 0 1 .708-.708L7.5 11.293V7.5a.5.5 0 0 1 1 0"></path>
+                </svg>
+            </button>
+            <button class="iconbutton">
+                <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="#4357AD" class="bi bi-play-fill" viewBox="0 0 16 16">
+                    <path d="m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+    <div class="main-col">
+        Main!
+    </div>
+    <div class="divider hide"></div>
+    <div class="preview-col hide">
+        Preview
     </div>
 </div>
 <script src="/js/handlebars-v4.7.8.js" type="text/javascript"></script>
 <script src="/js/precompiled_partials.js"></script>
 <script src="/js/precompiled_templates.js"></script>
-<script src="/js/section_editor.js"></script>
-<script src="/js/export.js"></script>
-<script src="/js/import.js"></script>
-<script src="/js/user_tools.js"></script>
-<script src="/js/neditor.js"></script>
-<script src="/js/general.js"></script>
 <script src="/js/editor.js"></script>
 </body>
 </html>

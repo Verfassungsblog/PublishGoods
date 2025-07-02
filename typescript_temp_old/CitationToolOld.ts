@@ -1,6 +1,6 @@
 import {save_changes} from "./Editor";
 
-export class CitationTool{
+export class CitationToolOld {
     private button: HTMLButtonElement;
     private state: boolean;
     private api: any;
@@ -15,7 +15,7 @@ export class CitationTool{
         this.state = false;
         this.api = api;
 
-        CitationTool.add_all_show_note_settings_listeners();
+        CitationToolOld.add_all_show_note_settings_listeners();
     }
 
     static add_all_show_note_settings_listeners(){
@@ -125,7 +125,7 @@ export class CitationTool{
                     let citeentry = document.createElement("citation");
                     citeentry.innerText = "C";
                     citeentry.setAttribute("data-key", key);
-                    citeentry.addEventListener("click", CitationTool.show_note_settings_editor);
+                    citeentry.addEventListener("click", CitationToolOld.show_note_settings_editor);
                     range.collapse(false);
                     range.insertNode(citeentry);
                     settings_dialog.remove();

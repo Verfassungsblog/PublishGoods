@@ -126,8 +126,8 @@ impl ProjectStorage {
                                             self.projects.read().unwrap().keys()
                                         );
                                     }
-                                    Err(_) => {
-                                        error!("error while loading project {} into memory. Skipping project.", uuid);
+                                    Err(e) => {
+                                        error!("error while loading project {} into memory: {:?}, Skipping project.", uuid, e);
                                         continue;
                                     }
                                 }
