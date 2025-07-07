@@ -22,7 +22,7 @@ rocket_dyn_templates = { version = "=0.2.0", features = ["handlebars"] }
 argon2 = "0.5.2"
 uuid = { version = "1.6.1", features = ["serde", "v4"] }
 chrono = { version = "0.4.31", features = ["serde"] }
-schemars = { version = "0.8.16", features = ["chrono", "uuid1"] }
+schemars = { version = "1.0.4", features = ["chrono", "uuid1"] }
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 tokio = { version = "1.35.0", features = ["full"] }
 async-trait = "0.1.74"
