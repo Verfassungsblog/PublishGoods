@@ -22,6 +22,7 @@ use std::sync::Arc;
 use vb_exchange::projects::ProjectSettingsV5;
 
 pub mod sections;
+pub mod project_overview;
 
 /// DEPRECATED!
 /// General return type of API Routes
