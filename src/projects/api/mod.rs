@@ -22,7 +22,8 @@ use std::sync::Arc;
 use vb_exchange::projects::ProjectSettingsV5;
 
 pub mod sections;
-pub mod project_overview;
+pub mod get;
+pub mod patch;
 
 /// DEPRECATED!
 /// General return type of API Routes
@@ -179,227 +180,30 @@ pub trait Patch<P, T> {
     fn patch(&mut self, patch: P) -> T;
 }
 
-impl Patch<PatchProjectMetadata, ProjectMetadata> for ProjectMetadata {
-    fn patch(&mut self, patch: PatchProjectMetadata) -> ProjectMetadata {
-        let mut new_metadata = self.clone();
-
-        if let Some(title) = patch.title {
-            new_metadata.title = title;
-        }
-
-        if let Some(subtitle) = patch.subtitle {
-            new_metadata.subtitle = subtitle;
-        }
-
-        if let Some(authors) = patch.authors {
-            new_metadata.authors = authors;
-        }
-
-        if let Some(editors) = patch.editors {
-            new_metadata.editors = editors;
-        }
-
-        if let Some(web_url) = patch.web_url {
-            new_metadata.web_url = web_url;
-        }
-
-        if let Some(identifiers) = patch.identifiers {
-            new_metadata.identifiers = identifiers;
-        }
-
-        if let Some(published) = patch.published {
-            match published {
-                Some(published) => {
-                    match NaiveDate::parse_from_str(&published, "%Y-%m-%d") {
-                        Ok(parsed_date) => new_metadata.published = Some(parsed_date),
-                        Err(e) => {
-                            warn!("Couldn't parse date: {}", e);
-                            new_metadata.published = None;
-                        }
-                    };
+impl<P, T> Patch<Option<P>, Option<T>> for Option<T>
+where T: Patch<P, T> + Default + Clone{
+    fn patch(&mut self, patch: Option<P>) -> Option<T> {
+        match self{
+            None => {
+                match patch{
+                    None => None,
+                    Some(patch) => {
+                        Some(T::default().patch(patch))
+                    }
                 }
-                None => {
-                    new_metadata.published = None;
+            }
+            Some(mself) => {
+                match patch{
+                    Some(patch) => {
+                        Some(mself.patch(patch))
+                    },
+                    None => {
+                        Some(mself.clone())
+                    }
                 }
             }
         }
-
-        if let Some(languages) = patch.languages {
-            new_metadata.languages = languages;
-        }
-
-        if let Some(number_of_pages) = patch.number_of_pages {
-            new_metadata.number_of_pages = number_of_pages;
-        }
-
-        if let Some(short_abstract) = patch.short_abstract {
-            new_metadata.short_abstract = short_abstract;
-        }
-
-        if let Some(long_abstract) = patch.long_abstract {
-            new_metadata.long_abstract = long_abstract;
-        }
-
-        if let Some(keywords) = patch.keywords {
-            new_metadata.keywords = keywords;
-        }
-
-        if let Some(ddc) = patch.ddc {
-            new_metadata.ddc = ddc;
-        }
-
-        if let Some(license) = patch.license {
-            new_metadata.license = license;
-        }
-
-        if let Some(series) = patch.series {
-            new_metadata.series = series;
-        }
-
-        if let Some(volume) = patch.volume {
-            new_metadata.volume = volume;
-        }
-
-        if let Some(edition) = patch.edition {
-            new_metadata.edition = edition;
-        }
-
-        if let Some(publisher) = patch.publisher {
-            new_metadata.publisher = publisher;
-        }
-
-        new_metadata
     }
-}
-
-/// Struct for HTTP PATCH routes to update the project metadata
-#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
-pub struct PatchProjectMetadata {
-    /// Book Title
-    pub title: Option<String>,
-    /// Subtitle of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub subtitle: Option<Option<String>>,
-    /// List of ids of authors of the book
-    #[bincode(with_serde)]
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub authors: Option<Option<Vec<PersonUuidOrString>>>,
-    /// List of ids of editors of the book
-    #[bincode(with_serde)]
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub editors: Option<Option<Vec<PersonUuidOrString>>>,
-    /// URL to a web version of the book or reference
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub web_url: Option<Option<String>>,
-    /// List of identifiers of the book (e.g. ISBNs)
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub identifiers: Option<Option<Vec<Identifier>>>,
-    /// Date of publication
-    #[bincode(with_serde)]
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub published: Option<Option<String>>,
-    /// Languages of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    #[bincode(with_serde)]
-    pub languages: Option<Option<Vec<Language>>>,
-    /// Number of pages of the book (should be automatically calculated)
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub number_of_pages: Option<Option<u32>>,
-    /// Short abstract of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub short_abstract: Option<Option<String>>,
-    /// Long abstract of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub long_abstract: Option<Option<String>>,
-    /// Keywords of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub keywords: Option<Option<Vec<Keyword>>>,
-    /// Dewey Decimal Classification (DDC) classes (subject groups)
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub ddc: Option<Option<String>>,
-    /// License of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub license: Option<Option<License>>,
-    /// Series the book belongs to
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub series: Option<Option<String>>,
-    /// Volume of the book in the series
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub volume: Option<Option<String>>,
-    /// Edition of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub edition: Option<Option<String>>,
-    /// Publisher of the book
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "::serde_with::rust::double_option"
-    )]
-    pub publisher: Option<Option<String>>,
 }
 
 #[post("/api/projects/<project_id>/metadata", data = "<metadata>")]
@@ -435,75 +239,6 @@ pub async fn set_project_metadata(
     DeprecatedApiResult::new_data(())
 }
 
-#[patch("/api/projects/<project_id>/metadata", data = "<metadata>")]
-pub async fn patch_project_metadata(
-    project_id: String,
-    _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-    data_storage: &State<Arc<DataStorage>>,
-    metadata: Json<PatchProjectMetadata>,
-) -> Json<DeprecatedApiResult<()>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            eprintln!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
-
-    let project_storage = Arc::clone(project_storage);
-
-    let project_entry = match project_storage.get_project(&project_id, settings).await {
-        Ok(project_entry) => project_entry.clone(),
-        Err(_) => {
-            eprintln!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
-
-    let mut old_metadata = match &project_entry.read().unwrap().metadata {
-        Some(metadata) => metadata.clone(),
-        None => ProjectMetadata::default(),
-    };
-
-    let new_metadata = old_metadata.patch(metadata.into_inner());
-
-    // Validate new metadata
-
-    // Validate authors: Check if each author exists
-    if let Some(ref authors) = new_metadata.authors {
-        for author in authors.iter() {
-            if let PersonUuidOrString::PersonUuid(author_id) = author {
-                if !data_storage.person_exists(author_id) {
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(format!(
-                        "Author {} does not exist",
-                        author_id
-                    )));
-                }
-            }
-        }
-    }
-    // Validate editors: Check if each editor exists
-    if let Some(ref editors) = new_metadata.editors {
-        for editor in editors.iter() {
-            if let PersonUuidOrString::PersonUuid(editor_id) = editor {
-                if !data_storage.person_exists(editor_id) {
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(format!(
-                        "Editor {} does not exist",
-                        editor_id
-                    )));
-                }
-            }
-        }
-    }
-
-    let mut project = project_entry.write().unwrap();
-
-    project.metadata = Some(new_metadata);
-
-    DeprecatedApiResult::new_data(())
-}
 
 /// GET /api/csl/styles
 /// Returns a list of all csl styles available

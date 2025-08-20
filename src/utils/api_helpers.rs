@@ -8,6 +8,7 @@ use serde::Serialize;
 use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
 use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::settings::Settings;
+use crate::storage::data_storage::current::DataStorageError;
 
 /// Attempts to parse a string as a UUID.
 /// 
@@ -102,7 +103,7 @@ impl ApiError {
     }
 }
 
-/// Allows Rocket to send `NewApiError` as a JSON response, with status code selected based on the error type.
+/// Allows Rocket to send `ApiError` as a JSON response, with status code selected based on the error type.
 impl<'r> Responder<'r, 'static> for ApiError {
     fn respond_to(self, request: &'r Request<'_>) -> rocket::response::Result<'static> {
         debug!("Responding with error {:?}", self.error);
@@ -165,6 +166,17 @@ impl From<ProjectStorageError> for ApiError {
     }
 }
 
+/// Convert data storage errors to the API error response format to enable usage of ? operator
+impl From<DataStorageError> for ApiError{
+    fn from(value: DataStorageError) -> Self {
+        match value{
+            DataStorageError::NotFound(detail) => {
+                ApiErrorType::ResourceNotFound(detail).into()
+            }
+        }
+    }
+}
+
 /// New-style standard API response wrapping a serializable data result.
 #[derive(Serialize, Debug)]
 pub struct APIResponse<T: Serialize> {
@@ -187,7 +199,7 @@ impl<'r, T: Serialize + std::fmt::Debug> Responder<'r, 'static> for APIResponse<
     }
 }
 
-/// Allows convenient implicit conversion from a serializable value to a `NewAPIResponse` for API return types.
+/// Allows convenient implicit conversion from a serializable value to a `APIResponse` for API return types.
 impl<T: Serialize> From<T> for APIResponse<T> {
     fn from(value: T) -> Self {
         APIResponse { data: value}

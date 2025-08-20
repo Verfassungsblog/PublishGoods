@@ -10,6 +10,11 @@ pub(crate) use crate::storage::{ProjectTemplateV2, SingleFileLock, User};
 use crate::storage::data_storage::{DataStorage, DataStorageLoadError, InnerDataStorage, CURRENT_VERSION};
 use crate::storage::data_storage::migration::load_inner_data_storage;
 
+pub enum DataStorageError{
+    /// Resource not found, contains resource type + id
+    NotFound(String)
+}
+
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct InnerDataStorageV3{
     /// HashMap with users, id as HashMap keys
@@ -77,6 +82,14 @@ impl DataStorage{
         match data.login_data.values().find(|user| user.read().unwrap().email == *email){
             Some(user) => Ok(Arc::clone(user)),
             None => Err(()),
+        }
+    }
+    
+    /// returns a template
+    pub fn get_template(&self, uuid: &uuid::Uuid) -> Result<Arc<RwLock<ProjectTemplateV2>>, DataStorageError>{
+        match self.data.read().unwrap().templates.get(uuid){
+            Some(template) => Ok(Arc::clone(template)),
+            None => Err(DataStorageError::NotFound(format!("template {}", uuid)))
         }
     }
 
