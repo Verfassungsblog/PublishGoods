@@ -2,6 +2,7 @@ use std::fmt::Display;
 use chrono::NaiveTime;
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
+use futures::future::try_join_all;
 
 /// Import from Wordpress API
 pub struct WordpressAPI{
@@ -145,6 +146,39 @@ impl WordpressAPI {
         }
     }
 
+    pub async fn get_coauthor(&self, mut post:Post) -> Result<Post, WordpressAPIError> {
+        let id = post.id;
+        let url = format!("https://{}/wp-json/coauthors/v1/coauthors/?post_id={}", self.base_url, id);
+
+        let client = self.client.clone();
+        let request = client.request(reqwest::Method::GET, &url);
+
+        debug!("coauthor request send for post {}", post.id);
+
+        match request.send().await {
+            Ok(response) => {
+                debug!("Got coauthor response status: {:?}", response.status());
+                match response.json::<Vec<CoAuthor>>().await {
+                    Ok(res) => {
+                        debug!("Got coauthors for post {}", post.id);
+                        post.coauthors = Some(res);
+                        Ok(post)
+                    }
+                    Err(e) => {
+                        error!("Couldn't parse coauthor response from wordpress: {}, for post {}", e, post.id);
+                        Err(WordpressAPIError::SerdeParsingError)
+                    }
+                        }
+                }
+
+            Err(e) => {
+                error!("Couldn't parse coauthor response from wordpress: {}, for post {}", e, post.id);
+                Err(WordpressAPIError::ReqwestError)
+            }
+        }
+
+    }
+
     pub async fn get_posts(&self, context: WordpressAPIContext, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDate>, modified_after: Option<chrono::NaiveDate>, before: Option<chrono::NaiveDate>, modified_before: Option<chrono::NaiveDate>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<PostData, WordpressAPIError>{
         let url = format!("https://{}/wp-json/wp/v2/posts", self.base_url);
 
@@ -238,6 +272,9 @@ impl WordpressAPI {
                     WordpressAPIContext::View => {
                         match response.json::<Vec<Post>>().await {
                             Ok(posts) => {
+                                let posts = try_join_all(
+                                    posts.into_iter().map(|post| self.get_coauthor(post))
+                                ).await?;
                                 Ok(PostData{
                                     number_of_records: num_of_records,
                                     total_pages: num_of_pages,
@@ -284,7 +321,9 @@ impl WordpressAPI {
         match response {
             Ok(response) => {
                 let post: Post = match  response.json().await{
-                    Ok(post) => post,
+                    Ok(post) => {
+                        self.get_coauthor(post).await?
+                    },
                     Err(e) => {
                         eprintln!("Error parsing post {}: {}", id, e);
                         return Err(WordpressAPIError::SerdeParsingError);
@@ -442,6 +481,7 @@ pub struct Post{
     /// Optionally additional fields from the Advanced Custom Fields Plugin
     pub acf: Option<PostAcf>,
     /// Optionally additional co-authors (Co-Authors Plus WP Plugin)
+    #[serde(skip)]
     pub coauthors: Option<Vec<CoAuthor>>
 }
 
