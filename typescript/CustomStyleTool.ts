@@ -121,15 +121,9 @@ export class CustomStyleTool{
     }
 
     checkState(selection: any) {
-        const text = selection.anchorNode;
+        const mark = this.api.selection.findParentTag('CUSTOMSTYLE');
 
-        if (!text) {
-            return;
-        }
-
-        const anchorElement = text instanceof Element ? text : text.parentElement;
-
-        this.state = !!anchorElement.closest('customstyle');
+        this.state = !!mark;
     }
 
     static get sanitize() {
