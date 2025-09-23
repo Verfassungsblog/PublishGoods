@@ -13,6 +13,7 @@ import * as Tools from "./tools";
 import {CustomStyleTool} from "./CustomStyleTool";
 import {CitationTool} from "./CitationTool";
 import {BlockStyleTune} from "./BlockStyleTune";
+import {FixedLinkTool} from "./FixedLinkTool";
 
 let typing_timer: number | null = null;
 let editor: EditorJS | null = null;
@@ -51,6 +52,7 @@ export async function show_editor(){
                 strikethrough: Strikethrough,
                 custom_style_tool: CustomStyleTool,
                 citation: CitationTool,
+                link: FixedLinkTool,
                 image: {
                     class: ImageTool,
                     config: {
@@ -76,6 +78,30 @@ export async function show_editor(){
                 undo.initialize({blocks: data});
             },
         });
+
+        document.getElementById("section_content_blocks_inner").addEventListener("dblclick", function(e: Event){
+            let target: HTMLElement = e.target as HTMLElement;
+            if(target.tagName.toLowerCase() !== "a"){
+                target = target.closest("a");
+            }
+
+            if(!target){
+                return;
+            }
+
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            editor.inlineToolbar.open();
+            const api = editor.inlineToolbar;
+            requestAnimationFrame(() => {
+                let btn = document.querySelector(".ce-inline-toolbar .ce-inline-tool-fixed-link") as HTMLButtonElement;
+                btn.click();
+            });
+        })
 
         await editor.isReady;
 
