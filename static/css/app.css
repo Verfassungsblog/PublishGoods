@@ -468,7 +468,7 @@ label{
     top: 40px;
     opacity: 0.9;
 }
-.custom-style-tool-settings{
+.custom-style-tool-settings,.fixed-link-tool-settings{
     position: absolute;
     background-color: white;
     z-index: 20;

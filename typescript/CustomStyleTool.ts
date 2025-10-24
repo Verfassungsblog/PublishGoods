@@ -28,7 +28,7 @@ export class CustomStyleTool{
 
     show_create_dialog(range: Range){
         if(document.getElementsByClassName('custom-style-tool-settings').length > 0){
-            return;
+            document.getElementsByClassName('custom-style-tool-settings')[0].remove();
         }
         let toolbar = document.getElementsByClassName('ce-inline-toolbar')[0] as HTMLElement;
 
@@ -72,7 +72,7 @@ export class CustomStyleTool{
 
     show_change_dialog(range: Range){
         if(document.getElementsByClassName('custom-style-tool-settings').length > 0){
-            return;
+            document.getElementsByClassName('custom-style-tool-settings')[0].remove();
         }
         let element = this.api.selection.findParentTag('CUSTOMSTYLE');
 
@@ -121,15 +121,9 @@ export class CustomStyleTool{
     }
 
     checkState(selection: any) {
-        const text = selection.anchorNode;
+        const mark = this.api.selection.findParentTag('CUSTOMSTYLE');
 
-        if (!text) {
-            return;
-        }
-
-        const anchorElement = text instanceof Element ? text : text.parentElement;
-
-        this.state = !!anchorElement.closest('customstyle');
+        this.state = !!mark;
     }
 
     static get sanitize() {
