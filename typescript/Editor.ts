@@ -117,14 +117,17 @@ export async function show_editor(){
 }
 
 export async function save_changes(){
+    // @ts-ignore
+    let project_id: string = globalThis.project_id;
+    // @ts-ignore
+    let section_path: string = globalThis.section_path;
     let data = await editor.save();
-    console.log(data);
 
     //TODO: only update content blocks that changed
 
     try {
         // @ts-ignore
-        await API.send_update_content_blocks(globalThis.project_id, globalThis.section_path, data.blocks);
+        await API.send_update_content_blocks(project_id, section_path, data.blocks);
         //Tools.show_alert("Saved Changes.", "success");
     }catch(e){
         console.error(e);
