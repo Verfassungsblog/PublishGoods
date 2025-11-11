@@ -1604,3 +1604,125 @@ export function ImportAPI(){
         add_file_import_job,
     }
 }
+
+
+// ===== Projects API types =====
+// These interfaces mirror the Rust types used in src/projects/api/get.rs so that
+// JSON returned from the backend can be deserialized into TypeScript safely.
+
+// Rust: pub struct ProjectMetadataV4 { ... }
+// TS representation of Rust enum vb_exchange::projects::License
+// Serde JSON (externally tagged):
+// - Unit variants serialize as a bare string, e.g. "CC0"
+// - Newtype variant serializes as an object: { Other: string }
+export type License =
+    | "CC0"
+    | "CC_BY_4"
+    | "CC_BY_SA_4"
+    | "CC_BY_ND_4"
+    | "CC_BY_NC_4"
+    | "CC_BY_NC_SA_4"
+    | "CC_BY_NC_ND_4"
+    | { Other: string };
+
+export interface ProjectMetadataV4 {
+    title: string;
+    subtitle: string | null;
+    authors: PersonUuidOrString[] | null;
+    editors: PersonUuidOrString[] | null;
+    web_url: string | null;
+    identifiers: Identifier[] | null;
+    // Rust uses chrono::NaiveDate; it is serialized as an ISO date string like "YYYY-MM-DD"
+    published: string | null;
+    // Rust uses `language::Language`; represented here as BCP-47 / IETF language tags
+    languages: string[] | null;
+    number_of_pages: number | null;
+    short_abstract: string | null;
+    long_abstract: string | null;
+    // Rust uses vb_exchange::projects::Keyword; represent as plain strings
+    keywords: string[] | null;
+    ddc: string | null;
+    // Unit variants serialize as strings like "CC0"; the newtype variant serializes as { Other: string }
+    license: License | null;
+    series: string | null;
+    volume: string | null;
+    edition: string | null;
+    publisher: string | null;
+}
+
+// Rust: pub struct BibEntryV2 { ... } — complex citation structure.
+// Keep it flexible on the TS side; callers can narrow when needed.
+export type BibEntryV2 = any;
+
+// Rust: pub struct ProjectSettingsV5 (from vb_exchange crate)
+// Exact TS mirror so JSON from Rust can be deserialized safely.
+export interface ProjectSettingsV5 {
+    toc_enabled: boolean;
+    csl_style: string | null;
+    csl_language_code: string | null;
+    metadata_page_additional_html: string | null;
+    cover_image_path: string | null;
+    backcover_image_path: string | null;
+    add_soft_hyphens: boolean;
+}
+
+// Rust: pub struct APIProjectData { ... }
+export interface APIProjectData {
+    // Project Title
+    name: string;
+    // Project Description
+    description: string | null;
+    // Id for the ProjectTemplate (UUID as string)
+    template_id: string;
+    // Optionally extended ProjectTemplate
+    template_extended: ProjectTemplateV2 | null;
+    // Optionally extended ProjectMetadata
+    metadata: ProjectMetadataV4 | null;
+    // Optionally extended ProjectSettings
+    settings: ProjectSettingsV5 | null;
+    // Optionally extended Sections
+    sections: SectionOrToc[] | null;
+    // Optionally extended Bibliography
+    bibliography: Record<string, BibEntryV2> | null;
+}
+
+export function EditorAPI(){
+    /**
+     * Fetch the project data as JSON and deserialize into APIProjectData.
+     *
+     * GET /api/projects/<project_id>?extend=template,metadata,settings,sections,bibliography
+     *
+     * @param project_id - UUID string of the project
+     * @param opts
+     * @param opts.extend - Optional list of parts to extend in the response
+     * @returns Promise resolving to APIProjectData
+     */
+    async function getProject(
+        project_id: string,
+        opts?: { extend?: ("template"|"metadata"|"settings"|"sections"|"bibliography")[] }
+    ): Promise<APIProjectData> {
+        const extend = opts?.extend && opts.extend.length > 0
+            ? `?extend=${opts.extend.join(",")}`
+            : "";
+
+        const response = await fetch(`/api/projects/${project_id}${extend}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get project: ${response.status}`);
+        }
+
+        const response_data = await response.json();
+        if (response_data && response_data.hasOwnProperty("error")) {
+            throw new Error(`Failed to get project: ${response_data["error"]}`);
+        }
+        // Backend uses an APIResponse wrapper: { data: APIProjectData }
+        return response_data.data as APIProjectData;
+    }
+
+    return {
+        getProject,
+    };
+}

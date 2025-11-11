@@ -1,14 +1,27 @@
 import {state} from './Main';
+import {EditorAPI} from '../api_requests';
+import {show_alert} from "../tools";
 
 export async function init() {
     let contents_panel : HTMLElement = document.getElementsByClassName("sidebar-full-contents-panel")[0] as HTMLElement;
 
-    // @ts-ignore
-    contents_panel.innerHTML = Handlebars.templates.editor_sidebar_editor();
-
     show_preview_column(); //TODO: only show after rendering
     add_divider_drag_listeners();
     add_sidebar_collapse_listeners();
+
+    // Initial fetch of project data
+    let editorAPI = EditorAPI();
+    try{
+        let data = await editorAPI.getProject(state.project_id, {extend: ["metadata", "settings", "template", "sections"]});
+        console.log(data);
+
+        // @ts-ignore
+        contents_panel.innerHTML = Handlebars.templates.editor_sidebar_editor(data);
+    }catch(e){
+        show_alert("Couldn't load project data. Reload page and try again.");
+        console.error(e);
+    }
+
 }
 
 const preview_col = document.getElementsByClassName("preview-col")[0] as HTMLElement;
