@@ -1,7 +1,7 @@
-use std::time::SystemTime;
-use lingua::{Language, LanguageDetectorBuilder};
 use crate::import::wordpress::Post;
 use crate::projects::{BlockData, SectionV5};
+use lingua::{Language, LanguageDetectorBuilder};
+use std::time::SystemTime;
 
 /// Attempts to detect the language of a WordPress post's content.
 ///
@@ -14,21 +14,24 @@ use crate::projects::{BlockData, SectionV5};
 /// # Returns
 /// * `Some(Language)` - The detected language in BCP-47 format
 /// * `None` - If the language could not be detected or could not be mapped to a BCP-47 code
-pub fn detect_language_for_post(post: &Post) -> Option<language::Language>{
+pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
     debug!("Trying to detect language for post");
     let start_time = SystemTime::now();
-    
+
     let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&post.content.rendered);
 
-    debug!("Language detection took {} ms.", start_time.elapsed().unwrap().as_millis());
+    debug!(
+        "Language detection took {} ms.",
+        start_time.elapsed().unwrap().as_millis()
+    );
 
     match detected_lang {
-        Some(lang) => match language_to_bcp47(lang){
+        Some(lang) => match language_to_bcp47(lang) {
             Some(lang) => Some(lang),
             None => None,
         },
-        None => None
+        None => None,
     }
 }
 
@@ -43,27 +46,25 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language>{
 /// # Returns
 /// * `Some(Language)` - The detected language as a BCP-47 language tag
 /// * `None` - If the language could not be detected or is not supported
-pub fn detect_language_for_section(section: &SectionV5) -> Option<language::Language>{
+pub fn detect_language_for_section(section: &SectionV5) -> Option<language::Language> {
     debug!("Trying to detect language for section");
-    
-    let content_to_analyze : String = section.children.iter().map(|block|{
-        match &block.data{
-            BlockData::Paragraph { text } => {
-                text.clone()
-            }
-            _ => {
-                String::new()
-            }
-        }
-    }).collect();
+
+    let content_to_analyze: String = section
+        .children
+        .iter()
+        .map(|block| match &block.data {
+            BlockData::Paragraph { text } => text.clone(),
+            _ => String::new(),
+        })
+        .collect();
     let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&content_to_analyze);
     match detected_lang {
-        Some(lang) => match language_to_bcp47(lang){
+        Some(lang) => match language_to_bcp47(lang) {
             Some(lang) => Some(lang),
             None => None,
         },
-        None => None
+        None => None,
     }
 }
 /// Converts a [`Language`] to a BCP-47 compliant [`language::Language`].

@@ -1,6 +1,6 @@
+use bincode::error::DecodeError;
 use std::sync::atomic::AtomicBool;
 use std::sync::RwLock;
-use bincode::error::DecodeError;
 
 pub mod current;
 pub mod migration;
@@ -11,11 +11,10 @@ static CURRENT_VERSION: u64 = 3;
 /// Storage for small data like users, passwords and login attempts
 ///
 /// This data is stored in memory permanently and doesn't get unloaded
-pub struct DataStorage{
+pub struct DataStorage {
     pub data: RwLock<InnerDataStorage>,
     file_locked: AtomicBool,
 }
-
 
 #[derive(Debug)]
 pub enum DataStorageLoadError {
@@ -24,7 +23,6 @@ pub enum DataStorageLoadError {
     InvalidVersionNumber,
     DataStorageMissing,
 }
-
 
 impl From<std::io::Error> for DataStorageLoadError {
     fn from(value: std::io::Error) -> Self {

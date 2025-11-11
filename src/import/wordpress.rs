@@ -1,10 +1,10 @@
-use std::fmt::Display;
 use chrono::NaiveTime;
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
 /// Import from Wordpress API
-pub struct WordpressAPI{
+pub struct WordpressAPI {
     base_url: String,
     username: Option<String>,
     password: Option<String>,
@@ -14,71 +14,65 @@ pub struct WordpressAPI{
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WordpressAPIError{
+pub enum WordpressAPIError {
     SerdeParsingError,
     ReqwestError,
     InvalidURL,
     NotFound,
     UnexpectedResponse,
-    Unsupported(String)
+    Unsupported(String),
 }
 
 #[derive(Debug)]
-pub enum PostDataType{
+pub enum PostDataType {
     PostPreviews(Vec<PostPreview>),
     FullPosts(Vec<Post>),
 }
 
 #[derive(Debug)]
-pub struct PostData{
+pub struct PostData {
     pub number_of_records: usize,
     pub total_pages: usize,
     pub data: PostDataType,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WordpressUser{
+pub struct WordpressUser {
     pub id: usize,
     pub name: String,
     pub url: String,
     pub description: String,
     pub link: String,
-    pub slug: String
+    pub slug: String,
 }
 
 #[derive(Debug, Default)]
-pub enum WordpressAPIContext{
+pub enum WordpressAPIContext {
     #[default]
     View,
     Edit,
-    Embed
+    Embed,
 }
 
-impl Display for WordpressAPIContext{
+impl Display for WordpressAPIContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
-            WordpressAPIContext::View => {
-                String::from("view")
-            }
-            WordpressAPIContext::Edit => {
-                String::from("edit")
-            }
-            WordpressAPIContext::Embed => {
-                String::from("embed")
-            }
+            WordpressAPIContext::View => String::from("view"),
+            WordpressAPIContext::Edit => String::from("edit"),
+            WordpressAPIContext::Embed => String::from("embed"),
         };
         write!(f, "{}", str)
     }
 }
 
-trait HeaderValueAsUsize{
+trait HeaderValueAsUsize {
     fn try_into_usize(&self) -> Option<usize>;
 }
-impl HeaderValueAsUsize for HeaderValue{
+impl HeaderValueAsUsize for HeaderValue {
     fn try_into_usize(&self) -> Option<usize> {
-        if let Ok(val) = self.to_str(){
-            if let Ok(val) = val.parse::<usize>(){
-                return Some(val)
+        if let Ok(val) = self.to_str() {
+            if let Ok(val) = val.parse::<usize>() {
+                return Some(val);
             }
         }
 
@@ -97,7 +91,11 @@ impl WordpressAPI {
         })
     }
 
-    pub fn new_authenticated(base_url: String, username: String, password: String) -> Result<Self, WordpressAPIError> {
+    pub fn new_authenticated(
+        base_url: String,
+        username: String,
+        password: String,
+    ) -> Result<Self, WordpressAPIError> {
         Ok(WordpressAPI {
             base_url,
             username: Some(username),
@@ -107,8 +105,11 @@ impl WordpressAPI {
         })
     }
 
-    fn build_client(timeout: u64) -> Result<reqwest::Client, WordpressAPIError>{
-        match reqwest::ClientBuilder::new().timeout(std::time::Duration::from_millis(timeout)).build() {
+    fn build_client(timeout: u64) -> Result<reqwest::Client, WordpressAPIError> {
+        match reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_millis(timeout))
+            .build()
+        {
             Ok(client) => Ok(client),
             Err(e) => {
                 eprintln!("Error building client: {}", e);
@@ -117,19 +118,19 @@ impl WordpressAPI {
         }
     }
 
-    pub async fn get_user(&self, id: usize) -> Result<WordpressUser, WordpressAPIError>{
+    pub async fn get_user(&self, id: usize) -> Result<WordpressUser, WordpressAPIError> {
         let url = format!("https://{}/wp-json/wp/v2/users/{}", self.base_url, id);
 
         let client = self.client.clone();
         let request = client.request(reqwest::Method::GET, &url);
 
-        match request.send().await{
+        match request.send().await {
             Ok(response) => {
                 debug!("Got user response status: {:?}", response.status());
                 if response.status() == 404 {
                     Err(WordpressAPIError::NotFound)
-                }else{
-                    match response.json::<WordpressUser>().await{
+                } else {
+                    match response.json::<WordpressUser>().await {
                         Ok(res) => Ok(res),
                         Err(e) => {
                             error!("Couldn't parse user response from wordpress: {}", e);
@@ -145,20 +146,35 @@ impl WordpressAPI {
         }
     }
 
-    pub async fn get_posts(&self, context: WordpressAPIContext, page: Option<usize>, per_page: Option<usize>, search: Option<String>, after: Option<chrono::NaiveDate>, modified_after: Option<chrono::NaiveDate>, before: Option<chrono::NaiveDate>, modified_before: Option<chrono::NaiveDate>, slug: Option<String>, categories: Option<Vec<usize>>, categories_exclude: Option<Vec<usize>>) -> Result<PostData, WordpressAPIError>{
+    pub async fn get_posts(
+        &self,
+        context: WordpressAPIContext,
+        page: Option<usize>,
+        per_page: Option<usize>,
+        search: Option<String>,
+        after: Option<chrono::NaiveDate>,
+        modified_after: Option<chrono::NaiveDate>,
+        before: Option<chrono::NaiveDate>,
+        modified_before: Option<chrono::NaiveDate>,
+        slug: Option<String>,
+        categories: Option<Vec<usize>>,
+        categories_exclude: Option<Vec<usize>>,
+    ) -> Result<PostData, WordpressAPIError> {
         let url = format!("https://{}/wp-json/wp/v2/posts", self.base_url);
 
         let client = self.client.clone();
         let request = client.request(reqwest::Method::GET, &url);
 
         let mut query: Vec<(String, String)> = Vec::new();
-        match context{
+        match context {
             WordpressAPIContext::View => {
                 query.push(("context".to_string(), "view".to_string()));
             }
             WordpressAPIContext::Edit => {
                 error!("edit api context isn't supported yet!");
-                return Err(WordpressAPIError::Unsupported(String::from("edit api context isn't supported yet!")));
+                return Err(WordpressAPIError::Unsupported(String::from(
+                    "edit api context isn't supported yet!",
+                )));
             }
             WordpressAPIContext::Embed => {
                 query.push(("context".to_string(), "embed".to_string()));
@@ -175,39 +191,66 @@ impl WordpressAPI {
         }
         if let Some(after) = after {
             // Warning: The Wordpress Documentation is wrong: the API expects a DateTime, not a Date!
-            query.push(("after".to_string(), after.and_time(NaiveTime::default()).to_string()));
+            query.push((
+                "after".to_string(),
+                after.and_time(NaiveTime::default()).to_string(),
+            ));
         }
         if let Some(modified_after) = modified_after {
-            query.push(("modified_after".to_string(), modified_after.and_time(NaiveTime::default()).to_string()));
+            query.push((
+                "modified_after".to_string(),
+                modified_after.and_time(NaiveTime::default()).to_string(),
+            ));
         }
         if let Some(before) = before {
-            query.push(("before".to_string(), before.and_time(NaiveTime::default()).to_string()));
+            query.push((
+                "before".to_string(),
+                before.and_time(NaiveTime::default()).to_string(),
+            ));
         }
         if let Some(modified_before) = modified_before {
-            query.push(("modified_before".to_string(), modified_before.and_time(NaiveTime::default()).to_string()));
+            query.push((
+                "modified_before".to_string(),
+                modified_before.and_time(NaiveTime::default()).to_string(),
+            ));
         }
         if let Some(slug) = slug {
             query.push(("slug".to_string(), slug));
         }
-        if let Some(categories) = categories{
+        if let Some(categories) = categories {
             if !categories.is_empty() {
-                query.push(("categories".to_string(), categories.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+                query.push((
+                    "categories".to_string(),
+                    categories
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                ));
             }
         }
         if let Some(categories_exclude) = categories_exclude {
             if !categories_exclude.is_empty() {
-                query.push(("categories_exclude".to_string(), categories_exclude.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+                query.push((
+                    "categories_exclude".to_string(),
+                    categories_exclude
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                ));
             }
         }
         debug!("Query is: {:?}", query);
         let request = request.query(&query);
-        match request.send().await{
+        match request.send().await {
             Ok(response) => {
-                if response.status() == 400 { // We will get a bad requests if no posts are found at this page
+                if response.status() == 400 {
+                    // We will get a bad requests if no posts are found at this page
                     return Err(WordpressAPIError::NotFound);
                 }
-                let num_of_records: usize = match response.headers().get("X-WP-Total"){
-                    Some(num) => match num.try_into_usize(){
+                let num_of_records: usize = match response.headers().get("X-WP-Total") {
+                    Some(num) => match num.try_into_usize() {
                         Some(num) => num,
                         None => {
                             error!("Error parsing X-WP-Total as usize.");
@@ -218,11 +261,11 @@ impl WordpressAPI {
                     None => {
                         error!("X-WP-Total is missing in posts response");
                         debug!("{:?}", response);
-                        return Err(WordpressAPIError::UnexpectedResponse)
+                        return Err(WordpressAPIError::UnexpectedResponse);
                     }
                 };
-                let num_of_pages: usize = match response.headers().get("X-WP-TotalPages"){
-                    Some(num) => match num.try_into_usize(){
+                let num_of_pages: usize = match response.headers().get("X-WP-TotalPages") {
+                    Some(num) => match num.try_into_usize() {
                         Some(num) => num,
                         None => {
                             error!("Error parsing X-WP-TotalPages as usize.");
@@ -231,45 +274,40 @@ impl WordpressAPI {
                     },
                     None => {
                         error!("X-WP-TotalPages is missing in posts response");
-                        return Err(WordpressAPIError::UnexpectedResponse)
+                        return Err(WordpressAPIError::UnexpectedResponse);
                     }
                 };
-                match context{
-                    WordpressAPIContext::View => {
-                        match response.json::<Vec<Post>>().await {
-                            Ok(posts) => {
-                                Ok(PostData{
-                                    number_of_records: num_of_records,
-                                    total_pages: num_of_pages,
-                                    data: PostDataType::FullPosts(posts),
-                                })
-                            },
-                            Err(e) => {
-                                error!("Error parsing posts: {}", e);
-                                Err(WordpressAPIError::SerdeParsingError)
-                            }
+                match context {
+                    WordpressAPIContext::View => match response.json::<Vec<Post>>().await {
+                        Ok(posts) => Ok(PostData {
+                            number_of_records: num_of_records,
+                            total_pages: num_of_pages,
+                            data: PostDataType::FullPosts(posts),
+                        }),
+                        Err(e) => {
+                            error!("Error parsing posts: {}", e);
+                            Err(WordpressAPIError::SerdeParsingError)
                         }
-                    }
+                    },
                     WordpressAPIContext::Edit => {
                         error!("edit api context isn't supported yet!");
-                        Err(WordpressAPIError::Unsupported(String::from("edit api context isn't supported yet!")))
+                        Err(WordpressAPIError::Unsupported(String::from(
+                            "edit api context isn't supported yet!",
+                        )))
                     }
-                    WordpressAPIContext::Embed => {
-                        match response.json::<Vec<PostPreview>>().await {
-                            Ok(posts) => Ok(PostData{
-                                number_of_records: num_of_records,
-                                total_pages: num_of_pages,
-                                data: PostDataType::PostPreviews(posts),
-                            }),
-                            Err(e) => {
-                                error!("Error parsing posts: {}", e);
-                                Err(WordpressAPIError::SerdeParsingError)
-                            }
+                    WordpressAPIContext::Embed => match response.json::<Vec<PostPreview>>().await {
+                        Ok(posts) => Ok(PostData {
+                            number_of_records: num_of_records,
+                            total_pages: num_of_pages,
+                            data: PostDataType::PostPreviews(posts),
+                        }),
+                        Err(e) => {
+                            error!("Error parsing posts: {}", e);
+                            Err(WordpressAPIError::SerdeParsingError)
                         }
-                    }
+                    },
                 }
-
-            },
+            }
             Err(e) => {
                 error!("Error fetching posts: {}", e);
                 Err(WordpressAPIError::ReqwestError)
@@ -283,7 +321,7 @@ impl WordpressAPI {
         let response = client.get(&url).send().await;
         match response {
             Ok(response) => {
-                let post: Post = match  response.json().await{
+                let post: Post = match response.json().await {
                     Ok(post) => post,
                     Err(e) => {
                         eprintln!("Error parsing post {}: {}", id, e);
@@ -291,7 +329,7 @@ impl WordpressAPI {
                     }
                 };
                 Ok(post)
-            },
+            }
             Err(e) => {
                 eprintln!("Error fetching post {}: {}", id, e);
                 Err(WordpressAPIError::ReqwestError)
@@ -307,7 +345,19 @@ impl WordpressAPI {
         let mut page = 1;
         loop {
             println!("Fetching all categories from page {}", page);
-            let mut new_categories = self.get_categories(Some(page), Some(100), None, None, None, None, Some(true), None, None).await?;
+            let mut new_categories = self
+                .get_categories(
+                    Some(page),
+                    Some(100),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(true),
+                    None,
+                    None,
+                )
+                .await?;
             if new_categories.is_empty() {
                 println!("No more categories found, stopping");
                 break;
@@ -319,7 +369,18 @@ impl WordpressAPI {
         Ok(CategoryTree::from(categories))
     }
 
-    pub async fn get_categories(&self, page: Option<usize>, per_page: Option<usize>, search: Option<String>, exclude: Option<Vec<usize>>, include: Option<Vec<usize>>, slug: Option<String>, hide_empty: Option<bool>, parent: Option<usize>, post: Option<usize>) -> Result<Vec<Category>, WordpressAPIError>{
+    pub async fn get_categories(
+        &self,
+        page: Option<usize>,
+        per_page: Option<usize>,
+        search: Option<String>,
+        exclude: Option<Vec<usize>>,
+        include: Option<Vec<usize>>,
+        slug: Option<String>,
+        hide_empty: Option<bool>,
+        parent: Option<usize>,
+        post: Option<usize>,
+    ) -> Result<Vec<Category>, WordpressAPIError> {
         let client = self.client.clone();
         let url = format!("https://{}/wp-json/wp/v2/categories", self.base_url);
         let request = client.request(reqwest::Method::GET, &url);
@@ -334,10 +395,24 @@ impl WordpressAPI {
             query.push(("search".to_string(), search));
         }
         if let Some(exclude) = exclude {
-            query.push(("exclude".to_string(), exclude.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+            query.push((
+                "exclude".to_string(),
+                exclude
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","),
+            ));
         }
         if let Some(include) = include {
-            query.push(("include".to_string(), include.iter().map(|i| i.to_string()).collect::<Vec<String>>().join(",")));
+            query.push((
+                "include".to_string(),
+                include
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","),
+            ));
         }
         if let Some(slug) = slug {
             query.push(("slug".to_string(), slug));
@@ -353,12 +428,16 @@ impl WordpressAPI {
         }
         let request = request.query(&query);
         let request_started = std::time::Instant::now();
-        match request.send().await{
-            Ok(response) => match response.json::<Vec<Category>>().await{
+        match request.send().await {
+            Ok(response) => match response.json::<Vec<Category>>().await {
                 Ok(categories) => {
-                    println!("Fetched {} categories in {:?}", categories.len(), request_started.elapsed());
+                    println!(
+                        "Fetched {} categories in {:?}",
+                        categories.len(),
+                        request_started.elapsed()
+                    );
                     Ok(categories)
-                },
+                }
                 Err(e) => {
                     eprintln!("Error parsing categories: {}", e);
                     Err(WordpressAPIError::SerdeParsingError)
@@ -371,13 +450,13 @@ impl WordpressAPI {
         }
     }
 
-    pub async fn get_category(&self, id: usize) -> Result<Category, WordpressAPIError>{
+    pub async fn get_category(&self, id: usize) -> Result<Category, WordpressAPIError> {
         let client = self.client.clone();
         let url = format!("https://{}/wp-json/wp/v2/categories/{}", self.base_url, id);
         let response = client.get(&url).send().await;
         match response {
             Ok(response) => {
-                let category: Category = match response.json().await{
+                let category: Category = match response.json().await {
                     Ok(category) => category,
                     Err(e) => {
                         eprintln!("Error parsing category {}: {}", id, e);
@@ -385,7 +464,7 @@ impl WordpressAPI {
                     }
                 };
                 Ok(category)
-            },
+            }
             Err(e) => {
                 eprintln!("Error fetching category {}: {}", id, e);
                 Err(WordpressAPIError::ReqwestError)
@@ -395,21 +474,21 @@ impl WordpressAPI {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PostStatus{
+pub enum PostStatus {
     Publish,
     Future,
     Draft,
     Pending,
-    Private
+    Private,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RenderedContent{
+pub struct RenderedContent {
     pub rendered: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostAcf{
+pub struct PostAcf {
     pub subheadline: Option<String>,
     pub copyright: Option<String>,
     pub doi: Option<String>,
@@ -417,12 +496,12 @@ pub struct PostAcf{
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoAuthor{
+pub struct CoAuthor {
     pub display_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Post{
+pub struct Post {
     #[serde(rename = "date_gmt")]
     pub date: chrono::NaiveDateTime,
     pub id: usize,
@@ -442,12 +521,12 @@ pub struct Post{
     /// Optionally additional fields from the Advanced Custom Fields Plugin
     pub acf: Option<PostAcf>,
     /// Optionally additional co-authors (Co-Authors Plus WP Plugin)
-    pub coauthors: Option<Vec<CoAuthor>>
+    pub coauthors: Option<Vec<CoAuthor>>,
 }
 
 /// Similar to ['Post'] but only with fields that are returned by the WordPress api if context=embed
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct PostPreview{
+pub struct PostPreview {
     pub id: usize,
     pub date: chrono::NaiveDateTime,
     pub link: String,
@@ -460,7 +539,7 @@ pub struct PostPreview{
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Category{
+pub struct Category {
     pub id: usize,
     /// The number of posts in this category
     pub count: usize,
@@ -468,11 +547,11 @@ pub struct Category{
     pub name: String,
     pub slug: String,
     /// The parent category id
-    pub parent: usize
+    pub parent: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct HierarchicalCategory{
+pub struct HierarchicalCategory {
     pub id: usize,
     pub count: usize,
     pub description: String,
@@ -480,12 +559,12 @@ pub struct HierarchicalCategory{
     pub slug: String,
     pub parent: usize,
     // HashMap with categories (ids as keys)
-    pub children: Vec<HierarchicalCategory>
+    pub children: Vec<HierarchicalCategory>,
 }
 
-impl From<Category> for HierarchicalCategory{
-    fn from(c: Category) -> HierarchicalCategory{
-        HierarchicalCategory{
+impl From<Category> for HierarchicalCategory {
+    fn from(c: Category) -> HierarchicalCategory {
+        HierarchicalCategory {
             id: c.id,
             count: c.count,
             description: c.description,
@@ -497,31 +576,31 @@ impl From<Category> for HierarchicalCategory{
     }
 }
 
-impl HierarchicalCategory{
-    pub fn add_children(&mut self, categories: &mut Vec<Category>){
+impl HierarchicalCategory {
+    pub fn add_children(&mut self, categories: &mut Vec<Category>) {
         let mut i = 0;
 
-        loop{
-            let category = match categories.get(i){
+        loop {
+            let category = match categories.get(i) {
                 Some(category) => category,
                 None => break,
             };
-            if category.parent == self.id{
+            if category.parent == self.id {
                 self.children.push(categories.remove(i).into());
-            }else{
-                i = i+1;
+            } else {
+                i = i + 1;
             }
         }
 
-        for child in self.children.iter_mut(){
+        for child in self.children.iter_mut() {
             child.add_children(categories);
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CategoryTree{
-    pub categories: Vec<HierarchicalCategory>
+pub struct CategoryTree {
+    pub categories: Vec<HierarchicalCategory>,
 }
 
 impl From<Vec<Category>> for CategoryTree {
@@ -539,7 +618,7 @@ impl From<Vec<Category>> for CategoryTree {
         main_category.add_children(&mut categories);
 
         CategoryTree {
-            categories: main_category.children
+            categories: main_category.children,
         }
     }
 }
@@ -558,12 +637,27 @@ mod tests {
     #[tokio::test]
     async fn test_import_posts() {
         let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
-        let posts = api.get_posts(WordpressAPIContext::default(), None, None, None, None, None, None, None, None, None, None).await.unwrap();
+        let posts = api
+            .get_posts(
+                WordpressAPIContext::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         println!("{:?}", posts);
     }
 
     #[tokio::test]
-    async fn test_get_category_tree(){
+    async fn test_get_category_tree() {
         let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
         let categories = api.get_category_tree().await.unwrap();
         println!("Category tree: {:?}", categories.categories);

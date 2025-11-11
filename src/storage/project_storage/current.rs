@@ -2,9 +2,10 @@ use crate::projects::{ProjectMetadataV4, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
 use crate::storage::project_storage::{
-    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION
+    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION,
 };
 use crate::storage::{BibEntryV2, MultipleFileLocks, ProjectListEntry};
+use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +15,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
 use vb_exchange::projects::ProjectSettingsV5;
-use crate::utils::api_helpers::{ApiError, ApiErrorType};
 
 impl MultipleFileLocks for ProjectStorage {
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool> {
@@ -433,7 +433,6 @@ impl ProjectStorage {
         }
     }
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct ProjectDataV8 {

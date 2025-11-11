@@ -1,8 +1,8 @@
-use crate::projects::api::{UploadedImage, Patch};
+use crate::projects::api::{Patch, UploadedImage};
+use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
-use bincode::{Encode, Decode};
 use language::Language;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use vb_exchange::deprecated::projects::data_storage::OldLanguage;
 use vb_exchange::projects::*;
@@ -24,9 +24,9 @@ impl SectionOrTocV1 {
     }
 }
 
-impl From<SectionOrTocV1> for SectionOrTocV2{
+impl From<SectionOrTocV1> for SectionOrTocV2 {
     fn from(value: SectionOrTocV1) -> Self {
-        match value{
+        match value {
             SectionOrTocV1::Section(section) => SectionOrTocV2::Section(section.into()),
             SectionOrTocV1::Toc => SectionOrTocV2::Toc,
         }
@@ -41,7 +41,6 @@ pub enum SectionOrTocV2 {
     Toc,
 }
 
-
 impl SectionOrTocV2 {
     pub fn into_section(self) -> Option<SectionV2> {
         match self {
@@ -51,9 +50,9 @@ impl SectionOrTocV2 {
     }
 }
 
-impl From<SectionOrTocV2> for SectionOrTocV3{
+impl From<SectionOrTocV2> for SectionOrTocV3 {
     fn from(value: SectionOrTocV2) -> Self {
-        match value{
+        match value {
             SectionOrTocV2::Section(section) => SectionOrTocV3::Section(section.into()),
             SectionOrTocV2::Toc => SectionOrTocV3::Toc,
         }
@@ -66,7 +65,7 @@ pub enum SectionOrTocV3 {
     Toc,
 }
 
-impl From<SectionOrTocV3> for SectionOrTocV4{
+impl From<SectionOrTocV3> for SectionOrTocV4 {
     fn from(value: SectionOrTocV3) -> Self {
         match value {
             SectionOrTocV3::Section(section) => SectionOrTocV4::Section(section.into()),
@@ -75,14 +74,13 @@ impl From<SectionOrTocV3> for SectionOrTocV4{
     }
 }
 
-
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum SectionOrTocV4 {
     Section(SectionV4),
     Toc,
 }
 
-impl From<SectionOrTocV4> for SectionOrTocV5{
+impl From<SectionOrTocV4> for SectionOrTocV5 {
     fn from(value: SectionOrTocV4) -> Self {
         match value {
             SectionOrTocV4::Section(section) => SectionOrTocV5::Section(section.into()),
@@ -91,13 +89,11 @@ impl From<SectionOrTocV4> for SectionOrTocV5{
     }
 }
 
-
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum SectionOrTocV5 {
     Section(SectionV5),
     Toc,
 }
-
 
 impl SectionOrTocV5 {
     pub fn into_section(self) -> Option<SectionV5> {
@@ -110,7 +106,7 @@ impl SectionOrTocV5 {
 
 /// Struct holds all project-level metadata
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
-pub struct ProjectMetadataV1{
+pub struct ProjectMetadataV1 {
     /// Book Title
     pub title: String,
     /// Subtitle of the book
@@ -153,9 +149,9 @@ pub struct ProjectMetadataV1{
     pub publisher: Option<String>,
 }
 
-impl From<ProjectMetadataV1> for ProjectMetadataV2{
+impl From<ProjectMetadataV1> for ProjectMetadataV2 {
     fn from(value: ProjectMetadataV1) -> Self {
-        ProjectMetadataV2{
+        ProjectMetadataV2 {
             title: value.title,
             subtitle: value.subtitle,
             authors: value.authors,
@@ -281,7 +277,9 @@ impl From<ProjectMetadataV2> for ProjectMetadataV3 {
             web_url: value.web_url,
             identifiers: value.identifiers,
             published: value.published,
-            languages: value.languages.map(|langs| langs.into_iter().map(|l| l.into()).collect()),
+            languages: value
+                .languages
+                .map(|langs| langs.into_iter().map(|l| l.into()).collect()),
             number_of_pages: value.number_of_pages,
             short_abstract: value.short_abstract,
             long_abstract: value.long_abstract,
@@ -344,17 +342,27 @@ pub struct ProjectMetadataV4 {
 
 /// is either the uuid to a person or just a string with a name
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
-pub enum PersonUuidOrString{
+pub enum PersonUuidOrString {
     PersonUuid(#[bincode(with_serde)] Uuid),
-    NameString(String)
+    NameString(String),
 }
 
-impl From<ProjectMetadataV3> for ProjectMetadataV4{
+impl From<ProjectMetadataV3> for ProjectMetadataV4 {
     fn from(value: ProjectMetadataV3) -> Self {
-        let authors = value.authors.map(|authors| authors.into_iter().map(|a|PersonUuidOrString::PersonUuid(a)).collect());
-        let editors = value.editors.map(|editors| editors.into_iter().map(|e|PersonUuidOrString::PersonUuid(e)).collect());
+        let authors = value.authors.map(|authors| {
+            authors
+                .into_iter()
+                .map(|a| PersonUuidOrString::PersonUuid(a))
+                .collect()
+        });
+        let editors = value.editors.map(|editors| {
+            editors
+                .into_iter()
+                .map(|e| PersonUuidOrString::PersonUuid(e))
+                .collect()
+        });
 
-        ProjectMetadataV4{
+        ProjectMetadataV4 {
             title: value.title,
             subtitle: value.subtitle,
             authors,
@@ -461,7 +469,6 @@ pub struct SectionV4 {
     pub metadata: SectionMetadataV4,
 }
 
-
 /// Struct holds all data for a section (e.g. chapter, part, ...)
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct SectionV5 {
@@ -486,7 +493,11 @@ impl From<SectionV3> for SectionV4 {
         SectionV4 {
             id: value.id,
             css_classes: value.css_classes,
-            sub_sections: value.sub_sections.into_iter().map(|s| SectionV4::from(s)).collect(),
+            sub_sections: value
+                .sub_sections
+                .into_iter()
+                .map(|s| SectionV4::from(s))
+                .collect(),
             children: value.children,
             visible_in_toc: value.visible_in_toc,
             metadata: value.metadata.into(),
@@ -499,7 +510,11 @@ impl From<SectionV4> for SectionV5 {
         SectionV5 {
             id: value.id,
             css_classes: value.css_classes,
-            sub_sections: value.sub_sections.into_iter().map(|s| SectionV5::from(s)).collect(),
+            sub_sections: value
+                .sub_sections
+                .into_iter()
+                .map(|s| SectionV5::from(s))
+                .collect(),
             children: value.children,
             visible_in_toc: value.visible_in_toc,
             metadata: value.metadata.into(),
@@ -539,95 +554,91 @@ impl SectionV5 {
         new_section
     }
 
-    pub fn insert_child_section_as_child(&mut self, parent_section_id: &uuid::Uuid, new_section: &SectionV5) -> Option<()>{
-        for section in self.sub_sections.iter_mut(){
-                    if section.id == Some(*parent_section_id){
-                        section.sub_sections.push(new_section.clone());
-                        return Some(())
-                    }else{
-                        match section.insert_child_section_as_child(parent_section_id, new_section){
-                            Some(_) => {
-                                return Some(())
-                            },
-                            None => {},
-                        }
-                    }
-        }
-        None
-    }
-
-    pub fn insert_child_section_after(&mut self, section_id: &uuid::Uuid, new_section: &SectionV5) -> Option<()>{
-        for (i, section) in self.sub_sections.iter_mut().enumerate(){
-                    if section.id == Some(*section_id){
-                        self.sub_sections.insert(i+1,new_section.clone());
-                        return Some(())
-                    }else{
-                        match section.insert_child_section_after(section_id, new_section){
-                            Some(_) => {
-                                return Some(())
-                            },
-                            None => {},
-                        }
-                    }
-        }
-        None
-    }
-
-    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<SectionV5>{
-        let mut index = None;
-        for (i, section) in self.sub_sections.iter_mut().enumerate(){
-                    if section.id == Some(*section_id){
-                        index = Some(i);
-                    }else{
-                        match section.remove_child_section(section_id){
-                            Some(section) => {
-                                return Some(section)
-                            },
-                            None => {},
-                        }
+    pub fn insert_child_section_as_child(
+        &mut self,
+        parent_section_id: &uuid::Uuid,
+        new_section: &SectionV5,
+    ) -> Option<()> {
+        for section in self.sub_sections.iter_mut() {
+            if section.id == Some(*parent_section_id) {
+                section.sub_sections.push(new_section.clone());
+                return Some(());
+            } else {
+                match section.insert_child_section_as_child(parent_section_id, new_section) {
+                    Some(_) => return Some(()),
+                    None => {}
+                }
             }
         }
-        match index{
+        None
+    }
+
+    pub fn insert_child_section_after(
+        &mut self,
+        section_id: &uuid::Uuid,
+        new_section: &SectionV5,
+    ) -> Option<()> {
+        for (i, section) in self.sub_sections.iter_mut().enumerate() {
+            if section.id == Some(*section_id) {
+                self.sub_sections.insert(i + 1, new_section.clone());
+                return Some(());
+            } else {
+                match section.insert_child_section_after(section_id, new_section) {
+                    Some(_) => return Some(()),
+                    None => {}
+                }
+            }
+        }
+        None
+    }
+
+    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<SectionV5> {
+        let mut index = None;
+        for (i, section) in self.sub_sections.iter_mut().enumerate() {
+            if section.id == Some(*section_id) {
+                index = Some(i);
+            } else {
+                match section.remove_child_section(section_id) {
+                    Some(section) => return Some(section),
+                    None => {}
+                }
+            }
+        }
+        match index {
             Some(index) => {
                 let section = self.sub_sections.remove(index);
                 Some(section)
-            },
+            }
             None => None,
         }
     }
 }
 
-impl Patch<PatchHeading, Heading> for Heading{
+impl Patch<PatchHeading, Heading> for Heading {
     fn patch(&mut self, patch: PatchHeading) -> Heading {
         let level = patch.level.unwrap_or_else(|| self.level);
         let contents = patch.contents.unwrap_or_else(|| self.contents.clone());
-        Heading{
-            level,
-            contents,
-        }
+        Heading { level, contents }
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-struct PatchHeading{
+struct PatchHeading {
     pub level: Option<u8>,
     pub contents: Option<Vec<TextElement>>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-struct PatchList{
+struct PatchList {
     pub items: Option<Vec<ListItem>>,
     pub list_type: Option<ListType>,
 }
 
-impl Patch<PatchList, List> for List{
+impl Patch<PatchList, List> for List {
     fn patch(&mut self, patch: PatchList) -> List {
         let items = patch.items.unwrap_or_else(|| self.items.clone());
         let list_type = patch.list_type.unwrap_or_else(|| self.list_type.clone());
-        List{
-            items,
-            list_type,
-        }
+        List { items, list_type }
     }
 }
 
@@ -637,41 +648,40 @@ pub struct Heading {
     /// Level of the headline (e.g. h1, h2, ...)
     pub level: u8,
     /// Contents of the headline as TextElements
-    pub contents: Vec<TextElement>
+    pub contents: Vec<TextElement>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct HorizontalRule{
-}
+pub struct HorizontalRule {}
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum ListType{
+pub enum ListType {
     Unordered,
     Ordered,
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum TextElementOrList{
+pub enum TextElementOrList {
     List(List),
     TextElement(TextElement),
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct ListItem{
+pub struct ListItem {
     /// A list item can contain text elements and other (nested) lists
     pub contents: Vec<TextElementOrList>,
 }
 
 /// List
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct List{
+pub struct List {
     pub items: Vec<ListItem>,
     pub list_type: ListType,
 }
 
 /// Paragraph Content Block holding TextElements
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Paragraph{
+pub struct Paragraph {
     /// Contents of the paragraph
     pub contents: Vec<TextElement>,
     /// Optional block-level alignment of the paragraph
@@ -689,7 +699,7 @@ pub enum Alignment {
 
 /// Enum to differentiate between different text elements
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum TextElement{
+pub enum TextElement {
     /// Simple text
     String(String),
     /// Formatted text (e.g. bold, italic, ...) which can contain other text elements
@@ -699,21 +709,21 @@ pub enum TextElement{
     /// Footnote or Endnote
     Note(Note),
     /// Linebreak
-    LineBreak(LineBreak)
+    LineBreak(LineBreak),
 }
 
 /// Weblink to url with optional link text
 ///
 /// If no link text is given, the url is used as link text
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Link{
+pub struct Link {
     pub url: String,
     pub text: Option<Vec<TextElement>>,
 }
 
 /// Footnote or Endnote
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Note{
+pub struct Note {
     /// Type of the note (footnote or endnote)
     pub note_type: NoteType,
     /// Contents of the note
@@ -721,12 +731,11 @@ pub struct Note{
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct LineBreak{
-}
+pub struct LineBreak {}
 
 /// Enum to differentiate between footnote and endnote
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum NoteType{
+pub enum NoteType {
     Footnote,
     Endnote,
 }
@@ -735,14 +744,14 @@ pub enum NoteType{
 ///
 /// You may capsule other FormattedText elements to create nested formatting
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct FormattedText{
+pub struct FormattedText {
     pub contents: Vec<TextElement>,
     pub format: TextFormat,
 }
 
 /// Enum to differentiate between different text formats
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum TextFormat{
+pub enum TextFormat {
     Bold,
     Italic,
     Underline,
@@ -754,15 +763,15 @@ pub enum TextFormat{
 
 /// Enum to differentiate between different section levels
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum SectionLevel{
+pub enum SectionLevel {
     Part,
     Chapter,
-    Custom
+    Custom,
 }
 
 /// Struct holds all metadata of a section
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct SectionMetadataV1{
+pub struct SectionMetadataV1 {
     pub title: String,
     pub subtitle: Option<String>,
     #[bincode(with_serde)]
@@ -876,32 +885,41 @@ pub struct SectionMetadataV5 {
 
 impl From<SectionMetadataV4> for SectionMetadataV5 {
     fn from(value: SectionMetadataV4) -> Self {
-        let toc_title_subtitle_override= if value.toc_title_override.is_none() && value.toc_subtitle_override.is_none() {
-            None
-        }else{
-            let mut combined_override = String::new();
+        let toc_title_subtitle_override =
+            if value.toc_title_override.is_none() && value.toc_subtitle_override.is_none() {
+                None
+            } else {
+                let mut combined_override = String::new();
 
-            // Add title or toc_title_override as first part
-            if let Some(title_override) = value.toc_title_override{
-                combined_override.push_str(&title_override);
-            }else{
-                combined_override.push_str(&value.title)
-            }
+                // Add title or toc_title_override as first part
+                if let Some(title_override) = value.toc_title_override {
+                    combined_override.push_str(&title_override);
+                } else {
+                    combined_override.push_str(&value.title)
+                }
 
-            if let Some(subtitle_override) = value.toc_subtitle_override{
-                combined_override.push_str(": ");
-                combined_override.push_str(&subtitle_override);
-            }else if let Some(subtitle) = &value.subtitle{
-                combined_override.push_str(": ");
-                combined_override.push_str(&subtitle);
-            }
-            Some(combined_override)
-        };
+                if let Some(subtitle_override) = value.toc_subtitle_override {
+                    combined_override.push_str(": ");
+                    combined_override.push_str(&subtitle_override);
+                } else if let Some(subtitle) = &value.subtitle {
+                    combined_override.push_str(": ");
+                    combined_override.push_str(&subtitle);
+                }
+                Some(combined_override)
+            };
 
-        let authors = value.authors.into_iter().map(|x|PersonUuidOrString::PersonUuid(x)).collect();
-        let editors = value.editors.into_iter().map(|x|PersonUuidOrString::PersonUuid(x)).collect();
+        let authors = value
+            .authors
+            .into_iter()
+            .map(|x| PersonUuidOrString::PersonUuid(x))
+            .collect();
+        let editors = value
+            .editors
+            .into_iter()
+            .map(|x| PersonUuidOrString::PersonUuid(x))
+            .collect();
 
-        SectionMetadataV5{
+        SectionMetadataV5 {
             title: value.title,
             toc_title_subtitle_override,
             subtitle: value.subtitle,
@@ -936,7 +954,7 @@ pub struct SectionMetadataV3 {
     pub lang: Option<OldLanguage>,
 }
 
-impl Into<SectionMetadataV4> for SectionMetadataV3{
+impl Into<SectionMetadataV4> for SectionMetadataV3 {
     fn into(self) -> SectionMetadataV4 {
         SectionMetadataV4 {
             title: self.title,
@@ -954,9 +972,8 @@ impl Into<SectionMetadataV4> for SectionMetadataV3{
     }
 }
 
-
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-pub struct NewContentBlockEditorJSFormat{
+pub struct NewContentBlockEditorJSFormat {
     pub id: String,
     #[serde(rename = "type")]
     pub block_type: String,
@@ -965,18 +982,18 @@ pub struct NewContentBlockEditorJSFormat{
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-pub struct BlockTuneEditorJSFormat{
+pub struct BlockTuneEditorJSFormat {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub block_style_tune: Option<BlockStyleTuneEditorJS>
+    pub block_style_tune: Option<BlockStyleTuneEditorJS>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-pub struct BlockStyleTuneEditorJS{
+pub struct BlockStyleTuneEditorJS {
     pub css_classes: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-pub struct BlockDataEditorJSFormat{
+pub struct BlockDataEditorJSFormat {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1002,14 +1019,14 @@ pub struct BlockDataEditorJSFormat{
 }
 
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Footnote{
+pub struct Footnote {
     pub id: String,
     pub content: String,
     pub superscript: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone, PartialEq)]
-pub struct NewContentBlock{
+pub struct NewContentBlock {
     pub id: String,
     pub block_type: BlockType,
     pub data: BlockData,
@@ -1018,28 +1035,37 @@ pub struct NewContentBlock{
     pub revision_id: Option<uuid::Uuid>,
 }
 
-impl TryFrom<NewContentBlockEditorJSFormat> for NewContentBlock{
+impl TryFrom<NewContentBlockEditorJSFormat> for NewContentBlock {
     type Error = String;
 
     fn try_from(value: NewContentBlockEditorJSFormat) -> Result<Self, Self::Error> {
-        let css_classes = match value.tunes.block_style_tune{
+        let css_classes = match value.tunes.block_style_tune {
             Some(tune) => tune.css_classes.split(" ").map(|s| s.to_string()).collect(),
             None => vec![],
         };
-        match value.block_type.as_str(){
+        match value.block_type.as_str() {
             "paragraph" => {
-               let text = value.data.text.ok_or("Missing field 'text' in paragraph block".to_string())?;
+                let text = value
+                    .data
+                    .text
+                    .ok_or("Missing field 'text' in paragraph block".to_string())?;
                 Ok(NewContentBlock {
-                     id: value.id,
-                     block_type: BlockType::Paragraph,
-                     data: BlockData::Paragraph { text },
+                    id: value.id,
+                    block_type: BlockType::Paragraph,
+                    data: BlockData::Paragraph { text },
                     css_classes,
                     revision_id: None,
                 })
-            },
+            }
             "header" => {
-                let level = value.data.level.ok_or("Missing field 'level' in header block".to_string())?;
-                let text = value.data.text.ok_or("Missing field 'text' in header block".to_string())?;
+                let level = value
+                    .data
+                    .level
+                    .ok_or("Missing field 'level' in header block".to_string())?;
+                let text = value
+                    .data
+                    .text
+                    .ok_or("Missing field 'text' in header block".to_string())?;
 
                 Ok(NewContentBlock {
                     id: value.id,
@@ -1048,43 +1074,68 @@ impl TryFrom<NewContentBlockEditorJSFormat> for NewContentBlock{
                     css_classes,
                     revision_id: None,
                 })
-            },
+            }
             "raw" => {
-                let html = value.data.html.ok_or("Missing field 'html' in raw block".to_string())?;
+                let html = value
+                    .data
+                    .html
+                    .ok_or("Missing field 'html' in raw block".to_string())?;
 
                 Ok(NewContentBlock {
                     id: value.id,
                     block_type: BlockType::Heading,
-                    data: BlockData::Raw {html},
+                    data: BlockData::Raw { html },
                     css_classes,
                     revision_id: None,
                 })
-            },
+            }
             "list" => {
-                let items = value.data.items.ok_or("Missing field 'items' in raw block".to_string())?;
-                let style = value.data.style.ok_or("Missing field 'style' in raw block".to_string())?;
+                let items = value
+                    .data
+                    .items
+                    .ok_or("Missing field 'items' in raw block".to_string())?;
+                let style = value
+                    .data
+                    .style
+                    .ok_or("Missing field 'style' in raw block".to_string())?;
                 Ok(NewContentBlock {
                     id: value.id,
                     block_type: BlockType::Heading,
-                    data: BlockData::List {style, items},
+                    data: BlockData::List { style, items },
                     css_classes,
                     revision_id: None,
                 })
-            },
+            }
             "quote" => {
-                let text = value.data.text.ok_or("Missing field 'text' in quote block".to_string())?;
-                let caption = value.data.caption.ok_or("Missing field 'caption' in quote block".to_string())?;
-                let alignment = value.data.alignment.ok_or("Missing field 'alignment' in quote block".to_string())?;
+                let text = value
+                    .data
+                    .text
+                    .ok_or("Missing field 'text' in quote block".to_string())?;
+                let caption = value
+                    .data
+                    .caption
+                    .ok_or("Missing field 'caption' in quote block".to_string())?;
+                let alignment = value
+                    .data
+                    .alignment
+                    .ok_or("Missing field 'alignment' in quote block".to_string())?;
                 Ok(NewContentBlock {
                     id: value.id,
                     block_type: BlockType::Heading,
-                    data: BlockData::Quote {text, caption, alignment},
+                    data: BlockData::Quote {
+                        text,
+                        caption,
+                        alignment,
+                    },
                     css_classes,
                     revision_id: None,
                 })
-            },
+            }
             "image" => {
-                let file = value.data.file.ok_or("Missing field 'file' in image block".to_string())?;
+                let file = value
+                    .data
+                    .file
+                    .ok_or("Missing field 'file' in image block".to_string())?;
                 let caption = value.data.caption;
                 let with_border = value.data.withBorder.unwrap_or(false);
                 let with_background = value.data.withBackground.unwrap_or(false);
@@ -1092,7 +1143,13 @@ impl TryFrom<NewContentBlockEditorJSFormat> for NewContentBlock{
                 Ok(NewContentBlock {
                     id: value.id,
                     block_type: BlockType::Heading,
-                    data: BlockData::Image {file, caption, with_border, with_background, stretched},
+                    data: BlockData::Image {
+                        file,
+                        caption,
+                        with_border,
+                        with_background,
+                        stretched,
+                    },
                     css_classes,
                     revision_id: None,
                 })
@@ -1102,155 +1159,172 @@ impl TryFrom<NewContentBlockEditorJSFormat> for NewContentBlock{
     }
 }
 
-impl From<NewContentBlock> for NewContentBlockEditorJSFormat{
-
+impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
     fn from(value: NewContentBlock) -> Self {
-        let mut tunes = BlockTuneEditorJSFormat{
+        let mut tunes = BlockTuneEditorJSFormat {
             block_style_tune: None,
         };
-        if value.css_classes.len() > 0{
-            tunes.block_style_tune = Some(BlockStyleTuneEditorJS{
+        if value.css_classes.len() > 0 {
+            tunes.block_style_tune = Some(BlockStyleTuneEditorJS {
                 css_classes: value.css_classes.join(" "),
             });
         }
-        match value.data{
-            BlockData::Paragraph { text } => {
-                NewContentBlockEditorJSFormat {
-                    id: value.id,
-                    block_type: "paragraph".to_string(),
-                    data: BlockDataEditorJSFormat {
-                        text: Some(text),
-                        level: None,
-                        items: None,
-                        html: None,
-                        caption: None,
-                        alignment: None,
-                        style: None,
-                        file: None,
-                        withBorder: None,
-                        withBackground: None,
-                        stretched: None,
-                    },
-                    tunes,
-                }
+        match value.data {
+            BlockData::Paragraph { text } => NewContentBlockEditorJSFormat {
+                id: value.id,
+                block_type: "paragraph".to_string(),
+                data: BlockDataEditorJSFormat {
+                    text: Some(text),
+                    level: None,
+                    items: None,
+                    html: None,
+                    caption: None,
+                    alignment: None,
+                    style: None,
+                    file: None,
+                    withBorder: None,
+                    withBackground: None,
+                    stretched: None,
+                },
+                tunes,
             },
-            BlockData::Heading { text, level } => {
-                NewContentBlockEditorJSFormat {
-                    id: value.id,
-                    block_type: "header".to_string(),
-                    data: BlockDataEditorJSFormat {
-                        text: Some(text),
-                        level: Some(level),
-                        items: None,
-                        html: None,
-                        caption: None,
-                        alignment: None,
-                        style: None,
-                        file: None,
-                        withBorder: None,
-                        withBackground: None,
-                        stretched: None,
-                    },
-                    tunes,
-                }
+            BlockData::Heading { text, level } => NewContentBlockEditorJSFormat {
+                id: value.id,
+                block_type: "header".to_string(),
+                data: BlockDataEditorJSFormat {
+                    text: Some(text),
+                    level: Some(level),
+                    items: None,
+                    html: None,
+                    caption: None,
+                    alignment: None,
+                    style: None,
+                    file: None,
+                    withBorder: None,
+                    withBackground: None,
+                    stretched: None,
+                },
+                tunes,
             },
-            BlockData::Raw {html} => {
-                NewContentBlockEditorJSFormat {
-                    id: value.id,
-                    block_type: "raw".to_string(),
-                    data: BlockDataEditorJSFormat {
-                        text: None,
-                        level: None,
-                        items: None,
-                        html: Some(html),
-                        caption: None,
-                        alignment: None,
-                        style: None,
-                        file: None,
-                        withBorder: None,
-                        withBackground: None,
-                        stretched: None,
-                    },
-                    tunes,
-                }
+            BlockData::Raw { html } => NewContentBlockEditorJSFormat {
+                id: value.id,
+                block_type: "raw".to_string(),
+                data: BlockDataEditorJSFormat {
+                    text: None,
+                    level: None,
+                    items: None,
+                    html: Some(html),
+                    caption: None,
+                    alignment: None,
+                    style: None,
+                    file: None,
+                    withBorder: None,
+                    withBackground: None,
+                    stretched: None,
+                },
+                tunes,
             },
-            BlockData::List {items, style} => {
-                NewContentBlockEditorJSFormat {
-                    id: value.id,
-                    block_type: "list".to_string(),
-                    data: BlockDataEditorJSFormat {
-                        text: None,
-                        level: None,
-                        items: Some(items),
-                        html: None,
-                        caption: None,
-                        alignment: None,
-                        style: Some(style),
-                        file: None,
-                        withBorder: None,
-                        withBackground: None,
-                        stretched: None,
-                    },
-                    tunes,
-                }
+            BlockData::List { items, style } => NewContentBlockEditorJSFormat {
+                id: value.id,
+                block_type: "list".to_string(),
+                data: BlockDataEditorJSFormat {
+                    text: None,
+                    level: None,
+                    items: Some(items),
+                    html: None,
+                    caption: None,
+                    alignment: None,
+                    style: Some(style),
+                    file: None,
+                    withBorder: None,
+                    withBackground: None,
+                    stretched: None,
+                },
+                tunes,
             },
-            BlockData::Quote {text, caption, alignment} => {
-                NewContentBlockEditorJSFormat {
-                    id: value.id,
-                    block_type: "quote".to_string(),
-                    data: BlockDataEditorJSFormat {
-                        text: Some(text),
-                        level: None,
-                        items: None,
-                        html: None,
-                        caption: Some(caption),
-                        alignment: Some(alignment),
-                        style: None,
-                        file: None,
-                        withBorder: None,
-                        withBackground: None,
-                        stretched: None,
-                    },
-                    tunes,
-                }
+            BlockData::Quote {
+                text,
+                caption,
+                alignment,
+            } => NewContentBlockEditorJSFormat {
+                id: value.id,
+                block_type: "quote".to_string(),
+                data: BlockDataEditorJSFormat {
+                    text: Some(text),
+                    level: None,
+                    items: None,
+                    html: None,
+                    caption: Some(caption),
+                    alignment: Some(alignment),
+                    style: None,
+                    file: None,
+                    withBorder: None,
+                    withBackground: None,
+                    stretched: None,
+                },
+                tunes,
             },
-            BlockData::Image {file, caption, with_border, with_background, stretched} => {
-                NewContentBlockEditorJSFormat {
-                    id: value.id,
-                    block_type: "image".to_string(),
-                    data: BlockDataEditorJSFormat {
-                        text: None,
-                        level: None,
-                        items: None,
-                        html: None,
-                        caption,
-                        alignment: None,
-                        style: None,
-                        file: Some(file),
-                        withBorder: Some(with_border),
-                        withBackground: Some(with_background),
-                        stretched: Some(stretched),
-                    },
-                    tunes,
-                }
-            }
+            BlockData::Image {
+                file,
+                caption,
+                with_border,
+                with_background,
+                stretched,
+            } => NewContentBlockEditorJSFormat {
+                id: value.id,
+                block_type: "image".to_string(),
+                data: BlockDataEditorJSFormat {
+                    text: None,
+                    level: None,
+                    items: None,
+                    html: None,
+                    caption,
+                    alignment: None,
+                    style: None,
+                    file: Some(file),
+                    withBorder: Some(with_border),
+                    withBackground: Some(with_background),
+                    stretched: Some(stretched),
+                },
+                tunes,
+            },
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone, PartialEq)]
-pub enum BlockData{
-    Paragraph{text: String},
-    Heading{text: String, level: u8},
-    Raw{html: String},
-    List{style: String, items: Vec<String>},
-    Quote{text: String, caption: String, alignment: String},
-    Image{file: UploadedImage, caption: Option<String>, with_border: bool, with_background: bool, stretched: bool},
+pub enum BlockData {
+    Paragraph {
+        text: String,
+    },
+    Heading {
+        text: String,
+        level: u8,
+    },
+    Raw {
+        html: String,
+    },
+    List {
+        style: String,
+        items: Vec<String>,
+    },
+    Quote {
+        text: String,
+        caption: String,
+        alignment: String,
+    },
+    Image {
+        file: UploadedImage,
+        caption: Option<String>,
+        with_border: bool,
+        with_background: bool,
+        stretched: bool,
+    },
 }
 
 /// Test function to test the deserialization of a content block
 #[test]
-pub fn test_deserialize_and_serialize_content_block(){
+pub fn test_deserialize_and_serialize_content_block() {
     let json = r#"{
         "id": "123",
         "type": "header",
@@ -1267,11 +1341,17 @@ pub fn test_deserialize_and_serialize_content_block(){
     let content_block: NewContentBlockEditorJSFormat = serde_json::from_str(json).unwrap();
     let content_block: NewContentBlock = content_block.try_into().unwrap();
     let new: NewContentBlockEditorJSFormat = content_block.try_into().unwrap();
-    assert_eq!(json.parse::<serde_json::Value>().unwrap(), serde_json::to_string(&new).unwrap().parse::<serde_json::Value>().unwrap());
+    assert_eq!(
+        json.parse::<serde_json::Value>().unwrap(),
+        serde_json::to_string(&new)
+            .unwrap()
+            .parse::<serde_json::Value>()
+            .unwrap()
+    );
 }
 
+pub mod api;
+pub mod bibliography_editor;
 pub mod create;
 pub mod editor;
 pub mod list;
-pub mod api;
-pub mod bibliography_editor;

@@ -35,16 +35,16 @@
 </div>
 <div class="sidebar-full-contents-panel-contents">
     {{#each sections}}
-    <div class="sidebar-contents-section">
-        {{Section.metadata.title}}
-    </div>
-    <div class="sidebar-contents-section">
-        Test234
-        <div class="sidebar-contents-section-children">
-            <div class="sidebar-contents-section">
-                Test3451
+        <div class="sidebar-contents-section">
+            {{Section.metadata.title}}
+        </div>
+        <div class="sidebar-contents-section">
+            Test23412
+            <div class="sidebar-contents-section-children">
+                <div class="sidebar-contents-section">
+                    Test3451
+                </div>
             </div>
         </div>
-    </div>
     {{/each}}
 </div>

@@ -1,5 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::projects::api::get::APIProjectData;
+use crate::projects::api::Patch;
+use crate::projects::{PersonUuidOrString, ProjectMetadata, ProjectMetadataV4, SectionOrTocV5};
+use crate::session::session_guard::Session;
+use crate::settings::Settings;
+use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::{ProjectData, ProjectStorage};
+use crate::storage::{BibEntryV2, ProjectTemplateV2};
+use crate::utils::api_helpers::{APIResponse, APIResult};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
 use language::Language;
@@ -7,20 +14,13 @@ use rocket::form::validate::Contains;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
-use crate::projects::{PersonUuidOrString, ProjectMetadata, ProjectMetadataV4, SectionOrTocV5};
-use crate::projects::api::get::APIProjectData;
-use crate::projects::api::Patch;
-use crate::session::session_guard::Session;
-use crate::settings::Settings;
-use crate::storage::{BibEntryV2, ProjectTemplateV2};
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::utils::api_helpers::{APIResponse, APIResult};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PatchProjectData{
+pub struct PatchProjectData {
     /// Optionally patched Project Title
     pub name: Option<String>,
     /// Optionally patched Project Description
@@ -52,7 +52,7 @@ pub struct PatchProjectData{
     pub bibliography: Option<HashMap<String, BibEntryV2>>,
 }
 
-impl Patch<PatchProjectData, ProjectData> for ProjectData{
+impl Patch<PatchProjectData, ProjectData> for ProjectData {
     fn patch(&mut self, patch: PatchProjectData) -> ProjectData {
         let mut new = self.clone();
 
@@ -311,35 +311,35 @@ pub struct PatchProjectMetadata {
     pub publisher: Option<Option<String>>,
 }
 
-impl Patch<PatchProjectSettings, ProjectSettingsV5> for ProjectSettingsV5{
+impl Patch<PatchProjectSettings, ProjectSettingsV5> for ProjectSettingsV5 {
     fn patch(&mut self, patch: PatchProjectSettings) -> ProjectSettingsV5 {
         let mut new = self.clone();
 
-        if let Some(toc_enabled) = patch.toc_enabled{
+        if let Some(toc_enabled) = patch.toc_enabled {
             new.toc_enabled = toc_enabled;
         }
 
-        if let Some(csl_style) = patch.csl_style{
+        if let Some(csl_style) = patch.csl_style {
             new.csl_style = csl_style;
         }
 
-        if let Some(csl_language_code) = patch.csl_language_code{
+        if let Some(csl_language_code) = patch.csl_language_code {
             new.csl_language_code = csl_language_code;
         }
 
-        if let Some(metadata_page_additional_html) = patch.metadata_page_additional_html{
+        if let Some(metadata_page_additional_html) = patch.metadata_page_additional_html {
             new.metadata_page_additional_html = metadata_page_additional_html;
         }
 
-        if let Some(cover_image_path) = patch.cover_image_path{
+        if let Some(cover_image_path) = patch.cover_image_path {
             new.cover_image_path = cover_image_path;
         }
 
-        if let Some(backcover_image_path) = patch.backcover_image_path{
+        if let Some(backcover_image_path) = patch.backcover_image_path {
             new.backcover_image_path = backcover_image_path;
         }
 
-        if let Some(add_soft_hyphens) = patch.add_soft_hyphens{
+        if let Some(add_soft_hyphens) = patch.add_soft_hyphens {
             new.add_soft_hyphens = add_soft_hyphens;
         }
 
@@ -347,7 +347,7 @@ impl Patch<PatchProjectSettings, ProjectSettingsV5> for ProjectSettingsV5{
     }
 }
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
-pub struct PatchProjectSettings{
+pub struct PatchProjectSettings {
     pub toc_enabled: Option<bool>,
     #[serde(
         default,
@@ -391,8 +391,11 @@ pub async fn patch_project(
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
     data_storage: &State<Arc<DataStorage>>,
-) -> APIResult<()>{
-    let project = project_storage.get_project(&uuid::Uuid::parse_str(project_id)?, settings).await?.clone();
+) -> APIResult<()> {
+    let project = project_storage
+        .get_project(&uuid::Uuid::parse_str(project_id)?, settings)
+        .await?
+        .clone();
 
     let mut project_cpy = project.read().unwrap().clone();
     project_cpy = project_cpy.patch(patch.into_inner());

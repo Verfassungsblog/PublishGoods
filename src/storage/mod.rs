@@ -1,54 +1,62 @@
-pub mod project_storage;
 pub mod data_storage;
+pub mod project_storage;
 
-use hayagriva::types::{Date, Duration, DurationRange, FormatString, MaybeTyped, Numeric, NumericDelimiter, NumericValue, QualifiedUrl, SerialNumber};
+use crate::settings::Settings;
+use argon2::password_hash::rand_core::OsRng;
+use argon2::{Argon2, PasswordHasher};
+use bincode::{Decode, Encode};
+use hayagriva::types::EntryType;
+use hayagriva::types::{
+    Date, Duration, DurationRange, FormatString, MaybeTyped, Numeric, NumericDelimiter,
+    NumericValue, QualifiedUrl, SerialNumber,
+};
+use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::SystemTime;
-use argon2::{Argon2, PasswordHasher};
-use argon2::password_hash::rand_core::OsRng;
-use serde::{Deserialize, Serialize};
-use bincode::{Encode, Decode};
-use hayagriva::types::EntryType;
-use crate::settings::Settings;
-use reqwest::Url;
 
-use unic_langid_impl::LanguageIdentifier;
-use vb_exchange::export_formats::ExportFormat;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
+use unic_langid_impl::LanguageIdentifier;
+use vb_exchange::export_formats::ExportFormat;
 
 /// Trait for data structures that need to handle multiple file locks
 ///
 /// Struct needs to implement [MultipleFileLocks::get_file_lock_entry]
 #[async_trait]
-pub trait MultipleFileLocks{
+pub trait MultipleFileLocks {
     /// Returns an [AtomicBool] that is used as file lock for the given uuid
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool>;
     /// Creates a file lock for the given uuid
     fn create_file_lock(&self, uuid: &uuid::Uuid) -> Result<(), ()> {
-        if self.get_file_lock_entry(uuid).load(std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .get_file_lock_entry(uuid)
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             // file already locked
             Err(())
-        }else{
+        } else {
             // file not locked, lock it
-            self.get_file_lock_entry(uuid).store(true, std::sync::atomic::Ordering::SeqCst);
+            self.get_file_lock_entry(uuid)
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }
-    fn remove_file_lock(&self, uuid: &uuid::Uuid){
-        self.get_file_lock_entry(uuid).store(false, std::sync::atomic::Ordering::SeqCst);
+    fn remove_file_lock(&self, uuid: &uuid::Uuid) {
+        self.get_file_lock_entry(uuid)
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
-    async fn wait_for_file_lock(&self, uuid: &uuid::Uuid, settings: &Settings) -> Result<(), ()>{
+    async fn wait_for_file_lock(&self, uuid: &uuid::Uuid, settings: &Settings) -> Result<(), ()> {
         let mut time_waited = 0;
         while self.create_file_lock(uuid).is_err() {
             time_waited += 10;
             if time_waited > settings.file_lock_timeout {
                 error!("error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.", time_waited);
-                return Err(())
+                return Err(());
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -62,28 +70,33 @@ pub trait MultipleFileLocks{
 pub trait SingleFileLock {
     fn get_file_lock(&self) -> &AtomicBool;
 
-    fn create_file_lock(& self) -> Result<(), ()> {
-        if self.get_file_lock().load(std::sync::atomic::Ordering::SeqCst) {
+    fn create_file_lock(&self) -> Result<(), ()> {
+        if self
+            .get_file_lock()
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             // file already locked
             Err(())
         } else {
             // file not locked, lock it
-            self.get_file_lock().store(true, std::sync::atomic::Ordering::SeqCst);
+            self.get_file_lock()
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }
 
-    fn remove_file_lock(&self){
-        self.get_file_lock().store(false, std::sync::atomic::Ordering::SeqCst);
+    fn remove_file_lock(&self) {
+        self.get_file_lock()
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
-    async fn wait_for_file_lock(&self, settings: &Settings) -> Result<(), ()>{
+    async fn wait_for_file_lock(&self, settings: &Settings) -> Result<(), ()> {
         let mut time_waited = 0;
         while self.create_file_lock().is_err() {
             time_waited += 10;
             if time_waited > settings.file_lock_timeout {
                 eprintln!("error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.", time_waited);
-                return Err(())
+                return Err(());
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -93,14 +106,11 @@ pub trait SingleFileLock {
     }
 }
 
-
 #[derive(serde::Serialize)]
-pub struct ProjectListEntry{
+pub struct ProjectListEntry {
     id: uuid::Uuid,
-    name: String
+    name: String,
 }
-
-
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MyPersonsWithRoles {
@@ -110,19 +120,27 @@ pub struct MyPersonsWithRoles {
     pub role: MyPersonRole,
 }
 
-impl From<hayagriva::types::PersonsWithRoles> for MyPersonsWithRoles{
+impl From<hayagriva::types::PersonsWithRoles> for MyPersonsWithRoles {
     fn from(value: hayagriva::types::PersonsWithRoles) -> Self {
-        MyPersonsWithRoles{
-            names: value.names.iter().map(|p| <hayagriva::types::Person as Clone>::clone(&(*p)).into()).collect(),
+        MyPersonsWithRoles {
+            names: value
+                .names
+                .iter()
+                .map(|p| <hayagriva::types::Person as Clone>::clone(&(*p)).into())
+                .collect(),
             role: value.role.into(),
         }
     }
 }
 
-impl From<MyPersonsWithRoles> for hayagriva::types::PersonsWithRoles{
+impl From<MyPersonsWithRoles> for hayagriva::types::PersonsWithRoles {
     fn from(value: MyPersonsWithRoles) -> Self {
-        hayagriva::types::PersonsWithRoles{
-            names: value.names.iter().map(|p| <MyPerson as Clone>::clone(&(*p)).into()).collect(),
+        hayagriva::types::PersonsWithRoles {
+            names: value
+                .names
+                .iter()
+                .map(|p| <MyPerson as Clone>::clone(&(*p)).into())
+                .collect(),
             role: value.role.into(),
         }
     }
@@ -175,7 +193,7 @@ pub enum MyPersonRole {
     Unknown(String),
 }
 
-impl From<MyPersonRole> for hayagriva::types::PersonRole{
+impl From<MyPersonRole> for hayagriva::types::PersonRole {
     fn from(value: MyPersonRole) -> Self {
         match value {
             MyPersonRole::Translator => hayagriva::types::PersonRole::Translator,
@@ -184,54 +202,53 @@ impl From<MyPersonRole> for hayagriva::types::PersonRole{
             MyPersonRole::Introduction => hayagriva::types::PersonRole::Introduction,
             MyPersonRole::Annotator => hayagriva::types::PersonRole::Annotator,
             MyPersonRole::Commentator => hayagriva::types::PersonRole::Commentator,
-            MyPersonRole::Holder =>hayagriva::types::PersonRole::Holder,
-            MyPersonRole::Compiler =>hayagriva::types::PersonRole::Compiler,
-            MyPersonRole::Founder =>hayagriva::types::PersonRole::Founder,
-            MyPersonRole::Collaborator =>hayagriva::types::PersonRole::Collaborator,
-            MyPersonRole::Organizer =>hayagriva::types::PersonRole::Organizer,
-            MyPersonRole::CastMember =>hayagriva::types::PersonRole::CastMember,
-            MyPersonRole::Composer =>hayagriva::types::PersonRole::Composer,
-            MyPersonRole::Producer =>hayagriva::types::PersonRole::Producer,
-            MyPersonRole::ExecutiveProducer =>hayagriva::types::PersonRole::ExecutiveProducer,
-            MyPersonRole::Writer =>hayagriva::types::PersonRole::Writer,
-            MyPersonRole::Cinematography =>hayagriva::types::PersonRole::Cinematography,
-            MyPersonRole::Director =>hayagriva::types::PersonRole::Director,
-            MyPersonRole::Illustrator =>hayagriva::types::PersonRole::Illustrator,
-            MyPersonRole::Narrator =>hayagriva::types::PersonRole::Narrator,
-            MyPersonRole::Unknown(s) =>hayagriva::types::PersonRole::Unknown(s),
+            MyPersonRole::Holder => hayagriva::types::PersonRole::Holder,
+            MyPersonRole::Compiler => hayagriva::types::PersonRole::Compiler,
+            MyPersonRole::Founder => hayagriva::types::PersonRole::Founder,
+            MyPersonRole::Collaborator => hayagriva::types::PersonRole::Collaborator,
+            MyPersonRole::Organizer => hayagriva::types::PersonRole::Organizer,
+            MyPersonRole::CastMember => hayagriva::types::PersonRole::CastMember,
+            MyPersonRole::Composer => hayagriva::types::PersonRole::Composer,
+            MyPersonRole::Producer => hayagriva::types::PersonRole::Producer,
+            MyPersonRole::ExecutiveProducer => hayagriva::types::PersonRole::ExecutiveProducer,
+            MyPersonRole::Writer => hayagriva::types::PersonRole::Writer,
+            MyPersonRole::Cinematography => hayagriva::types::PersonRole::Cinematography,
+            MyPersonRole::Director => hayagriva::types::PersonRole::Director,
+            MyPersonRole::Illustrator => hayagriva::types::PersonRole::Illustrator,
+            MyPersonRole::Narrator => hayagriva::types::PersonRole::Narrator,
+            MyPersonRole::Unknown(s) => hayagriva::types::PersonRole::Unknown(s),
         }
     }
 }
 
-impl From<hayagriva::types::PersonRole> for MyPersonRole{
+impl From<hayagriva::types::PersonRole> for MyPersonRole {
     fn from(value: hayagriva::types::PersonRole) -> Self {
         match value {
-           hayagriva::types::PersonRole::Translator => MyPersonRole::Translator,
-           hayagriva::types::PersonRole::Afterword => MyPersonRole::Afterword,
-           hayagriva::types::PersonRole::Foreword => MyPersonRole::Foreword,
-           hayagriva::types::PersonRole::Introduction => MyPersonRole::Introduction,
-           hayagriva::types::PersonRole::Annotator => MyPersonRole::Annotator,
-           hayagriva::types::PersonRole::Commentator => MyPersonRole::Commentator,
-           hayagriva::types::PersonRole::Holder => MyPersonRole::Holder,
-           hayagriva::types::PersonRole::Compiler => MyPersonRole::Compiler,
-           hayagriva::types::PersonRole::Founder => MyPersonRole::Founder,
-           hayagriva::types::PersonRole::Collaborator => MyPersonRole::Collaborator,
-           hayagriva::types::PersonRole::Organizer => MyPersonRole::Organizer,
-           hayagriva::types::PersonRole::CastMember => MyPersonRole::CastMember,
-           hayagriva::types::PersonRole::Composer => MyPersonRole::Composer,
-           hayagriva::types::PersonRole::Producer => MyPersonRole::Producer,
-           hayagriva::types::PersonRole::ExecutiveProducer => MyPersonRole::ExecutiveProducer,
-           hayagriva::types::PersonRole::Writer => MyPersonRole::Writer,
-           hayagriva::types::PersonRole::Cinematography => MyPersonRole::Cinematography,
-           hayagriva::types::PersonRole::Director => MyPersonRole::Director,
-           hayagriva::types::PersonRole::Illustrator => MyPersonRole::Illustrator,
-           hayagriva::types::PersonRole::Narrator => MyPersonRole::Narrator,
-           hayagriva::types::PersonRole::Unknown(s) => MyPersonRole::Unknown(s),
+            hayagriva::types::PersonRole::Translator => MyPersonRole::Translator,
+            hayagriva::types::PersonRole::Afterword => MyPersonRole::Afterword,
+            hayagriva::types::PersonRole::Foreword => MyPersonRole::Foreword,
+            hayagriva::types::PersonRole::Introduction => MyPersonRole::Introduction,
+            hayagriva::types::PersonRole::Annotator => MyPersonRole::Annotator,
+            hayagriva::types::PersonRole::Commentator => MyPersonRole::Commentator,
+            hayagriva::types::PersonRole::Holder => MyPersonRole::Holder,
+            hayagriva::types::PersonRole::Compiler => MyPersonRole::Compiler,
+            hayagriva::types::PersonRole::Founder => MyPersonRole::Founder,
+            hayagriva::types::PersonRole::Collaborator => MyPersonRole::Collaborator,
+            hayagriva::types::PersonRole::Organizer => MyPersonRole::Organizer,
+            hayagriva::types::PersonRole::CastMember => MyPersonRole::CastMember,
+            hayagriva::types::PersonRole::Composer => MyPersonRole::Composer,
+            hayagriva::types::PersonRole::Producer => MyPersonRole::Producer,
+            hayagriva::types::PersonRole::ExecutiveProducer => MyPersonRole::ExecutiveProducer,
+            hayagriva::types::PersonRole::Writer => MyPersonRole::Writer,
+            hayagriva::types::PersonRole::Cinematography => MyPersonRole::Cinematography,
+            hayagriva::types::PersonRole::Director => MyPersonRole::Director,
+            hayagriva::types::PersonRole::Illustrator => MyPersonRole::Illustrator,
+            hayagriva::types::PersonRole::Narrator => MyPersonRole::Narrator,
+            hayagriva::types::PersonRole::Unknown(s) => MyPersonRole::Unknown(s),
             _ => MyPersonRole::Unknown("".to_string()),
         }
     }
 }
-
 
 /// Same as [MaybeTyped], but without serde untagged, because Bincode doesn't support this
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, Eq, Hash)]
@@ -260,8 +277,8 @@ impl<T> From<hayagriva::types::MaybeTyped<T>> for MyMaybeTyped<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, )]
-pub struct MyPerson{
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MyPerson {
     pub name: String,
     /// The given name / forename.
     pub given_name: Option<String>,
@@ -273,9 +290,9 @@ pub struct MyPerson{
     pub alias: Option<String>,
 }
 
-impl From<hayagriva::types::Person> for MyPerson{
+impl From<hayagriva::types::Person> for MyPerson {
     fn from(value: hayagriva::types::Person) -> Self {
-        MyPerson{
+        MyPerson {
             name: value.name,
             given_name: value.given_name,
             prefix: value.prefix,
@@ -285,9 +302,9 @@ impl From<hayagriva::types::Person> for MyPerson{
     }
 }
 
-impl From<MyPerson> for hayagriva::types::Person{
+impl From<MyPerson> for hayagriva::types::Person {
     fn from(value: MyPerson) -> Self {
-        hayagriva::types::Person{
+        hayagriva::types::Person {
             name: value.name,
             given_name: value.given_name,
             prefix: value.prefix,
@@ -296,7 +313,6 @@ impl From<MyPerson> for hayagriva::types::Person{
         }
     }
 }
-
 
 /// Struct similar to [hayagriva::Entry], but without special serde annotations, since Bincode doesn't support these
 /// For convenience, the struct implements [From] and [Into] for [hayagriva::Entry] and reverse
@@ -424,9 +440,9 @@ pub struct BibEntryV2 {
     pub parents: Vec<BibEntryV2>,
 }
 
-impl From<OldBibEntry> for BibEntryV2{
-    fn from(value: OldBibEntry) -> Self{
-        BibEntryV2{
+impl From<OldBibEntry> for BibEntryV2 {
+    fn from(value: OldBibEntry) -> Self {
+        BibEntryV2 {
             key: value.key,
             entry_type: value.entry_type,
             title: value.title,
@@ -462,124 +478,136 @@ impl From<OldBibEntry> for BibEntryV2{
 
 impl From<&hayagriva::Entry> for BibEntryV2 {
     fn from(value: &hayagriva::Entry) -> Self {
-        let title = match value.title(){
+        let title = match value.title() {
             Some(title) => Some(title.clone().into()),
             None => None,
         };
-        let publisher = match value.publisher(){
+        let publisher = match value.publisher() {
             Some(publisher) => Some(publisher.clone().into()),
             None => None,
         };
-        let location = match value.location(){
+        let location = match value.location() {
             Some(location) => Some(location.clone().into()),
             None => None,
         };
-        let organization = match value.organization(){
+        let organization = match value.organization() {
             Some(organization) => Some(organization.clone().into()),
             None => None,
         };
-        let archive = match value.archive(){
+        let archive = match value.archive() {
             Some(archive) => Some(archive.clone().into()),
             None => None,
         };
-        let archive_location = match value.archive_location(){
+        let archive_location = match value.archive_location() {
             Some(archive_location) => Some(archive_location.clone().into()),
             None => None,
         };
-        let call_number = match value.call_number(){
+        let call_number = match value.call_number() {
             Some(call_number) => Some(call_number.clone().into()),
             None => None,
         };
-        let note = match value.note(){
+        let note = match value.note() {
             Some(note) => Some(note.clone().into()),
             None => None,
         };
-        let abstract_ = match value.abstract_(){
+        let abstract_ = match value.abstract_() {
             Some(abstract_) => Some(abstract_.clone().into()),
             None => None,
         };
-        let annote = match value.annote(){
+        let annote = match value.annote() {
             Some(annote) => Some(annote.clone().into()),
             None => None,
         };
-        let genre = match value.genre(){
+        let genre = match value.genre() {
             Some(genre) => Some(genre.clone().into()),
             None => None,
         };
-        let authors = match value.authors(){
-            Some(authors) => authors.iter().map(|x| <hayagriva::types::Person as Clone>::clone(&(*x)).into()).collect(),
+        let authors = match value.authors() {
+            Some(authors) => authors
+                .iter()
+                .map(|x| <hayagriva::types::Person as Clone>::clone(&(*x)).into())
+                .collect(),
             None => vec![],
         };
-        let editors = match value.editors(){
-            Some(editors) => editors.iter().map(|x| <hayagriva::types::Person as Clone>::clone(&(*x)).into()).collect(),
+        let editors = match value.editors() {
+            Some(editors) => editors
+                .iter()
+                .map(|x| <hayagriva::types::Person as Clone>::clone(&(*x)).into())
+                .collect(),
             None => vec![],
         };
 
-        let serial_numbers = match value.serial_number(){
+        let serial_numbers = match value.serial_number() {
             Some(serial_numbers) => Some(serial_numbers.0.clone()),
             None => None,
         };
 
-        let issue= match value.issue(){
+        let issue = match value.issue() {
             Some(issue) => Some(issue.clone().into()),
             None => None,
         };
-        let volume = match value.volume(){
+        let volume = match value.volume() {
             Some(volume) => Some(volume.clone().into()),
             None => None,
         };
-        let edition = match value.edition(){
+        let edition = match value.edition() {
             Some(edition) => Some(edition.clone().into()),
             None => None,
         };
-        let page_range = match value.page_range(){
+        let page_range = match value.page_range() {
             Some(page_range) => Some(page_range.clone().into()),
             None => None,
         };
-        let volume_total = match value.volume_total(){
+        let volume_total = match value.volume_total() {
             Some(volume_total) => Some(volume_total.clone().into()),
             None => None,
         };
-        let page_total = match value.page_total(){
+        let page_total = match value.page_total() {
             Some(page_total) => Some(page_total.clone().into()),
             None => None,
         };
-        let url = match value.url(){
+        let url = match value.url() {
             Some(url) => Some(url.clone().into()),
             None => None,
         };
-        let date = match value.date(){
+        let date = match value.date() {
             Some(date) => Some(date.clone().into()),
             None => None,
         };
-        let language = match value.language(){
+        let language = match value.language() {
             Some(language) => Some(language.to_string()),
             None => None,
         };
-        let affiliated = match value.affiliated(){
-            Some(affiliated) => {
-                affiliated.iter().map(|x| <hayagriva::types::PersonsWithRoles as Clone>::clone(&(*x)).into()).collect()
-            },
+        let affiliated = match value.affiliated() {
+            Some(affiliated) => affiliated
+                .iter()
+                .map(|x| <hayagriva::types::PersonsWithRoles as Clone>::clone(&(*x)).into())
+                .collect(),
             None => vec![],
         };
-        let time_range = match value.time_range(){
-            Some(time_range) => {
-                match time_range {
-                    hayagriva::types::MaybeTyped::Typed(t) => Some(MyMaybeTyped::Typed(t.clone().into())),
-                    hayagriva::types::MaybeTyped::String(s) => Some(MyMaybeTyped::String(s.to_string())),
+        let time_range = match value.time_range() {
+            Some(time_range) => match time_range {
+                hayagriva::types::MaybeTyped::Typed(t) => {
+                    Some(MyMaybeTyped::Typed(t.clone().into()))
+                }
+                hayagriva::types::MaybeTyped::String(s) => {
+                    Some(MyMaybeTyped::String(s.to_string()))
                 }
             },
             None => None,
         };
-        let runtime = match value.runtime(){
+        let runtime = match value.runtime() {
             Some(runtime) => Some(runtime.clone().into()),
             None => None,
         };
 
         let parents_arr = value.parents();
         let mut parents = vec![];
-        if parents_arr.len() > 0{
-            parents = parents_arr.iter().map(|x| (&<hayagriva::Entry as Clone>::clone(&(*x))).into()).collect();
+        if parents_arr.len() > 0 {
+            parents = parents_arr
+                .iter()
+                .map(|x| (&<hayagriva::Entry as Clone>::clone(&(*x))).into())
+                .collect();
         }
         BibEntryV2 {
             key: value.key().to_string(),
@@ -615,16 +643,22 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
     }
 }
 
-impl From<BibEntryV2> for hayagriva::Entry{
+impl From<BibEntryV2> for hayagriva::Entry {
     fn from(value: BibEntryV2) -> Self {
         let mut entry = hayagriva::Entry::new(&value.key, value.entry_type);
 
-        if let Some(title) = value.title{
+        if let Some(title) = value.title {
             entry.set_title(title.into());
         }
 
         if value.authors.len() > 0 {
-            entry.set_authors(value.authors.iter().map(|x| <MyPerson as Clone>::clone(&(*x)).into()).collect())
+            entry.set_authors(
+                value
+                    .authors
+                    .iter()
+                    .map(|x| <MyPerson as Clone>::clone(&(*x)).into())
+                    .collect(),
+            )
         }
 
         if let Some(date) = value.date {
@@ -632,7 +666,13 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if value.editors.len() > 0 {
-            entry.set_editors(value.editors.iter().map(|x| <MyPerson as Clone>::clone(&(*x)).into()).collect());
+            entry.set_editors(
+                value
+                    .editors
+                    .iter()
+                    .map(|x| <MyPerson as Clone>::clone(&(*x)).into())
+                    .collect(),
+            );
         }
 
         if value.affiliated.len() > 0 {
@@ -652,7 +692,7 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if let Some(issue) = value.issue {
-            let nissue : MaybeTyped<Numeric> = match issue {
+            let nissue: MaybeTyped<Numeric> = match issue {
                 MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
             };
@@ -660,7 +700,7 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if let Some(volume) = value.volume {
-            let nvolume : MaybeTyped<Numeric> = match volume {
+            let nvolume: MaybeTyped<Numeric> = match volume {
                 MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
             };
@@ -672,7 +712,7 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if let Some(edition) = value.edition {
-            let nedition : MaybeTyped<Numeric> = match edition {
+            let nedition: MaybeTyped<Numeric> = match edition {
                 MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
             };
@@ -680,7 +720,7 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if let Some(page_range) = value.page_range {
-            let npage_range : MaybeTyped<Numeric> = match page_range {
+            let npage_range: MaybeTyped<Numeric> = match page_range {
                 MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
             };
@@ -692,7 +732,7 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if let Some(time_range) = value.time_range {
-            let ntime_range : MaybeTyped<DurationRange> = match time_range {
+            let ntime_range: MaybeTyped<DurationRange> = match time_range {
                 MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
             };
@@ -712,7 +752,10 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if let Some(language) = value.language {
-            entry.set_language(LanguageIdentifier::from_str(&language).unwrap_or(LanguageIdentifier::from_str("en-GB").unwrap()));
+            entry.set_language(
+                LanguageIdentifier::from_str(&language)
+                    .unwrap_or(LanguageIdentifier::from_str("en-GB").unwrap()),
+            );
         }
 
         if let Some(archive) = value.archive {
@@ -744,7 +787,16 @@ impl From<BibEntryV2> for hayagriva::Entry{
         }
 
         if value.parents.len() > 0 {
-            entry.set_parents(value.parents.iter().map(|x| <BibEntryV2 as Clone>::clone(&(*(&<BibEntryV2 as Clone>::clone(&(*x))))).into()).collect());
+            entry.set_parents(
+                value
+                    .parents
+                    .iter()
+                    .map(|x| {
+                        <BibEntryV2 as Clone>::clone(&(*(&<BibEntryV2 as Clone>::clone(&(*x)))))
+                            .into()
+                    })
+                    .collect(),
+            );
         }
 
         entry
@@ -787,8 +839,6 @@ impl BibEntryV2 {
     }
 }
 
-
-
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 /// Represents a user in the data storage.
 pub struct User {
@@ -821,7 +871,10 @@ impl User {
     /// A new `User` instance with the specified email, name, and password.
     pub fn new(email: String, name: String, password: String) -> Self {
         let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
-        let password_hash = Argon2::default().hash_password(&password.as_bytes(), &salt).unwrap().to_string();
+        let password_hash = Argon2::default()
+            .hash_password(&password.as_bytes(), &salt)
+            .unwrap()
+            .to_string();
 
         User {
             id: uuid::Uuid::new_v4(),
@@ -855,33 +908,47 @@ pub struct ProjectTemplateV2 {
     pub export_formats: HashMap<String, ExportFormat>,
 }
 
-
-pub async fn save_data_worker(data_storage: Arc<DataStorage>, project_storage: Arc<ProjectStorage>, settings: Settings){
+pub async fn save_data_worker(
+    data_storage: Arc<DataStorage>,
+    project_storage: Arc<ProjectStorage>,
+    settings: Settings,
+) {
     tokio::spawn(async move {
-        let mut last_save = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let mut last_save = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(settings.backup_to_file_interval)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(
+                settings.backup_to_file_interval,
+            ))
+            .await;
             // Save DataStorage to disk
             println!("Saving DataStorage to disk");
             data_storage.save_to_disk(&settings).await.unwrap();
 
             // Save ProjectStorage to disk
             let mut projects_to_save = Vec::new();
-            for project_id in project_storage.projects.read().unwrap().keys(){
-                if let Some(project) = project_storage.projects.read().unwrap().get(project_id){
-                    if let Some(project) = &project.data{
-                        if project.read().unwrap().last_interaction > last_save{
+            for project_id in project_storage.projects.read().unwrap().keys() {
+                if let Some(project) = project_storage.projects.read().unwrap().get(project_id) {
+                    if let Some(project) = &project.data {
+                        if project.read().unwrap().last_interaction > last_save {
                             projects_to_save.push(project_id.clone());
                         }
                     }
-
                 }
             }
-            for project_id in projects_to_save{
+            for project_id in projects_to_save {
                 println!("Saving changed project {} to disk", project_id);
-                project_storage.save_project_to_disk(&project_id, &settings).await.unwrap(); //TODO: shutdown if this fails to avoid data loss
+                project_storage
+                    .save_project_to_disk(&project_id, &settings)
+                    .await
+                    .unwrap(); //TODO: shutdown if this fails to avoid data loss
             }
-            last_save = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            last_save = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
             println!("Finished saving projects to disk");
         }
     });
@@ -889,7 +956,7 @@ pub async fn save_data_worker(data_storage: Arc<DataStorage>, project_storage: A
 
 impl From<MyFormatString> for FormatString {
     fn from(my_format_string: MyFormatString) -> Self {
-        match my_format_string.short{
+        match my_format_string.short {
             Some(short) => FormatString::with_short(my_format_string.value, short),
             None => FormatString::with_value(my_format_string.value),
         }
@@ -908,9 +975,8 @@ impl From<FormatString> for MyFormatString {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MyQualifiedUrl{
+pub struct MyQualifiedUrl {
     pub value: Url,
     pub visit_date: Option<MyDate>,
 }
@@ -951,7 +1017,7 @@ pub struct MyNumeric {
     pub suffix: Option<Box<String>>,
 }
 
-impl From<MaybeTyped<Numeric>> for MyMaybeTyped<MyNumeric>{
+impl From<MaybeTyped<Numeric>> for MyMaybeTyped<MyNumeric> {
     fn from(value: MaybeTyped<Numeric>) -> MyMaybeTyped<MyNumeric> {
         match value {
             MaybeTyped::Typed(n) => MyMaybeTyped::Typed(n.into()),
@@ -969,7 +1035,6 @@ impl From<Numeric> for MyNumeric {
         }
     }
 }
-
 
 impl From<MyNumeric> for Numeric {
     fn from(value: MyNumeric) -> Self {
@@ -993,7 +1058,11 @@ impl From<NumericValue> for MyNumericValue {
     fn from(value: NumericValue) -> Self {
         match value {
             NumericValue::Number(n) => MyNumericValue::Number(n),
-            NumericValue::Set(s) => MyNumericValue::Set(s.into_iter().map(|(n, d)| (n, d.map(|d| d.into()))).collect()),
+            NumericValue::Set(s) => MyNumericValue::Set(
+                s.into_iter()
+                    .map(|(n, d)| (n, d.map(|d| d.into())))
+                    .collect(),
+            ),
         }
     }
 }
@@ -1002,7 +1071,11 @@ impl From<MyNumericValue> for NumericValue {
     fn from(value: MyNumericValue) -> Self {
         match value {
             MyNumericValue::Number(n) => NumericValue::Number(n),
-            MyNumericValue::Set(s) => NumericValue::Set(s.into_iter().map(|(n, d)| (n, d.map(|d| d.into()))).collect()),
+            MyNumericValue::Set(s) => NumericValue::Set(
+                s.into_iter()
+                    .map(|(n, d)| (n, d.map(|d| d.into())))
+                    .collect(),
+            ),
         }
     }
 }
@@ -1053,11 +1126,11 @@ impl From<Date> for MyDate {
     fn from(value: Date) -> Self {
         // Convert 0-based to 1-based
         let month = match value.month {
-            Some(month) => Some(month+1),
+            Some(month) => Some(month + 1),
             None => None,
         };
         let day = match value.day {
-            Some(day) => Some(day+1),
+            Some(day) => Some(day + 1),
             None => None,
         };
         MyDate {
@@ -1077,9 +1150,9 @@ impl From<MyDate> for Date {
                 if month == 0 {
                     Some(month)
                 } else {
-                    Some(month-1)
+                    Some(month - 1)
                 }
-            },
+            }
             None => None,
         };
         let day = match value.day {
@@ -1089,7 +1162,7 @@ impl From<MyDate> for Date {
                 } else {
                     Some(day - 1)
                 }
-            },
+            }
             None => None,
         };
 
@@ -1103,7 +1176,7 @@ impl From<MyDate> for Date {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MyDurationRange{
+pub struct MyDurationRange {
     pub start: Duration,
     pub end: Duration,
 }

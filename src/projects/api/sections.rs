@@ -7,7 +7,7 @@ use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
 use crate::storage::project_storage::ProjectStorage;
-use crate::utils::api_helpers::{ApiErrorType, APIResult};
+use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use crate::utils::dedup::dedup_vec;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
@@ -166,8 +166,11 @@ pub async fn get_section(
                             "Couldn't extend author details, author_id {} not found.",
                             id
                         );
-                        return Err(ApiErrorType::ResourceNotFound(format!("author with id {}", id))
-                            .into());
+                        return Err(ApiErrorType::ResourceNotFound(format!(
+                            "author with id {}",
+                            id
+                        ))
+                        .into());
                     }
                 },
                 PersonUuidOrString::NameString(namestr) => {
@@ -192,8 +195,11 @@ pub async fn get_section(
                             "Couldn't extend author details, author_id {} not found.",
                             id
                         );
-                        return Err(ApiErrorType::ResourceNotFound(format!("editor with id {}", id))
-                            .into());
+                        return Err(ApiErrorType::ResourceNotFound(format!(
+                            "editor with id {}",
+                            id
+                        ))
+                        .into());
                     }
                 },
                 PersonUuidOrString::NameString(namestr) => {
@@ -271,7 +277,7 @@ pub async fn update_section(
 
     if path.len() == 0 {
         println!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into())
+        return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
     }
 
     let project_storage = Arc::clone(project_storage);
@@ -282,14 +288,15 @@ pub async fn update_section(
 
     let section = get_section_by_path_mut(&mut project, &path)?;
 
-
     let mut new_section_data = section.patch(section_patch.into_inner());
     // Check if new section data is valid
     // Check authors
     for author in new_section_data.metadata.authors.iter() {
         if let PersonUuidOrString::PersonUuid(id) = author {
             if !data_storage.person_exists(id) {
-                return Err(ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into());
+                return Err(
+                    ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into(),
+                );
             }
         }
     }
@@ -298,7 +305,9 @@ pub async fn update_section(
     for editor in new_section_data.metadata.editors.iter() {
         if let PersonUuidOrString::PersonUuid(id) = editor {
             if !data_storage.person_exists(id) {
-                return Err(ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into());
+                return Err(
+                    ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into(),
+                );
             }
         }
     }

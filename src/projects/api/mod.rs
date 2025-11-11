@@ -8,7 +8,7 @@ use crate::settings::Settings;
 use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
 use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
 use crate::storage::ProjectTemplateV2;
-use crate::utils::api_helpers::{ApiErrorType, APIResult};
+use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
 use language::Language;
@@ -21,9 +21,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use vb_exchange::projects::ProjectSettingsV5;
 
-pub mod sections;
 pub mod get;
 pub mod patch;
+pub mod sections;
 
 /// DEPRECATED!
 /// General return type of API Routes
@@ -100,9 +100,9 @@ pub async fn delete_project(
     match project_storage.delete_project(&project_id, settings).await {
         Ok(_) => DeprecatedApiResult::new_data(()),
         Err(e) => match e {
-            ProjectStorageError::ProjectNotFound => {
-                DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest("Project not Found".to_string()))
-            }
+            ProjectStorageError::ProjectNotFound => DeprecatedApiResult::new_error(
+                DeprecatedApiError::BadRequest("Project not Found".to_string()),
+            ),
             _ => DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError),
         },
     }
@@ -181,27 +181,19 @@ pub trait Patch<P, T> {
 }
 
 impl<P, T> Patch<Option<P>, Option<T>> for Option<T>
-where T: Patch<P, T> + Default + Clone{
+where
+    T: Patch<P, T> + Default + Clone,
+{
     fn patch(&mut self, patch: Option<P>) -> Option<T> {
-        match self{
-            None => {
-                match patch{
-                    None => None,
-                    Some(patch) => {
-                        Some(T::default().patch(patch))
-                    }
-                }
-            }
-            Some(mself) => {
-                match patch{
-                    Some(patch) => {
-                        Some(mself.patch(patch))
-                    },
-                    None => {
-                        Some(mself.clone())
-                    }
-                }
-            }
+        match self {
+            None => match patch {
+                None => None,
+                Some(patch) => Some(T::default().patch(patch)),
+            },
+            Some(mself) => match patch {
+                Some(patch) => Some(mself.patch(patch)),
+                None => Some(mself.clone()),
+            },
         }
     }
 }
@@ -238,7 +230,6 @@ pub async fn set_project_metadata(
 
     DeprecatedApiResult::new_data(())
 }
-
 
 /// GET /api/csl/styles
 /// Returns a list of all csl styles available
@@ -1324,9 +1315,10 @@ pub async fn set_content_blocks_in_section(
     let mut new_blocks: Vec<NewContentBlock> = vec![];
 
     for block in blocks.iter() {
-        let new_block: NewContentBlock = block.clone().try_into().map_err(|e| {
-            ApiErrorType::UnparsableParameter(e)
-        })?;
+        let new_block: NewContentBlock = block
+            .clone()
+            .try_into()
+            .map_err(|e| ApiErrorType::UnparsableParameter(e))?;
         new_blocks.push(new_block);
     }
 
@@ -1458,7 +1450,9 @@ pub async fn delete_project_upload(
         Err(e) => {
             eprintln!("Couldn't delete image: {}", e);
             match e.kind() {
-                std::io::ErrorKind::NotFound => DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+                std::io::ErrorKind::NotFound => {
+                    DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
+                }
                 _ => DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError),
             }
         }

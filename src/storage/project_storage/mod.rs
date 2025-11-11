@@ -1,13 +1,13 @@
+use crate::storage::project_storage::current::ProjectDataV8;
+use bincode::error::DecodeError;
+use bincode::{Decode, Encode};
+use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
-use bincode::{Decode, Encode};
-use bincode::error::DecodeError;
-use rocket::serde::{Deserialize, Serialize};
-use crate::storage::project_storage::current::ProjectDataV8;
 
-pub mod migration;
 pub mod current;
+pub mod migration;
 
 pub type ProjectData = ProjectDataV8;
 
@@ -22,14 +22,13 @@ pub struct ProjectStorage {
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
-pub struct ProjectStorageEntry{
+pub struct ProjectStorageEntry {
     pub name: String,
     pub data: Option<Arc<RwLock<ProjectData>>>,
 }
 
-
 #[derive(Debug)]
-pub enum ProjectStorageError{
+pub enum ProjectStorageError {
     BincodeDecodeError(DecodeError),
     IOError(std::io::Error),
     InvalidVersionNumber,
