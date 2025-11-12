@@ -1756,7 +1756,38 @@ export function EditorAPI(){
         return response_data.data as APIProjectData;
     }
 
+    /**
+     * Patch parts of a project.
+     *
+     * PATCH /api/projects/<project_id>
+     * Body matches the backend's PatchProjectData (fields are optional/nullable).
+     *
+     * Note: The backend returns an APIResponse<()> (no payload). We return null on success.
+     */
+    async function patchProject(
+        project_id: string,
+        patch: any
+    ): Promise<null> {
+        const response = await fetch(`/api/projects/${project_id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to patch project: ${response.status}`);
+        }
+
+        const response_data = await response.json();
+        if (response_data && response_data.hasOwnProperty("error")) {
+            throw new Error(`Failed to patch project: ${response_data["error"]}`);
+        }
+        // Backend wraps in { data: null }
+        return (response_data && 'data' in response_data) ? response_data.data : null;
+    }
+
     return {
         getProject,
+        patchProject,
     };
 }
