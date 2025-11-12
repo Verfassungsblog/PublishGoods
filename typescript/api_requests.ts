@@ -1360,10 +1360,44 @@ export function SectionAPI(){
 
         return response_data.data;
     }
+    async function move_section_after(project_id: string, section_id: string, after_id: string){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}/move/after/${after_id}` ,{
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        if(!response.ok){
+            throw new Error(`Failed to move section after: ${response.status}`);
+        }
+        const response_data: ApiResult<any> = await response.json();
+        if(response_data.error){
+            throw new Error(`Failed to move section after: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data;
+    }
+    async function move_section_child_of(project_id: string, section_id: string, parent_id: string){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}/move/child_of/${parent_id}` ,{
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        if(!response.ok){
+            throw new Error(`Failed to move section as child: ${response.status}`);
+        }
+        const response_data: ApiResult<any> = await response.json();
+        if(response_data.error){
+            throw new Error(`Failed to move section as child: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data;
+    }
     return{
         read_section,
         patch_section,
-        delete_section
+        delete_section,
+        move_section_after,
+        move_section_child_of
     }
 }
 

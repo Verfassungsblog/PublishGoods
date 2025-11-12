@@ -8,10 +8,8 @@
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
-use argon2::password_hash::rand_core::OsRng;
-use argon2::{Argon2, PasswordHasher};
-use std::sync::Arc;
-//noinspection RsMainFunctionNotFound
+#[macro_use]
+extern crate rocket; //noinspection RsMainFunctionNotFound
 use crate::projects::api::DeprecatedApiError;
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
@@ -21,6 +19,8 @@ use crate::storage::project_storage::ProjectStorage;
 use crate::storage::{data_storage, save_data_worker};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use crate::utils::csl::CslData;
+use argon2::password_hash::rand_core::OsRng;
+use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
 use rocket::response::Redirect;
@@ -28,6 +28,7 @@ use rocket::serde::json::Json;
 use rocket::yansi::Color::Red;
 use rocket::Request;
 use rocket_dyn_templates::Template;
+use std::sync::Arc;
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::ClientConfig;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
@@ -43,9 +44,6 @@ pub mod settings_page;
 pub mod storage;
 pub mod templates_editor;
 pub mod utils;
-
-#[macro_use]
-extern crate rocket;
 
 /// This is the catch-all route that redirects all 401 errors to the login page.
 #[catch(401)]
@@ -260,6 +258,8 @@ async fn rocket() -> _ {
                 projects::api::sections::get_section,
                 projects::api::sections::update_section,
                 projects::api::sections::delete_section,
+                projects::api::sections::move_section_after,
+                projects::api::sections::move_section_child_of,
                 projects::api::get_content_blocks_in_section,
                 projects::api::set_content_blocks_in_section,
                 projects::api::upload_to_project,

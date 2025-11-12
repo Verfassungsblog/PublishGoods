@@ -1,5 +1,5 @@
 import {state} from './Main';
-import {EditorAPI} from '../api_requests';
+import {EditorAPI, SectionAPI} from '../api_requests';
 import {show_alert} from "../tools";
 
 export async function init() {
@@ -16,12 +16,181 @@ export async function init() {
         console.log(data);
 
         // @ts-ignore
-        contents_panel.innerHTML = Handlebars.templates.editor_sidebar_editor(data);
+        contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
+        // Attach drag and drop listeners after render
+        add_dnd_listeners();
     }catch(e){
         show_alert("Couldn't load project data. Reload page and try again.");
         console.error(e);
     }
 
+}
+
+function add_dnd_listeners(){
+    const PROXIMITY_PX = 24; // how close the pointer must be to reveal a dropzone
+    const sectionAPI = SectionAPI();
+    const container = document.getElementsByClassName("sidebar-full-contents-panel-contents")[0] as HTMLElement;
+    if(!container){ return; }
+
+    let draggedSectionEl: HTMLElement | null = null;
+    let isDragging = false;
+
+    // Add draggable listeners to each section body
+    const bodies = Array.from(container.querySelectorAll('.sidebar-contents-section-body')) as HTMLElement[];
+    bodies.forEach(body => {
+        body.addEventListener('dragstart', (e: DragEvent) => {
+            isDragging = true;
+            const sectionEl = body.closest('.sidebar-contents-section') as HTMLElement;
+            if(!sectionEl) return;
+            draggedSectionEl = sectionEl;
+            body.classList.add('drag-source');
+            if(e.dataTransfer){
+                const id = sectionEl.getAttribute('data-section-id') || '';
+                e.dataTransfer.setData('text/plain', id);
+                e.dataTransfer.effectAllowed = 'move';
+                // Create a ghost image using the section title
+                const img = document.createElement('div');
+                img.className = 'drag-ghost';
+                img.textContent = (body.querySelector('.section-title')?.textContent || 'Section');
+                document.body.appendChild(img);
+                e.dataTransfer.setDragImage(img, 10, 10);
+                // Remove after a tick
+                setTimeout(() => document.body.removeChild(img), 0);
+            }
+        });
+        body.addEventListener('dragend', () => {
+            body.classList.remove('drag-source');
+            isDragging = false;
+            draggedSectionEl = null;
+            // cleanup highlights
+            Array.from(container.querySelectorAll('.drop-target')).forEach(el => el.classList.remove('drop-target'));
+            Array.from(container.querySelectorAll('[data-dropzone].dz-visible')).forEach(el => el.classList.remove('dz-visible'));
+        });
+    });
+
+    function isDescendant(parent: Element, child: Element): boolean{
+        let node: Element | null = child as Element;
+        while (node) {
+            if (node === parent) return true;
+            node = node.parentElement;
+        }
+        return false;
+    }
+
+    // Dropzones: either children or after
+    const dropzones = Array.from(container.querySelectorAll('[data-dropzone]')) as HTMLElement[];
+
+    // Helper to test proximity of pointer to a zone rect
+    function isNearZone(zone: HTMLElement, x: number, y: number): boolean{
+        const r = zone.getBoundingClientRect();
+        // treat near as within expanded rectangle by PROXIMITY_PX
+        const withinX = x >= (r.left - PROXIMITY_PX) && x <= (r.right + PROXIMITY_PX);
+        const withinY = y >= (r.top - PROXIMITY_PX) && y <= (r.bottom + PROXIMITY_PX);
+        return withinX && withinY;
+    }
+
+    // While dragging, reveal only nearby dropzones so they take space
+    container.addEventListener('dragover', (e: DragEvent) => {
+        if(!isDragging || !draggedSectionEl){ return; }
+        const x = e.clientX;
+        const y = e.clientY;
+        dropzones.forEach(zone => {
+            // Do not show dropzones inside the dragged element (prevent self moves)
+            if(isDescendant(draggedSectionEl as Element, zone)){
+                zone.classList.remove('dz-visible');
+                return;
+            }
+            if(isNearZone(zone, x, y)){
+                zone.classList.add('dz-visible');
+            }else{
+                zone.classList.remove('dz-visible');
+            }
+        });
+    });
+
+    dropzones.forEach(zone => {
+        zone.addEventListener('dragover', (e: DragEvent) => {
+            if(!draggedSectionEl) return;
+            // Prevent dropping into itself or its descendants when zone is inside dragged element
+            if(isDescendant(draggedSectionEl, zone)){
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer && (e.dataTransfer.dropEffect = 'move');
+            zone.classList.add('dz-visible');
+            zone.classList.add('drop-target');
+        });
+        zone.addEventListener('dragleave', (e: DragEvent) => {
+            e.stopPropagation();
+            zone.classList.remove('drop-target');
+            zone.classList.remove('dz-visible');
+        });
+        zone.addEventListener('drop', async (e: DragEvent) => {
+            if(!draggedSectionEl) return;
+            e.preventDefault();
+            e.stopPropagation();
+            zone.classList.remove('drop-target');
+            zone.classList.remove('dz-visible');
+            Array.from(container.querySelectorAll('[data-dropzone].dz-visible')).forEach(el => el.classList.remove('dz-visible'));
+
+            // Do not allow drop into itself
+            if(isDescendant(draggedSectionEl, zone)){
+                return;
+            }
+
+            const zoneType = zone.getAttribute('data-dropzone');
+
+            const movedEl = draggedSectionEl; // keep a reference
+            const originalParent = movedEl.parentElement as Node;
+            const originalNext = movedEl.nextElementSibling as Element | null;
+
+            const movedId = movedEl.getAttribute('data-section-id');
+            if(!movedId){ return; }
+
+            try{
+                if(zoneType === 'children'){
+                    // target parent is the section of the zone
+                    const parentSection = zone.closest('.sidebar-contents-section') as HTMLElement | null;
+                    const parentId = parentSection?.getAttribute('data-section-id');
+                    if(!parentId){ return; }
+
+                    // Optimistically update UI
+                    // Backend inserts as FIRST child; mirror that in the client to avoid mismatch after reload
+                    zone.insertBefore(movedEl, zone.firstElementChild as Element | null);
+
+                    // Persist
+                    await sectionAPI.move_section_child_of(state.project_id, movedId, parentId);
+                }else if(zoneType === 'after'){
+                    const targetSection = zone.closest('.sidebar-contents-section') as HTMLElement | null;
+                    const afterId = targetSection?.getAttribute('data-section-id');
+                    if(!afterId){ return; }
+
+                    // Prevent no-op moves
+                    if(afterId === movedId){ return; }
+
+                    // Optimistically update UI
+                    if(targetSection && targetSection.parentElement){
+                        targetSection.parentElement.insertBefore(movedEl, targetSection.nextSibling);
+                    }
+
+                    // Persist
+                    await sectionAPI.move_section_after(state.project_id, movedId, afterId);
+                }
+            }catch(err){
+                // Rollback UI on error
+                if(originalParent){
+                    if(originalNext){
+                        (originalParent as Element).insertBefore(movedEl, originalNext);
+                    }else{
+                        (originalParent as Element).appendChild(movedEl);
+                    }
+                }
+                console.error('Failed to persist section move', err);
+                show_alert('Failed to save new section order. Please try again.');
+            }
+        });
+    });
 }
 
 const preview_col = document.getElementsByClassName("preview-col")[0] as HTMLElement;

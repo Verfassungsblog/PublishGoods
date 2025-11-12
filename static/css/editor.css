@@ -157,8 +157,50 @@ body{
 .sidebar-full-contents-panel-control-bar > span{
     display: flex;
 }
+.sidebar-full-contents-panel-contents{
+    overflow-y: scroll;
+    height: calc(100vh - 160px);
+}
 .sidebar-contents-section-children{
-    margin-left: 20px;
+    margin-left: 15px;
+}
+.sidebar-contents-section-body{
+    width: 100%;
+    cursor: pointer;
+    border: 1px solid #F9F9F9;
+    padding: 5px;
+    min-height: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Drag and drop styles */
+.drag-handle{
+    font-size: 16px;
+    color: #999;
+    cursor: grab;
+    user-select: none;
+}
+.sidebar-contents-section-body.drag-source{
+    opacity: 0.6;
+}
+[data-dropzone]{
+    min-height: 0; /* hidden by default; no layout impact when not dragging */
+}
+/* Only when near during dragging, we show a slight space to make dropping easier */
+[data-dropzone].dz-visible{
+    min-height: 8px;
+}
+.sidebar-contents-section-after{
+    min-height: 0; /* override to hidden; will expand with .dz-visible */
+}
+[data-dropzone].drop-target{
+    outline: 2px dashed #4357AD;
+    background-color: rgba(67,87,173,0.08);
+}
+.section-title{
+    flex: 1 1 auto;
 }
 
 .main-col{

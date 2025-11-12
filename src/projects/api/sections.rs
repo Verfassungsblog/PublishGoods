@@ -1,4 +1,4 @@
-use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult, Patch};
+use crate::projects::api::Patch;
 use crate::projects::{
     NewContentBlock, PersonOrString, PersonUuidOrString, SectionMetadataV5, SectionV5,
 };
@@ -486,52 +486,104 @@ pub async fn delete_section(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            println!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+) -> APIResult<()> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let mut path = vec![];
-
     for part in content_path.split(":") {
-        match uuid::Uuid::parse_str(part) {
-            Ok(part) => path.push(part),
-            Err(e) => {
-                println!("Couldn't parse content path: {}", e);
-                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                    "Couldn't parse content path".to_string(),
-                ));
-            }
-        }
+        let part = uuid::Uuid::parse_str(part)?;
+        path.push(part);
     }
 
-    if path.len() == 0 {
-        println!("Couldn't parse content path: path is empty");
-        return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-            "Couldn't parse content path".to_string(),
-        ));
+    if path.is_empty() {
+        warn!("Couldn't parse content path: path is empty");
+        return Err(ApiErrorType::UnparsableParameter(String::from("content_path")).into());
     }
 
-    let project_storage = Arc::clone(project_storage);
-
-    let project = match project_storage.get_project(&project_id, settings).await {
-        Ok(project) => project,
-        Err(_) => {
-            println!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project_entry = project_storage.get_project(&project_id, settings).await?;
 
     debug!("Deleting section with path {:?}", path);
 
-    let mut project = project.write().unwrap();
+    let mut project = project_entry.write().unwrap();
 
     match project.remove_section(path.last().unwrap()) {
-        Some(_) => DeprecatedApiResult::new_data(()),
-        None => DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+        Some(_) => Ok(().into()),
+        None => Err(ApiErrorType::ResourceNotFound(String::from("section")).into()),
+    }
+}
+
+/// PUT /api/projects/<project_id>/sections/<section_id>/move/after/<after_id>
+/// Move a section (and its subtree) to be a sibling placed right after another section
+#[put("/api/projects/<project_id>/sections/<section_id>/move/after/<after_id>")]
+pub async fn move_section_after(
+    project_id: String,
+    section_id: String,
+    after_id: String,
+    _session: Session,
+    settings: &State<Settings>,
+    project_storage: &State<Arc<ProjectStorage>>,
+) -> APIResult<()> {
+    let section_id = uuid::Uuid::parse_str(&section_id)?;
+    let after_id = uuid::Uuid::parse_str(&after_id)?;
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
+
+    let project = project_storage.get_project(&project_id, settings).await?;
+
+    let mut project = project.write().unwrap();
+
+    // Remove section from current location
+    let section = match project.remove_section(&section_id) {
+        Some(section) => section,
+        None => return Err(ApiErrorType::ResourceNotFound(String::from("section")).into()),
+    };
+
+    // Insert after the target
+    match project.insert_section_after(&after_id, section.clone()) {
+        Ok(_) => Ok(().into()),
+        Err(_) => {
+            // rollback: append to root to avoid data loss
+            project
+                .sections
+                .push(crate::projects::SectionOrTocV5::Section(section));
+            Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
+        }
+    }
+}
+
+/// PUT /api/projects/<project_id>/sections/<section_id>/move/child_of/<parent_id>
+/// Move a section to become the first child of another section
+#[put("/api/projects/<project_id>/sections/<section_id>/move/child_of/<parent_id>")]
+pub async fn move_section_child_of(
+    project_id: String,
+    section_id: String,
+    parent_id: String,
+    _session: Session,
+    settings: &State<Settings>,
+    project_storage: &State<Arc<ProjectStorage>>,
+) -> APIResult<()> {
+    let section_id = uuid::Uuid::parse_str(&section_id)?;
+    let parent_id = uuid::Uuid::parse_str(&parent_id)?;
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
+
+    let project = project_storage.get_project(&project_id, settings).await?;
+
+    let mut project = project.write().unwrap();
+
+    // Remove section from current location
+    let section = match project.remove_section(&section_id) {
+        Some(section) => section,
+        None => return Err(ApiErrorType::ResourceNotFound(String::from("section")).into()),
+    };
+
+    // Insert as first child of parent
+    match project.insert_section_as_first_child(&parent_id, section.clone()) {
+        Ok(_) => Ok(().into()),
+        Err(_) => {
+            // rollback: append to root to avoid data loss
+            project
+                .sections
+                .push(crate::projects::SectionOrTocV5::Section(section));
+            Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
+        }
     }
 }

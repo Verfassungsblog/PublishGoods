@@ -33,18 +33,8 @@
                     </button>
                 </span>
 </div>
-<div class="sidebar-full-contents-panel-contents">
+<div class="sidebar-full-contents-panel-contents" data-dropzone="children">
     {{#each sections}}
-        <div class="sidebar-contents-section">
-            {{Section.metadata.title}}
-        </div>
-        <div class="sidebar-contents-section">
-            Test23412
-            <div class="sidebar-contents-section-children">
-                <div class="sidebar-contents-section">
-                    Test3451
-                </div>
-            </div>
-        </div>
+        {{> editor_sidebar_content_editor_section Section}}
     {{/each}}
 </div>
