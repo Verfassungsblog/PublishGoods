@@ -199,6 +199,9 @@ body{
     outline: 2px dashed #4357AD;
     background-color: rgba(67,87,173,0.08);
 }
+.sidebar-contents-section-as-child{
+    margin-left: 15px;
+}
 .section-title{
     flex: 1 1 auto;
 }

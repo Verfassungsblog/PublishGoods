@@ -2,7 +2,8 @@
     <div class="sidebar-contents-section-body" draggable="true">
         <span class="section-title">{{#if metadata.title}}{{metadata.title}}{{else}}[No title]{{/if}}</span>
     </div>
-    <div class="sidebar-contents-section-children" data-dropzone="children">
+    <div class="sidebar-contents-section-as-child" data-dropzone="as-child"></div>
+    <div class="sidebar-contents-section-children">
         {{#each sub_sections}}
             {{> editor_sidebar_content_editor_section this}}
         {{/each}}

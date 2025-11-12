@@ -58,6 +58,22 @@ function add_dnd_listeners(){
                 setTimeout(() => document.body.removeChild(img), 0);
             }
         });
+
+        // While hovering over a section body during drag, explicitly reveal its dropzones
+        body.addEventListener('dragover', (e: DragEvent) => {
+            if(!isDragging || !draggedSectionEl) return;
+            const currentSection = body.closest('.sidebar-contents-section') as HTMLElement | null;
+            if(!currentSection) return;
+            // Do not reveal zones inside the dragged section itself
+            if(currentSection === draggedSectionEl || isDescendant(draggedSectionEl, currentSection)){
+                return;
+            }
+            const asChildZone = currentSection.querySelector('[data-dropzone="as-child"]') as HTMLElement | null;
+            const afterZone = currentSection.querySelector('[data-dropzone="after"]') as HTMLElement | null;
+            if(asChildZone){ asChildZone.classList.add('dz-visible'); }
+            if(afterZone){ afterZone.classList.add('dz-visible'); }
+        });
+
         body.addEventListener('dragend', () => {
             body.classList.remove('drag-source');
             isDragging = false;
@@ -77,7 +93,7 @@ function add_dnd_listeners(){
         return false;
     }
 
-    // Dropzones: either children or after
+    // Dropzones: either as-child or after
     const dropzones = Array.from(container.querySelectorAll('[data-dropzone]')) as HTMLElement[];
 
     // Helper to test proximity of pointer to a zone rect
@@ -149,15 +165,20 @@ function add_dnd_listeners(){
             if(!movedId){ return; }
 
             try{
-                if(zoneType === 'children'){
+                if(zoneType === 'as-child'){
                     // target parent is the section of the zone
                     const parentSection = zone.closest('.sidebar-contents-section') as HTMLElement | null;
                     const parentId = parentSection?.getAttribute('data-section-id');
                     if(!parentId){ return; }
 
-                    // Optimistically update UI
-                    // Backend inserts as FIRST child; mirror that in the client to avoid mismatch after reload
-                    zone.insertBefore(movedEl, zone.firstElementChild as Element | null);
+                    // Optimistically update UI: insert as FIRST child into the parent's children container
+                    const childrenContainer = parentSection.querySelector('.sidebar-contents-section-children') as HTMLElement | null;
+                    if(childrenContainer){
+                        childrenContainer.insertBefore(movedEl, childrenContainer.firstElementChild as Element | null);
+                    }else{
+                        // Fallback: insert after parentSection body
+                        parentSection.appendChild(movedEl);
+                    }
 
                     // Persist
                     await sectionAPI.move_section_child_of(state.project_id, movedId, parentId);
