@@ -3,6 +3,7 @@ use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 use vb_exchange::deprecated::projects::data_storage::OldLanguage;
 use vb_exchange::projects::*;
@@ -219,7 +220,7 @@ pub struct ProjectMetadataV2 {
     pub publisher: Option<String>,
 }
 
-pub type ProjectMetadata = ProjectMetadataV4;
+pub type ProjectMetadata = ProjectMetadataV5;
 
 /// Struct holds all project-level metadata
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
@@ -338,6 +339,79 @@ pub struct ProjectMetadataV4 {
     pub edition: Option<String>,
     /// Publisher of the book
     pub publisher: Option<String>,
+}
+
+/// New default metadata version
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV5 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of authors (uuid reference or free-form string)
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<PersonUuidOrString>>,
+    /// List of editors (uuid reference or free-form string)
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<PersonUuidOrString>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    #[bincode(with_serde)]
+    pub languages: Option<Vec<Language>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>,
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+    /// additional fields
+    pub custom_fields: HashMap<String, String>,
+}
+
+impl From<ProjectMetadataV4> for ProjectMetadataV5 {
+    fn from(value: ProjectMetadataV4) -> Self {
+        ProjectMetadataV5 {
+            title: value.title,
+            subtitle: value.subtitle,
+            authors: value.authors,
+            editors: value.editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            languages: value.languages,
+            number_of_pages: value.number_of_pages,
+            short_abstract: value.short_abstract,
+            long_abstract: value.long_abstract,
+            keywords: value.keywords,
+            ddc: value.ddc,
+            license: value.license,
+            series: value.series,
+            volume: value.volume,
+            edition: value.edition,
+            publisher: value.publisher,
+            custom_fields: Default::default(),
+        }
+    }
 }
 
 /// is either the uuid to a person or just a string with a name

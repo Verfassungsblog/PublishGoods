@@ -1,4 +1,4 @@
-use crate::storage::project_storage::current::ProjectDataV8;
+use crate::storage::project_storage::current::ProjectDataV9;
 use bincode::error::DecodeError;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
@@ -9,9 +9,9 @@ use std::sync::{Arc, RwLock};
 pub mod current;
 pub mod migration;
 
-pub type ProjectData = ProjectDataV8;
+pub type ProjectData = ProjectDataV9;
 
-pub const CURRENT_VERSION: u64 = 8;
+pub const CURRENT_VERSION: u64 = 9;
 
 /// Storage for all projects, gets build on startup based on project files in data_path
 #[derive(Debug, Serialize, Deserialize)]

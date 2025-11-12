@@ -1,4 +1,4 @@
-use crate::projects::{ProjectMetadataV4, SectionOrTocV5, SectionV5};
+use crate::projects::{ProjectMetadataV4, ProjectMetadataV5, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
 use crate::storage::project_storage::{
@@ -448,7 +448,21 @@ pub struct ProjectDataV8 {
     pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
 }
 
-impl ProjectDataV8 {
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectDataV9 {
+    pub name: String,
+    pub description: Option<String>,
+    #[bincode(with_serde)]
+    pub template_id: uuid::Uuid,
+    pub last_interaction: u64,
+    pub metadata: Option<ProjectMetadataV5>,
+    pub settings: Option<ProjectSettingsV5>,
+    pub sections: Vec<SectionOrTocV5>,
+    #[bincode(with_serde)]
+    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+}
+
+impl ProjectDataV9 {
     // TODO migrate to using path instead of the id and searching for it
     pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<SectionV5> {
         let pos = self.sections.iter().position(|section| match section {

@@ -186,6 +186,7 @@ pub async fn prepare_project(
         volume: metadata.volume,
         edition: metadata.edition,
         publisher: metadata.publisher,
+        custom_fields: metadata.custom_fields,
     };
 
     Ok(PreparedProject {

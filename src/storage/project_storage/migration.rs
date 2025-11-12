@@ -2,7 +2,7 @@ use crate::projects::{
     ProjectMetadataV1, ProjectMetadataV2, ProjectMetadataV3, SectionOrTocV1, SectionOrTocV2,
     SectionOrTocV3, SectionOrTocV4,
 };
-use crate::storage::project_storage::current::ProjectDataV8;
+use crate::storage::project_storage::current::{ProjectDataV8, ProjectDataV9};
 use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
 use crate::storage::{BibEntryV2, OldBibEntry};
 use bincode::{Decode, Encode};
@@ -116,9 +116,22 @@ pub fn load_project_data(
                 bincode::config::standard(),
             )?)
         };
+        version = 9;
     }
 
-    match v8_data {
+    let mut v9_data: Option<ProjectDataV9> = None;
+    if version == 9 {
+        v9_data = if let Some(v8_data) = v8_data {
+            Some(v8_data.into())
+        } else {
+            Some(bincode::decode_from_std_read::<ProjectDataV9, _, _>(
+                &mut file,
+                bincode::config::standard(),
+            )?)
+        };
+    }
+
+    match v9_data {
         Some(data) => Ok(data),
         None => Err(ProjectStorageError::InvalidVersionNumber),
     }
@@ -255,6 +268,21 @@ impl From<ProjectDataV7> for ProjectDataV8 {
                 .into_iter()
                 .map(|section| section.into())
                 .collect(),
+            bibliography: value.bibliography,
+        }
+    }
+}
+
+impl From<ProjectDataV8> for ProjectDataV9 {
+    fn from(value: ProjectDataV8) -> Self {
+        ProjectDataV9 {
+            name: value.name,
+            description: value.description,
+            template_id: value.template_id,
+            last_interaction: value.last_interaction,
+            metadata: value.metadata.map(|m| m.into()),
+            settings: value.settings,
+            sections: value.sections.into_iter().collect(),
             bibliography: value.bibliography,
         }
     }
