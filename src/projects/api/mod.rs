@@ -1,12 +1,14 @@
 use crate::data_storage::DataStorage;
-use crate::projects::{Identifier, Keyword, License, ProjectMetadata};
-use crate::projects::{
-    NewContentBlock, NewContentBlockEditorJSFormat, PersonUuidOrString, SectionOrTocV5,
-};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
-use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
+use crate::storage::project_storage::current::{
+    get_section_by_path, get_section_by_path_mut, PersonUuidOrString,
+};
+use crate::storage::project_storage::sections::content::current::{
+    NewContentBlock, NewContentBlockEditorJSFormat,
+};
+use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::{ProjectMetadata, ProjectStorage, ProjectStorageError};
 use crate::storage::ProjectTemplateV2;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use bincode::{Decode, Encode};
@@ -20,6 +22,7 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use vb_exchange::projects::ProjectSettingsV5;
+use vb_exchange::projects::{Identifier, Keyword, License};
 
 pub mod get;
 pub mod patch;

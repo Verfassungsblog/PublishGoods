@@ -1,4 +1,4 @@
-use crate::storage::project_storage::current::ProjectDataV9;
+use crate::storage::project_storage::current::{ProjectDataV9, ProjectMetadataV5};
 use bincode::error::DecodeError;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
@@ -8,8 +8,10 @@ use std::sync::{Arc, RwLock};
 
 pub mod current;
 pub mod migration;
+pub mod sections;
 
 pub type ProjectData = ProjectDataV9;
+pub type ProjectMetadata = ProjectMetadataV5;
 
 pub const CURRENT_VERSION: u64 = 9;
 

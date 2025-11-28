@@ -1,12 +1,15 @@
-use crate::projects::{ProjectMetadataV4, ProjectMetadataV5, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
+use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{
     ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION,
 };
 use crate::storage::{BibEntryV2, MultipleFileLocks, ProjectListEntry};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
+use chrono::NaiveDate;
+use language::Language;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -14,7 +17,8 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
-use vb_exchange::projects::ProjectSettingsV5;
+use uuid::Uuid;
+use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 impl MultipleFileLocks for ProjectStorage {
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool> {
@@ -435,20 +439,6 @@ impl ProjectStorage {
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
-pub struct ProjectDataV8 {
-    pub name: String,
-    pub description: Option<String>,
-    #[bincode(with_serde)]
-    pub template_id: uuid::Uuid,
-    pub last_interaction: u64,
-    pub metadata: Option<ProjectMetadataV4>,
-    pub settings: Option<ProjectSettingsV5>,
-    pub sections: Vec<SectionOrTocV5>,
-    #[bincode(with_serde)]
-    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
-}
-
-#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct ProjectDataV9 {
     pub name: String,
     pub description: Option<String>,
@@ -462,9 +452,56 @@ pub struct ProjectDataV9 {
     pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
 }
 
+/// New default metadata version
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV5 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of authors (uuid reference or free-form string)
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<PersonUuidOrString>>,
+    /// List of editors (uuid reference or free-form string)
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<PersonUuidOrString>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    #[bincode(with_serde)]
+    pub languages: Option<Vec<Language>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>,
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+    /// additional fields
+    pub custom_fields: HashMap<String, String>,
+}
+
 impl ProjectDataV9 {
     // TODO migrate to using path instead of the id and searching for it
-    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<SectionV5> {
+    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<Section> {
         let pos = self.sections.iter().position(|section| match section {
             SectionOrTocV5::Section(section) => section.id == Some(*section_to_remove_id),
             _ => false,
@@ -487,7 +524,7 @@ impl ProjectDataV9 {
     pub fn insert_section_as_first_child(
         &mut self,
         parent_section_id: &uuid::Uuid,
-        section_to_insert: SectionV5,
+        section_to_insert: Section,
     ) -> Result<(), ()> {
         for section in &mut self.sections {
             if let SectionOrTocV5::Section(section) = section {
@@ -510,7 +547,7 @@ impl ProjectDataV9 {
     pub fn insert_section_after(
         &mut self,
         previous_element: &uuid::Uuid,
-        section_to_insert: SectionV5,
+        section_to_insert: Section,
     ) -> Result<(), ()> {
         let pos = self.sections.iter().position(|section| match section {
             SectionOrTocV5::Section(section) => section.id == Some(*previous_element),
@@ -542,7 +579,7 @@ impl ProjectDataV9 {
 pub fn get_section_by_path_mut<'a>(
     project: &'a mut RwLockWriteGuard<ProjectData>,
     path: &Vec<uuid::Uuid>,
-) -> Result<&'a mut SectionV5, ApiError> {
+) -> Result<&'a mut Section, ApiError> {
     // Find first section
     let first_section_opt = project.sections.iter_mut().find_map(|section| {
         if let SectionOrTocV5::Section(section) = section {
@@ -590,8 +627,8 @@ pub fn get_section_by_path_mut<'a>(
 pub fn get_section_by_path<'a>(
     project: &'a RwLockReadGuard<ProjectData>,
     path: &Vec<uuid::Uuid>,
-) -> Result<&'a SectionV5, ApiError> {
-    let mut first_section: Option<&SectionV5> = None;
+) -> Result<&'a Section, ApiError> {
+    let mut first_section: Option<&Section> = None;
 
     // Find first section
     for section in project.sections.iter() {
@@ -603,7 +640,7 @@ pub fn get_section_by_path<'a>(
     }
 
     // Return error if no first section found
-    let first_section: &SectionV5 = match first_section {
+    let first_section: &Section = match first_section {
         Some(first_section) => first_section,
         None => {
             println!("Couldn't find section with id {}", path[0]);
@@ -611,7 +648,7 @@ pub fn get_section_by_path<'a>(
         }
     };
 
-    let mut current_section: &SectionV5 = first_section;
+    let mut current_section: &Section = first_section;
 
     // Skip first element, because we already found it
     for part in path.iter().skip(1) {
@@ -631,4 +668,11 @@ pub fn get_section_by_path<'a>(
     }
 
     Ok(current_section)
+}
+
+/// is either the uuid to a person or just a string with a name
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
+pub enum PersonUuidOrString {
+    PersonUuid(#[bincode(with_serde)] Uuid),
+    NameString(String),
 }

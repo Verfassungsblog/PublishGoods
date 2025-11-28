@@ -1,5 +1,6 @@
 use crate::import::wordpress::Post;
-use crate::projects::{BlockData, SectionV5};
+use crate::storage::project_storage::sections::content::current::BlockData;
+use crate::storage::project_storage::sections::Section;
 use lingua::{Language, LanguageDetectorBuilder};
 use std::time::SystemTime;
 
@@ -46,7 +47,7 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
 /// # Returns
 /// * `Some(Language)` - The detected language as a BCP-47 language tag
 /// * `None` - If the language could not be detected or is not supported
-pub fn detect_language_for_section(section: &SectionV5) -> Option<language::Language> {
+pub fn detect_language_for_section(section: &Section) -> Option<language::Language> {
     debug!("Trying to detect language for section");
 
     let content_to_analyze: String = section

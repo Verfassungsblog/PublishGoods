@@ -1,5 +1,8 @@
-use crate::projects::{BlockData, NewContentBlock, PersonUuidOrString, Section, SectionOrTocV5};
 use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::current::PersonUuidOrString;
+use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
+use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::ProjectData;
 use crate::utils::csl::CslData;
 use async_recursion::async_recursion;

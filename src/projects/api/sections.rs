@@ -1,11 +1,13 @@
 use crate::projects::api::Patch;
-use crate::projects::{
-    NewContentBlock, PersonOrString, PersonUuidOrString, SectionMetadataV5, SectionV5,
-};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::current::{get_section_by_path, get_section_by_path_mut};
+use crate::storage::project_storage::current::{
+    get_section_by_path, get_section_by_path_mut, PersonUuidOrString,
+};
+use crate::storage::project_storage::sections::content::current::NewContentBlock;
+use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use crate::utils::dedup::dedup_vec;
@@ -19,15 +21,16 @@ use rocket::State;
 /// Contains API routes to view and modify sections inside a project
 use std::sync::Arc;
 use vb_exchange::projects::Identifier;
+use vb_exchange::projects::PersonOrString;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`SectionV5`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`Section`] with optional expansion of sub_sections and some metadata fields
 pub struct APISectionResult {
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Option<Vec<SectionV5>>,
+    pub sub_sections: Option<Vec<Section>>,
     // Holds all content blocks
     pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
@@ -396,8 +399,8 @@ pub struct PatchSectionMetadata {
     pub lang: Option<Option<Language>>,
 }
 
-impl Patch<PatchSectionMetadata, SectionMetadataV5> for SectionMetadataV5 {
-    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadataV5 {
+impl Patch<PatchSectionMetadata, SectionMetadata> for SectionMetadata {
+    fn patch(&mut self, patch: PatchSectionMetadata) -> SectionMetadata {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title {
@@ -453,8 +456,8 @@ impl Patch<PatchSectionMetadata, SectionMetadataV5> for SectionMetadataV5 {
 }
 
 // Implement patch for PatchSection
-impl Patch<PatchSection, SectionV5> for SectionV5 {
-    fn patch(&mut self, patch: PatchSection) -> SectionV5 {
+impl Patch<PatchSection, Section> for Section {
+    fn patch(&mut self, patch: PatchSection) -> Section {
         let mut new_section = self.clone();
 
         if let Some(id) = patch.id {
@@ -542,9 +545,7 @@ pub async fn move_section_after(
         Ok(_) => Ok(().into()),
         Err(_) => {
             // rollback: append to root to avoid data loss
-            project
-                .sections
-                .push(crate::projects::SectionOrTocV5::Section(section));
+            project.sections.push(SectionOrTocV5::Section(section));
             Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
         }
     }
@@ -580,9 +581,7 @@ pub async fn move_section_child_of(
         Ok(_) => Ok(().into()),
         Err(_) => {
             // rollback: append to root to avoid data loss
-            project
-                .sections
-                .push(crate::projects::SectionOrTocV5::Section(section));
+            project.sections.push(SectionOrTocV5::Section(section));
             Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
         }
     }

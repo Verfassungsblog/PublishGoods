@@ -1,19 +1,24 @@
-use crate::projects::{
-    ProjectMetadataV1, ProjectMetadataV2, ProjectMetadataV3, SectionOrTocV1, SectionOrTocV2,
-    SectionOrTocV3, SectionOrTocV4,
+use crate::storage::project_storage::current::{
+    PersonUuidOrString, ProjectDataV9, ProjectMetadataV5,
 };
-use crate::storage::project_storage::current::{ProjectDataV8, ProjectDataV9};
+use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::migration::{
+    SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4,
+};
 use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
 use crate::storage::{BibEntryV2, OldBibEntry};
 use bincode::{Decode, Encode};
+use chrono::{NaiveDate, NaiveDateTime};
+use language::Language;
 use rocket::http::hyper::body::HttpBody;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
+use vb_exchange::deprecated::projects::data_storage::OldLanguage;
 use vb_exchange::deprecated::projects::project_settings::{
     ProjectSettingsV2, ProjectSettingsV3, ProjectSettingsV4,
 };
-use vb_exchange::projects::ProjectSettingsV5;
+use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 pub fn load_project_data(
     mut file: File,
@@ -408,6 +413,318 @@ impl From<ProjectDataV5> for ProjectDataV6 {
                 .map(|section| section.clone().into())
                 .collect(),
             bibliography: value.bibliography,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectDataV8 {
+    pub name: String,
+    pub description: Option<String>,
+    #[bincode(with_serde)]
+    pub template_id: uuid::Uuid,
+    pub last_interaction: u64,
+    pub metadata: Option<ProjectMetadataV4>,
+    pub settings: Option<ProjectSettingsV5>,
+    pub sections: Vec<SectionOrTocV5>,
+    #[bincode(with_serde)]
+    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+}
+
+/// Struct holds all project-level metadata
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV1 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of ids of authors of the book
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<uuid::Uuid>>,
+    /// List of ids of editors of the book
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<uuid::Uuid>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    // TODO: build identifier validator
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDateTime>,
+    /// Languages of the book
+    pub languages: Option<Vec<OldLanguage>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>, //TODO: validate DDC on api set
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+}
+
+impl From<ProjectMetadataV1> for ProjectMetadataV2 {
+    fn from(value: ProjectMetadataV1) -> Self {
+        ProjectMetadataV2 {
+            title: value.title,
+            subtitle: value.subtitle,
+            authors: value.authors,
+            editors: value.editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published.map(|d| d.date()),
+            languages: value.languages,
+            number_of_pages: value.number_of_pages,
+            short_abstract: value.short_abstract,
+            long_abstract: value.long_abstract,
+            keywords: value.keywords,
+            ddc: value.ddc,
+            license: value.license,
+            series: value.series,
+            volume: value.volume,
+            edition: value.edition,
+            publisher: value.publisher,
+        }
+    }
+}
+
+/// Struct holds all project-level metadata
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV2 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of ids of authors of the book
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<uuid::Uuid>>,
+    /// List of ids of editors of the book
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<uuid::Uuid>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    // TODO: build identifier validator
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    pub languages: Option<Vec<OldLanguage>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>, //TODO: validate DDC on api set
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+}
+
+/// Struct holds all project-level metadata
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV3 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of ids of authors of the book
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<uuid::Uuid>>,
+    /// List of ids of editors of the book
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<uuid::Uuid>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    // TODO: build identifier validator
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    #[bincode(with_serde)]
+    pub languages: Option<Vec<Language>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>, //TODO: validate DDC on api set
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+}
+
+impl From<ProjectMetadataV2> for ProjectMetadataV3 {
+    fn from(value: ProjectMetadataV2) -> Self {
+        ProjectMetadataV3 {
+            title: value.title,
+            subtitle: value.subtitle,
+            authors: value.authors,
+            editors: value.editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            languages: value
+                .languages
+                .map(|langs| langs.into_iter().map(|l| l.into()).collect()),
+            number_of_pages: value.number_of_pages,
+            short_abstract: value.short_abstract,
+            long_abstract: value.long_abstract,
+            keywords: value.keywords,
+            ddc: value.ddc,
+            license: value.license,
+            series: value.series,
+            volume: value.volume,
+            edition: value.edition,
+            publisher: value.publisher,
+        }
+    }
+}
+
+/// Struct holds all project-level metadata
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV4 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of ids of authors of the book
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<PersonUuidOrString>>,
+    /// List of ids of editors of the book
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<PersonUuidOrString>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    // TODO: build identifier validator
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    #[bincode(with_serde)]
+    pub languages: Option<Vec<Language>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>, //TODO: validate DDC on api set
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+}
+
+impl From<ProjectMetadataV4> for ProjectMetadataV5 {
+    fn from(value: ProjectMetadataV4) -> Self {
+        ProjectMetadataV5 {
+            title: value.title,
+            subtitle: value.subtitle,
+            authors: value.authors,
+            editors: value.editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            languages: value.languages,
+            number_of_pages: value.number_of_pages,
+            short_abstract: value.short_abstract,
+            long_abstract: value.long_abstract,
+            keywords: value.keywords,
+            ddc: value.ddc,
+            license: value.license,
+            series: value.series,
+            volume: value.volume,
+            edition: value.edition,
+            publisher: value.publisher,
+            custom_fields: Default::default(),
+        }
+    }
+}
+
+impl From<ProjectMetadataV3> for ProjectMetadataV4 {
+    fn from(value: ProjectMetadataV3) -> Self {
+        let authors = value.authors.map(|authors| {
+            authors
+                .into_iter()
+                .map(|a| PersonUuidOrString::PersonUuid(a))
+                .collect()
+        });
+        let editors = value.editors.map(|editors| {
+            editors
+                .into_iter()
+                .map(|e| PersonUuidOrString::PersonUuid(e))
+                .collect()
+        });
+
+        ProjectMetadataV4 {
+            title: value.title,
+            subtitle: value.subtitle,
+            authors,
+            editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            languages: value.languages,
+            number_of_pages: value.number_of_pages,
+            short_abstract: value.short_abstract,
+            long_abstract: value.long_abstract,
+            keywords: value.keywords,
+            ddc: value.ddc,
+            license: value.license,
+            series: value.series,
+            volume: value.volume,
+            edition: value.edition,
+            publisher: value.publisher,
         }
     }
 }

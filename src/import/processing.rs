@@ -13,11 +13,11 @@ use crate::import::language_detection::{detect_language_for_post, detect_languag
 use crate::import::wordpress::{
     Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError,
 };
-use crate::projects::{
-    BlockData, NewContentBlock, PersonUuidOrString, Section, SectionMetadataV5, SectionOrTocV5,
-    SectionV5,
-};
 use crate::settings::Settings;
+use crate::storage::project_storage::current::PersonUuidOrString;
+use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
+use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::storage::BibEntryV2;
 use crate::utils::block_id_generator::generate_id;
@@ -710,7 +710,7 @@ impl ImportProcessor {
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV5 {
+            metadata: SectionMetadata {
                 title: post.title.rendered.clone(),
                 toc_title_subtitle_override: None,
                 subtitle,
@@ -917,7 +917,7 @@ impl ImportProcessor {
 
     async fn import_html_from_wp(
         &self,
-        mut section: SectionV5,
+        mut section: Section,
         input: String,
         project_data: Arc<RwLock<ProjectData>>,
         endnotes: bool,
@@ -1212,13 +1212,13 @@ impl ImportProcessor {
             return Err(ImportError::HtmlConversionFailed);
         } //TODO support a full html document
 
-        let mut section = SectionV5 {
+        let mut section = Section {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
             children: vec![],
             visible_in_toc: true,
-            metadata: SectionMetadataV5 {
+            metadata: SectionMetadata {
                 title: "Imported Section".to_string(),
                 toc_title_subtitle_override: None,
                 subtitle: None,
