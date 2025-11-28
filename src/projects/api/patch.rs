@@ -1,4 +1,3 @@
-use crate::projects::api::get::APIProjectData;
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
@@ -6,18 +5,16 @@ use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::current::SectionOrTocV5;
 use crate::storage::project_storage::{ProjectData, ProjectMetadata, ProjectStorage};
-use crate::storage::{BibEntryV2, ProjectTemplateV2};
-use crate::utils::api_helpers::{APIResponse, APIResult};
+use crate::storage::BibEntryV2;
+use crate::utils::api_helpers::APIResult;
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
 use language::Language;
-use rocket::form::validate::Contains;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 #[derive(Debug, Serialize, Deserialize)]

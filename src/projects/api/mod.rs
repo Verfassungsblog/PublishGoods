@@ -12,8 +12,6 @@ use crate::storage::project_storage::{ProjectMetadata, ProjectStorage, ProjectSt
 use crate::storage::ProjectTemplateV2;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use bincode::{Decode, Encode};
-use chrono::NaiveDate;
-use language::Language;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
@@ -22,7 +20,7 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use vb_exchange::projects::ProjectSettingsV5;
-use vb_exchange::projects::{Identifier, Keyword, License};
+use vb_exchange::projects::{Identifier, Keyword};
 
 pub mod get;
 pub mod patch;

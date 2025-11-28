@@ -10,7 +10,6 @@
 
 #[macro_use]
 extern crate rocket; //noinspection RsMainFunctionNotFound
-use crate::projects::api::DeprecatedApiError;
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
 use crate::storage::data_storage::current::User;
@@ -24,8 +23,6 @@ use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
 use rocket::response::Redirect;
-use rocket::serde::json::Json;
-use rocket::yansi::Color::Red;
 use rocket::Request;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
