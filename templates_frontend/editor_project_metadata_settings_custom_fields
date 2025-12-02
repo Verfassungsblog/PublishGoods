@@ -1,0 +1,9 @@
+{{#each fields}}
+<div class="eds-field eds-field--with-remove">
+    <div class="eds-row eds-row--between eds-row--center">
+        <label class="eds-label">{{this.key}}</label>
+        <button type="button" class="eds-field__remove eds-button eds-button--small eds-button--danger" data-remove-custom="{{this.key}}">&times;</button>
+    </div>
+    <input class="eds-input" type="text" data-custom-field="{{this.key}}" value="{{this.value}}" />
+</div>
+{{/each}}

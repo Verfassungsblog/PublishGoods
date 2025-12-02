@@ -88,22 +88,66 @@
         </div>
     </div>
 
+    <!-- Active Additional Fields -->
+    <div id="active-additional-fields" class="eds-form-grid eds-form-grid--spaced">
+        {{#each active_additional_fields}}
+        <div class="eds-field eds-field--with-remove {{#is this.type 'textarea'}}eds-field--full{{/is}}">
+            <div class="eds-row eds-row--between eds-row--center">
+                <label class="eds-label">{{this.label}}</label>
+                <button type="button" class="eds-field__remove eds-button eds-button--small eds-button--danger" data-remove-field="{{this.key}}">&times;</button>
+            </div>
+            {{#is this.type 'textarea'}}
+            <textarea class="eds-textarea" data-additional-field="{{this.key}}" data-patch="metadata.{{this.key}}">{{this.value}}</textarea>
+            {{else}}
+                {{#is this.type 'number'}}
+                <input class="eds-input" type="number" data-additional-field="{{this.key}}" data-patch="metadata.{{this.key}}" value="{{this.value}}" />
+                {{else}}
+                    {{#is this.type 'date'}}
+                    <input class="eds-input" type="date" data-additional-field="{{this.key}}" data-patch="metadata.{{this.key}}" value="{{this.value}}" />
+                    {{else}}
+                    <input class="eds-input" type="text" data-additional-field="{{this.key}}" data-patch="metadata.{{this.key}}" value="{{this.value}}" />
+                    {{/is}}
+                {{/is}}
+            {{/is}}
+        </div>
+        {{/each}}
+    </div>
+
+    <!-- Custom Fields -->
+    {{#if custom_fields.length}}
+    <h3 class="eds-subtitle eds-subtitle--spaced">Custom Fields</h3>
+    {{/if}}
+    <div id="custom-fields-list" class="eds-form-grid">
+        {{#each custom_fields}}
+        <div class="eds-field eds-field--with-remove">
+            <div class="eds-row eds-row--between eds-row--center">
+                <label class="eds-label">{{this.key}}</label>
+                <button type="button" class="eds-field__remove eds-button eds-button--small eds-button--danger" data-remove-custom="{{this.key}}">&times;</button>
+            </div>
+            <input class="eds-input" type="text" data-custom-field="{{this.key}}" value="{{this.value}}" />
+        </div>
+        {{/each}}
+    </div>
+
+    <!-- Add Field UI -->
     <div class="addable-fields">
-        <h3 class="eds-subtitle">Additional fields you can add later</h3>
-        <ul class="eds-list">
-            <li>Authors</li>
-            <li>Editors</li>
-            <li>Web URL</li>
-            <li>Published Date</li>
-            <li>Languages</li>
-            <li>Number of Pages</li>
-            <li>Short Abstract</li>
-            <li>Long Abstract</li>
-            <li>DDC</li>
-            <li>Series</li>
-            <li>Volume</li>
-            <li>Edition</li>
-            <li>Publisher</li>
-        </ul>
+        <h3 class="eds-subtitle">Add Additional Field</h3>
+        <div class="eds-add-field">
+            <div class="eds-add-field__search">
+                <input class="eds-input" type="text" id="add-field-search" placeholder="Search or type to create custom field..." autocomplete="off" />
+                <div id="add-field-suggest" class="eds-suggest hide"></div>
+            </div>
+            <button id="add-custom-field" type="button" class="eds-button eds-button--secondary">+ Custom Field</button>
+        </div>
+        {{#if available_additional_fields.length}}
+        <div class="eds-available-fields">
+            <span class="eds-available-fields__label">Available:</span>
+            <div class="eds-available-fields__list">
+                {{#each available_additional_fields}}
+                <span class="eds-available-field" data-add-available="{{this.key}}">{{this.label}}</span>
+                {{/each}}
+            </div>
+        </div>
+        {{/if}}
     </div>
 </div>

@@ -22,6 +22,28 @@ type Identifier = {
 
 type Keyword = { title: string, gnd: Identifier | null };
 
+// Type for additional field definitions
+type AdditionalFieldDef = {
+    key: string;
+    label: string;
+    type: 'text' | 'number' | 'date' | 'textarea';
+};
+
+// Helper to format field values for display
+function formatFieldValue(value: any, type: string): string {
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) {
+        // For arrays like authors/editors, join with comma
+        return value.map((item: any) => {
+            if (typeof item === 'string') return item;
+            if (item?.NameString) return item.NameString;
+            if (item?.PersonUuid) return `[Person: ${item.PersonUuid}]`;
+            return String(item);
+        }).join(', ');
+    }
+    return String(value);
+}
+
 const editorApi = EditorAPI();
 
 export async function show_project_metadata_settings(data: APIProjectData){
@@ -44,6 +66,7 @@ export async function show_project_metadata_settings(data: APIProjectData){
         volume: null,
         edition: null,
         publisher: null,
+        custom_fields: {} as Record<string, string>,
     };
     const st: ProjectSettingsV5 = data.settings || {
         toc_enabled: true,
@@ -69,6 +92,39 @@ export async function show_project_metadata_settings(data: APIProjectData){
             (cslStyles || []).map(s => ({ value: s, label: s, selected: st.csl_style === s }))
         );
 
+    // Define standard additional fields that can be added
+    const standardAdditionalFields: AdditionalFieldDef[] = [
+        { key: 'authors', label: 'Authors', type: 'text' },
+        { key: 'editors', label: 'Editors', type: 'text' },
+        { key: 'web_url', label: 'Web URL', type: 'text' },
+        { key: 'published', label: 'Published Date', type: 'date' },
+        { key: 'languages', label: 'Languages', type: 'text' },
+        { key: 'number_of_pages', label: 'Number of Pages', type: 'number' },
+        { key: 'short_abstract', label: 'Short Abstract', type: 'textarea' },
+        { key: 'long_abstract', label: 'Long Abstract', type: 'textarea' },
+        { key: 'ddc', label: 'DDC', type: 'text' },
+        { key: 'series', label: 'Series', type: 'text' },
+        { key: 'volume', label: 'Volume', type: 'text' },
+        { key: 'edition', label: 'Edition', type: 'text' },
+        { key: 'publisher', label: 'Publisher', type: 'text' },
+    ];
+
+    // Determine which additional fields are currently active (have non-null values)
+    const activeAdditionalFields = standardAdditionalFields.filter(f => {
+        const val = (md as any)[f.key];
+        return val !== null && val !== undefined && val !== '';
+    });
+
+    // Available fields are those not yet active
+    const availableAdditionalFields = standardAdditionalFields.filter(f => {
+        const val = (md as any)[f.key];
+        return val === null || val === undefined || val === '';
+    });
+
+    // Build custom fields data
+    const customFields = md.custom_fields || {};
+    const customFieldsList = Object.entries(customFields).map(([key, value]) => ({ key, value }));
+
     // Prepare template data
     const licenseOpts = buildLicenseOptions(md.license);
     const identifiersVm = buildIdentifierVM(md.identifiers ?? []);
@@ -80,7 +136,14 @@ export async function show_project_metadata_settings(data: APIProjectData){
         license_other_value: licenseOpts.otherValue,
         identifiers_ctx: { identifiers: identifiersVm },
         // tags UI handles keywords; keep legacy csv out
-        csl_options
+        csl_options,
+        // Additional fields data
+        active_additional_fields: activeAdditionalFields.map(f => ({
+            ...f,
+            value: formatFieldValue((md as any)[f.key], f.type)
+        })),
+        available_additional_fields: availableAdditionalFields,
+        custom_fields: customFieldsList,
     };
 
     // Render via Handlebars template
@@ -309,6 +372,283 @@ export async function show_project_metadata_settings(data: APIProjectData){
             await persistTags();
         }
     });
+
+    // === Additional Fields UI ===
+    const addFieldSelect = document.getElementById('add-field-select') as HTMLSelectElement | null;
+    const addFieldSearch = document.getElementById('add-field-search') as HTMLInputElement | null;
+    const addFieldSuggest = document.getElementById('add-field-suggest') as HTMLElement | null;
+    const activeFieldsContainer = document.getElementById('active-additional-fields') as HTMLElement | null;
+    const customFieldsContainer = document.getElementById('custom-fields-list') as HTMLElement | null;
+    const addCustomFieldBtn = document.getElementById('add-custom-field') as HTMLButtonElement | null;
+
+    // Track current state of available fields
+    let currentAvailableFields = [...availableAdditionalFields];
+    let currentCustomFields = { ...customFields };
+
+    // Filter and display suggestions based on search input
+    function filterFieldSuggestions(searchTerm: string) {
+        if (!addFieldSuggest) return;
+        const term = searchTerm.toLowerCase().trim();
+        
+        if (term.length === 0) {
+            addFieldSuggest.classList.add('hide');
+            addFieldSuggest.innerHTML = '';
+            return;
+        }
+
+        const filtered = currentAvailableFields.filter(f => 
+            f.label.toLowerCase().includes(term) || f.key.toLowerCase().includes(term)
+        );
+
+        if (filtered.length === 0) {
+            // Show option to create a custom field
+            addFieldSuggest.classList.remove('hide');
+            addFieldSuggest.innerHTML = `<div class="eds-suggest__item eds-suggest__item--create" data-create-custom="${searchTerm}">+ Create custom field "${searchTerm}"</div>`;
+        } else {
+            addFieldSuggest.classList.remove('hide');
+            addFieldSuggest.innerHTML = filtered.map(f => 
+                `<div class="eds-suggest__item" data-add-field="${f.key}">${f.label}</div>`
+            ).join('') + `<div class="eds-suggest__item eds-suggest__item--create" data-create-custom="${searchTerm}">+ Create custom field "${searchTerm}"</div>`;
+        }
+    }
+
+    // Add a standard additional field
+    async function addStandardField(fieldKey: string) {
+        const fieldDef = standardAdditionalFields.find(f => f.key === fieldKey);
+        if (!fieldDef) return;
+
+        // Set default value based on type
+        let defaultValue: any = '';
+        if (fieldDef.type === 'number') defaultValue = null;
+        
+        // Patch metadata to add the field
+        await patchMetadata({ [fieldKey]: defaultValue });
+
+        // Remove from available, add to active
+        currentAvailableFields = currentAvailableFields.filter(f => f.key !== fieldKey);
+        
+        // Re-render active fields
+        renderActiveFields();
+        
+        // Clear search
+        if (addFieldSearch) {
+            addFieldSearch.value = '';
+        }
+        if (addFieldSuggest) {
+            addFieldSuggest.classList.add('hide');
+            addFieldSuggest.innerHTML = '';
+        }
+    }
+
+    // Remove a standard additional field
+    async function removeStandardField(fieldKey: string) {
+        const fieldDef = standardAdditionalFields.find(f => f.key === fieldKey);
+        if (!fieldDef) return;
+
+        // Patch metadata to clear the field
+        await patchMetadata({ [fieldKey]: null });
+
+        // Add back to available, remove from active
+        currentAvailableFields.push(fieldDef);
+        
+        // Re-render active fields
+        renderActiveFields();
+    }
+
+    // Add a custom field
+    async function addCustomField(fieldName: string) {
+        const key = fieldName.trim();
+        if (!key || currentCustomFields[key] !== undefined) return;
+
+        currentCustomFields[key] = '';
+        await patchMetadata({ custom_fields: currentCustomFields });
+        
+        renderCustomFields();
+        
+        // Clear search
+        if (addFieldSearch) {
+            addFieldSearch.value = '';
+        }
+        if (addFieldSuggest) {
+            addFieldSuggest.classList.add('hide');
+            addFieldSuggest.innerHTML = '';
+        }
+    }
+
+    // Update a custom field value
+    async function updateCustomField(key: string, value: string) {
+        currentCustomFields[key] = value;
+        await patchMetadata({ custom_fields: currentCustomFields });
+    }
+
+    // Remove a custom field
+    async function removeCustomField(key: string) {
+        delete currentCustomFields[key];
+        await patchMetadata({ custom_fields: currentCustomFields });
+        renderCustomFields();
+    }
+
+    // Render active additional fields
+    function renderActiveFields() {
+        if (!activeFieldsContainer) return;
+        
+        const activeFields = standardAdditionalFields.filter(f => !currentAvailableFields.find(a => a.key === f.key));
+        
+        // @ts-ignore
+        activeFieldsContainer.innerHTML = Handlebars.templates.editor_project_metadata_settings_additional_fields({
+            fields: activeFields.map(f => ({
+                ...f,
+                value: '',  // Will be populated by data-patch
+            }))
+        });
+    }
+
+    // Render custom fields
+    function renderCustomFields() {
+        if (!customFieldsContainer) return;
+        
+        const fieldsList = Object.entries(currentCustomFields).map(([key, value]) => ({ key, value }));
+        
+        // @ts-ignore
+        customFieldsContainer.innerHTML = Handlebars.templates.editor_project_metadata_settings_custom_fields({
+            fields: fieldsList
+        });
+    }
+
+    // Event handler for search input
+    if (addFieldSearch) {
+        addFieldSearch.addEventListener('input', () => {
+            filterFieldSuggestions(addFieldSearch.value);
+        });
+
+        addFieldSearch.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const term = addFieldSearch.value.trim();
+                
+                // Check if it matches an available field
+                const matchedField = currentAvailableFields.find(f => 
+                    f.label.toLowerCase() === term.toLowerCase() || f.key.toLowerCase() === term.toLowerCase()
+                );
+                
+                if (matchedField) {
+                    await addStandardField(matchedField.key);
+                } else if (term) {
+                    // Create custom field
+                    await addCustomField(term);
+                }
+            }
+        });
+
+        // Hide suggestions when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!addFieldSuggest?.contains(e.target as Node) && e.target !== addFieldSearch) {
+                addFieldSuggest?.classList.add('hide');
+            }
+        });
+    }
+
+    // Event handler for suggestion clicks
+    if (addFieldSuggest) {
+        addFieldSuggest.addEventListener('mousedown', async (e) => {
+            e.preventDefault();
+            const target = e.target as HTMLElement;
+            
+            const addFieldKey = target.getAttribute('data-add-field');
+            if (addFieldKey) {
+                await addStandardField(addFieldKey);
+                return;
+            }
+            
+            const createCustom = target.getAttribute('data-create-custom');
+            if (createCustom) {
+                await addCustomField(createCustom);
+            }
+        });
+    }
+
+    // Event delegation for active fields container
+    if (activeFieldsContainer) {
+        activeFieldsContainer.addEventListener('click', async (e) => {
+            const target = e.target as HTMLElement;
+            const removeBtn = target.closest('.eds-field__remove') as HTMLButtonElement | null;
+            if (removeBtn) {
+                const fieldKey = removeBtn.getAttribute('data-remove-field');
+                if (fieldKey) {
+                    await removeStandardField(fieldKey);
+                }
+            }
+        });
+
+        activeFieldsContainer.addEventListener('blur', async (e) => {
+            const target = e.target as HTMLElement;
+            if (target.classList.contains('eds-input') || target.classList.contains('eds-textarea')) {
+                const inp = target as HTMLInputElement | HTMLTextAreaElement;
+                const fieldKey = inp.getAttribute('data-additional-field');
+                if (fieldKey) {
+                    let value: any = inp.value.trim();
+                    if (value === '') value = null;
+                    
+                    // Handle number type
+                    const fieldDef = standardAdditionalFields.find(f => f.key === fieldKey);
+                    if (fieldDef?.type === 'number' && value !== null) {
+                        value = parseInt(value, 10) || null;
+                    }
+                    
+                    await patchMetadata({ [fieldKey]: value });
+                }
+            }
+        }, true);
+    }
+
+    // Event delegation for custom fields container
+    if (customFieldsContainer) {
+        customFieldsContainer.addEventListener('click', async (e) => {
+            const target = e.target as HTMLElement;
+            const removeBtn = target.closest('.eds-field__remove') as HTMLButtonElement | null;
+            if (removeBtn) {
+                const fieldKey = removeBtn.getAttribute('data-remove-custom');
+                if (fieldKey) {
+                    await removeCustomField(fieldKey);
+                }
+            }
+        });
+
+        customFieldsContainer.addEventListener('blur', async (e) => {
+            const target = e.target as HTMLElement;
+            if (target.classList.contains('eds-input')) {
+                const inp = target as HTMLInputElement;
+                const fieldKey = inp.getAttribute('data-custom-field');
+                if (fieldKey) {
+                    await updateCustomField(fieldKey, inp.value);
+                }
+            }
+        }, true);
+    }
+
+    // Add custom field button handler
+    if (addCustomFieldBtn) {
+        addCustomFieldBtn.addEventListener('click', async () => {
+            const name = prompt('Enter custom field name:');
+            if (name && name.trim()) {
+                await addCustomField(name.trim());
+            }
+        });
+    }
+
+    // Click handler for available field chips
+    const availableFieldsRoot = document.querySelector('.eds-available-fields__list');
+    if (availableFieldsRoot) {
+        availableFieldsRoot.addEventListener('click', async (e) => {
+            const target = e.target as HTMLElement;
+            const addAvailable = target.getAttribute('data-add-available');
+            if (addAvailable) {
+                await addStandardField(addAvailable);
+                // Also remove the chip from UI
+                target.remove();
+            }
+        });
+    }
 }
 
 function normalizeNullableText(v: string): string | null{

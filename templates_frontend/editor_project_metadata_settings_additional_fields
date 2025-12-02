@@ -1,0 +1,21 @@
+{{#each fields}}
+<div class="eds-field eds-field--with-remove {{#is this.type 'textarea'}}eds-field--full{{/is}}">
+    <div class="eds-row eds-row--between eds-row--center">
+        <label class="eds-label">{{this.label}}</label>
+        <button type="button" class="eds-field__remove eds-button eds-button--small eds-button--danger" data-remove-field="{{this.key}}">&times;</button>
+    </div>
+    {{#is this.type 'textarea'}}
+    <textarea class="eds-textarea" data-additional-field="{{this.key}}">{{this.value}}</textarea>
+    {{else}}
+        {{#is this.type 'number'}}
+        <input class="eds-input" type="number" data-additional-field="{{this.key}}" value="{{this.value}}" />
+        {{else}}
+            {{#is this.type 'date'}}
+            <input class="eds-input" type="date" data-additional-field="{{this.key}}" value="{{this.value}}" />
+            {{else}}
+            <input class="eds-input" type="text" data-additional-field="{{this.key}}" value="{{this.value}}" />
+            {{/is}}
+        {{/is}}
+    {{/is}}
+</div>
+{{/each}}

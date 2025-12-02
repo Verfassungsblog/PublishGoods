@@ -175,6 +175,10 @@ impl Patch<PatchProjectMetadata, ProjectMetadata> for ProjectMetadata {
             new_metadata.publisher = publisher;
         }
 
+        if let Some(custom_fields) = patch.custom_fields {
+            new_metadata.custom_fields = custom_fields;
+        }
+
         new_metadata
     }
 }
@@ -307,6 +311,8 @@ pub struct PatchProjectMetadata {
         with = "::serde_with::rust::double_option"
     )]
     pub publisher: Option<Option<String>>,
+    /// Custom fields
+    pub custom_fields: Option<HashMap<String, String>>,
 }
 
 impl Patch<PatchProjectSettings, ProjectSettingsV5> for ProjectSettingsV5 {

@@ -89,6 +89,36 @@ body, html{
 .eds-suggest { position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(520px, 90vw); max-height: 260px; overflow: auto; background: #fff; border: 1px solid #cfd3d7; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); z-index: 20; }
 .eds-suggest__item { padding: 6px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eds-suggest__item:hover { background: #f3f6f9; }
+.eds-suggest__item--create { color: #556ee6; font-style: italic; }
+
+/* Additional Fields UI */
+.eds-form-grid--spaced { margin-top: 16px; }
+.eds-subtitle--spaced { margin-top: 20px; }
+.eds-field--with-remove .eds-label { margin-bottom: 0; }
+.eds-field__remove { font-size: 14px; line-height: 1; padding: 2px 6px; }
+
+.eds-add-field { display: flex; gap: 8px; align-items: stretch; margin-bottom: 12px; }
+.eds-add-field__search { position: relative; flex: 1; }
+.eds-add-field__search .eds-input { width: 100%; }
+.eds-add-field__search .eds-suggest { left: 0; right: 0; min-width: auto; }
+
+.eds-available-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.eds-available-fields__label { font-size: 13px; color: #666; }
+.eds-available-fields__list { display: flex; flex-wrap: wrap; gap: 6px; }
+.eds-available-field { 
+    display: inline-block; 
+    padding: 4px 10px; 
+    background: #f0f4f8; 
+    border: 1px solid #d0d7de; 
+    border-radius: 16px; 
+    font-size: 12px; 
+    color: #444; 
+    cursor: pointer; 
+    transition: background 0.15s, border-color 0.15s; 
+}
+.eds-available-field:hover { background: #e0e7ef; border-color: #556ee6; color: #556ee6; }
+
+.addable-fields { margin-top: 24px; padding-top: 16px; border-top: 1px solid #eee; }
 
 .hide { display: none !important; }
 

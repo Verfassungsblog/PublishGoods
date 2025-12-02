@@ -1682,6 +1682,8 @@ export interface ProjectMetadataV4 {
     volume: string | null;
     edition: string | null;
     publisher: string | null;
+    // Custom fields added by the user
+    custom_fields: Record<string, string>;
 }
 
 // Rust: pub struct BibEntryV2 { ... } — complex citation structure.
