@@ -458,7 +458,7 @@ export async function show_project_metadata_settings(data: APIProjectData){
     // Add a custom field
     async function addCustomField(fieldName: string) {
         const key = fieldName.trim();
-        if (!key || currentCustomFields[key] !== undefined) return;
+        if (!key || key in currentCustomFields) return;
 
         currentCustomFields[key] = '';
         await patchMetadata({ custom_fields: currentCustomFields });
@@ -592,7 +592,8 @@ export async function show_project_metadata_settings(data: APIProjectData){
                     // Handle number type
                     const fieldDef = standardAdditionalFields.find(f => f.key === fieldKey);
                     if (fieldDef?.type === 'number' && value !== null) {
-                        value = parseInt(value, 10) || null;
+                        const parsed = parseInt(value, 10);
+                        value = isNaN(parsed) ? null : parsed;
                     }
                     
                     await patchMetadata({ [fieldKey]: value });
@@ -626,13 +627,18 @@ export async function show_project_metadata_settings(data: APIProjectData){
         }, true);
     }
 
-    // Add custom field button handler
-    if (addCustomFieldBtn) {
-        addCustomFieldBtn.addEventListener('click', async () => {
-            const name = prompt('Enter custom field name:');
-            if (name && name.trim()) {
-                await addCustomField(name.trim());
-            }
+    // Add custom field button handler - focuses the search input
+    if (addCustomFieldBtn && addFieldSearch) {
+        addCustomFieldBtn.addEventListener('click', () => {
+            addFieldSearch.focus();
+            addFieldSearch.placeholder = 'Type custom field name and press Enter...';
+        });
+        
+        // Reset placeholder when losing focus
+        addFieldSearch.addEventListener('blur', () => {
+            setTimeout(() => {
+                addFieldSearch.placeholder = 'Search or type to create custom field...';
+            }, 200);
         });
     }
 
