@@ -1,0 +1,17 @@
+{{#each identifiers}}
+  <div class="id-row eds-id-grid" data-idx="{{idx}}">
+    <select class="id-type eds-select">
+      {{#each options}}
+        <option value="{{value}}" {{#if selected}}selected{{/if}}>{{value}}</option>
+      {{/each}}
+    </select>
+
+    <input class="id-name eds-input" type="text" value="{{name}}" placeholder="Name (optional)" />
+
+    <input class="id-value eds-input" type="text" value="{{value}}" placeholder="Value" />
+
+    <div class="eds-row eds-row--end">
+      <button type="button" class="id-remove eds-button eds-button--danger eds-button--small">Remove</button>
+    </div>
+  </div>
+{{/each}}

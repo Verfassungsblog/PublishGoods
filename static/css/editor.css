@@ -2,7 +2,95 @@ body, html{
     margin: 0;
     padding: 0;
     height: 100%;
+    /* Prevent global horizontal scrollbars */
+    overflow-x: hidden;
 }
+
+/* Ensure predictable sizing to reduce overflow risk */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* --- Editor design system (EDS) — Bootstrap-free --- */
+.eds-wrap { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 8px; padding: 16px; }
+@media (max-width: 480px){
+  .eds-wrap { padding: 12px; }
+}
+.eds-title { font-size: 1.25rem; margin: 0 0 12px; }
+.eds-title--spaced { margin-top: 24px; }
+.eds-subtitle { font-size: 1.05rem; margin: 0 0 8px; font-weight: 600; }
+.eds-list { margin: 0; padding-left: 18px; }
+
+.eds-form-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 16px; }
+@media (min-width: 768px){
+  .eds-form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.eds-field { display: flex; flex-direction: column; min-width: 0; }
+.eds-field--full { grid-column: 1 / -1; }
+.eds-label { display: inline-block; margin-bottom: 6px; font-weight: 600; font-size: 14px; }
+.eds-input, .eds-select, .eds-textarea {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #333;
+    background-color: #fff;
+    border: 1px solid #cfd3d7;
+    border-radius: 6px;
+}
+.eds-textarea { resize: vertical; }
+.eds-checkbox { flex-direction: row; align-items: center; }
+.eds-checkbox > input { margin-right: 8px; width: 16px; height: 16px; }
+
+.eds-row { display: flex; min-width: 0; }
+.eds-row--gap { gap: 8px; align-items: center; }
+.eds-row--between { justify-content: space-between; }
+.eds-row--center { align-items: center; }
+.eds-row--end { justify-content: flex-end; }
+.eds-row--wrap { flex-wrap: wrap; }
+
+.eds-button { display: inline-block; font-weight: 600; line-height: 1.5; color: #222; cursor: pointer; user-select: none; background-color: #eef1f4; border: 1px solid #cfd3d7; padding: 4px 10px; border-radius: 6px; }
+.eds-button:hover { filter: brightness(98%); }
+.eds-button--small { padding: 3px 8px; font-size: 12px; }
+.eds-button--secondary { background-color: #556ee6; border-color: #556ee6; color: #fff; }
+.eds-button--secondary:hover { filter: none; background-color: #465ccc; }
+.eds-button--danger { color: #fff; background-color: #e55353; border-color: #e55353; }
+.eds-button--danger:hover { background-color: #cc4343; }
+
+.eds-select--auto, .eds-input--auto {
+    width: auto;
+    max-width: 100%;
+    /* Allow wrapping in flex rows on narrow screens */
+    flex: 1 1 220px;
+    min-width: 160px;
+}
+
+.editor-metadata-settings { background: #fff; border-radius: 8px; }
+.identifiers .id-row { padding: 6px 0; border-bottom: 1px dashed #eee; }
+.identifiers .id-row:last-child { border-bottom: none; }
+
+.eds-id-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) max-content; gap: 8px 12px; align-items: center; }
+@media (max-width: 600px){
+  .eds-id-grid { grid-template-columns: 1fr; }
+}
+
+/* Prevent inner elements from forcing horizontal scroll */
+.eds-input, .eds-select, .eds-textarea { max-width: 100%; }
+.license-row > * { min-width: 0; }
+.license-row .eds-input--auto { flex: 2 1 260px; }
+
+.eds-tags { display: flex; flex-direction: column; gap: 8px; }
+.eds-tags__list { display: flex; flex-wrap: wrap; gap: 6px; }
+.eds-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 8px; border: 1px solid #d6dae0; border-radius: 999px; background: #f4f6f8; color: #1b1f24; font-size: 12px; line-height: 1.4; }
+.eds-chip--gnd { background: #eef6ff; border-color: #c9e2ff; color: #0b5cab; }
+.eds-chip__remove { border: none; background: transparent; color: inherit; font-weight: 700; cursor: pointer; padding: 0 2px; line-height: 1; border-radius: 3px; }
+.eds-chip__remove:hover { background: rgba(0,0,0,0.06); }
+
+.eds-tags__gnd { position: relative; }
+.eds-suggest { position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: min(520px, 90vw); max-height: 260px; overflow: auto; background: #fff; border: 1px solid #cfd3d7; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); z-index: 20; }
+.eds-suggest__item { padding: 6px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.eds-suggest__item:hover { background: #f3f6f9; }
+
+.hide { display: none !important; }
 
 body{
     font-family: 'Nunito', sans-serif;

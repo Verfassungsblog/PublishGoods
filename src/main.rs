@@ -223,6 +223,7 @@ async fn rocket() -> _ {
                 projects::bibliography_editor::api::update_bib_entry,
                 projects::api::get_project_template,
                 projects::api::set_project_template,
+                projects::api::patch::patch_project,
                 projects::api::list_templates,
                 projects::bibliography_editor::api::get_bib_entry,
                 projects::bibliography_editor::api::search_bib_entry,

@@ -1789,5 +1789,38 @@ export function EditorAPI(){
     return {
         getProject,
         patchProject,
+        getCslStyles,
+        searchGnd,
     };
+}
+
+async function getCslStyles(): Promise<string[]> {
+    const response = await fetch(`/api/csl/styles`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+    });
+    if(!response.ok){
+        throw new Error(`Failed to load CSL styles: ${response.status}`);
+    }
+    const response_data: any = await response.json();
+    if(response_data && response_data.error){
+        throw new Error(`Failed to load CSL styles: ${response_data.error}`);
+    }
+    return (response_data && 'data' in response_data) ? (response_data.data as string[]) : [];
+}
+
+export async function searchGnd(q: string): Promise<any[]>{
+    const url = `/api/gnd?q=${encodeURIComponent(q)}`;
+    const response = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' }});
+    if(!response.ok){
+        throw new Error(`Failed to search GND: ${response.status}`);
+    }
+    const response_data: any = await response.json();
+    if(response_data && response_data.error){
+        throw new Error(`Failed to search GND: ${response_data.error}`);
+    }
+    const data = (response_data && 'data' in response_data) ? response_data.data : [];
+    // Normalize to an array of simple items when possible
+    if(Array.isArray(data)) return data;
+    return [];
 }
