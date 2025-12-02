@@ -1,6 +1,0 @@
-{{#each tags}}
-  <span class="eds-chip{{#if gndValue}} eds-chip--gnd{{/if}}" title="{{#if gndValue}}GND{{else}}Tag{{/if}}">
-    {{label}}
-    <button type="button" class="eds-chip__remove" data-idx="{{@index}}" aria-label="Remove">×</button>
-  </span>
-{{/each}}
