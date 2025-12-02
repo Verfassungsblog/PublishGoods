@@ -61,9 +61,10 @@ body{
     align-items: center;
 }
 
-.sidebar-full-header-project-name{
+#sidebar-full-header-project-name{
     font-size: 12px;
     margin-left: 10px;
+    cursor: pointer;
 }
 
 .sidebar-full-bibliography-editor-switcher-wrapper{

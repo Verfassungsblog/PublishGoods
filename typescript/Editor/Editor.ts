@@ -1,9 +1,11 @@
 import {state} from './Main';
 import {EditorAPI, SectionAPI} from '../api_requests';
 import {show_alert} from "../tools";
+import {show_project_metadata_settings} from "./ProjectMetadataSettings";
 
 export async function init() {
     let contents_panel : HTMLElement = document.getElementsByClassName("sidebar-full-contents-panel")[0] as HTMLElement;
+    let project_name : HTMLElement = document.getElementById("sidebar-full-header-project-name") as HTMLElement;
 
     show_preview_column(); //TODO: only show after rendering
     add_divider_drag_listeners();
@@ -19,6 +21,11 @@ export async function init() {
         contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
         // Attach drag and drop listeners after render
         add_dnd_listeners();
+        // Set project name
+        project_name.innerText = data.metadata.title;
+        project_name.addEventListener("click", init);
+        // Show project metadata & settings
+        await show_project_metadata_settings(data);
     }catch(e){
         show_alert("Couldn't load project data. Reload page and try again.");
         console.error(e);
@@ -215,7 +222,7 @@ function add_dnd_listeners(){
 }
 
 const preview_col = document.getElementsByClassName("preview-col")[0] as HTMLElement;
-const main_col = document.getElementsByClassName("main-col")[0] as HTMLElement;
+export const main_col = document.getElementsByClassName("main-col")[0] as HTMLElement;
 let divider = document.getElementsByClassName("divider")[0] as HTMLElement;
 
 export function show_preview_column(){
