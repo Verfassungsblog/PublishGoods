@@ -1659,7 +1659,7 @@ export type License =
     | "CC_BY_NC_ND_4"
     | { Other: string };
 
-export interface ProjectMetadataV4 {
+export interface ProjectMetadata {
     title: string;
     subtitle: string | null;
     authors: PersonUuidOrString[] | null;
@@ -1682,11 +1682,10 @@ export interface ProjectMetadataV4 {
     volume: string | null;
     edition: string | null;
     publisher: string | null;
+    custom_fields: Record<string, string> | null;
 }
 
-// Rust: pub struct BibEntryV2 { ... } — complex citation structure.
-// Keep it flexible on the TS side; callers can narrow when needed.
-export type BibEntryV2 = any;
+export type BibEntryV2 = any; //todo: declarate here
 
 // Rust: pub struct ProjectSettingsV5 (from vb_exchange crate)
 // Exact TS mirror so JSON from Rust can be deserialized safely.
@@ -1711,7 +1710,7 @@ export interface APIProjectData {
     // Optionally extended ProjectTemplate
     template_extended: ProjectTemplateV2 | null;
     // Optionally extended ProjectMetadata
-    metadata: ProjectMetadataV4 | null;
+    metadata: ProjectMetadata | null;
     // Optionally extended ProjectSettings
     settings: ProjectSettingsV5 | null;
     // Optionally extended Sections
@@ -1786,41 +1785,42 @@ export function EditorAPI(){
         return (response_data && 'data' in response_data) ? response_data.data : null;
     }
 
+    async function getCslStyles(): Promise<string[]> {
+        const response = await fetch(`/api/csl/styles`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if(!response.ok){
+            throw new Error(`Failed to load CSL styles: ${response.status}`);
+        }
+        const response_data: any = await response.json();
+        if(response_data && response_data.error){
+            throw new Error(`Failed to load CSL styles: ${response_data.error}`);
+        }
+        return (response_data && 'data' in response_data) ? (response_data.data as string[]) : [];
+    }
+
+    async function searchGnd(q: string): Promise<any[]>{
+        const url = `/api/gnd?q=${encodeURIComponent(q)}`;
+        const response = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' }});
+        if(!response.ok){
+            throw new Error(`Failed to search GND: ${response.status}`);
+        }
+        const response_data: any = await response.json();
+        if(response_data && response_data.error){
+            throw new Error(`Failed to search GND: ${response_data.error}`);
+        }
+        const data = (response_data && 'data' in response_data) ? response_data.data : [];
+        // Normalize to an array of simple items when possible
+        if(Array.isArray(data)) return data;
+        return [];
+    }
+
+
     return {
         getProject,
         patchProject,
         getCslStyles,
         searchGnd,
     };
-}
-
-async function getCslStyles(): Promise<string[]> {
-    const response = await fetch(`/api/csl/styles`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-    });
-    if(!response.ok){
-        throw new Error(`Failed to load CSL styles: ${response.status}`);
-    }
-    const response_data: any = await response.json();
-    if(response_data && response_data.error){
-        throw new Error(`Failed to load CSL styles: ${response_data.error}`);
-    }
-    return (response_data && 'data' in response_data) ? (response_data.data as string[]) : [];
-}
-
-export async function searchGnd(q: string): Promise<any[]>{
-    const url = `/api/gnd?q=${encodeURIComponent(q)}`;
-    const response = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' }});
-    if(!response.ok){
-        throw new Error(`Failed to search GND: ${response.status}`);
-    }
-    const response_data: any = await response.json();
-    if(response_data && response_data.error){
-        throw new Error(`Failed to search GND: ${response_data.error}`);
-    }
-    const data = (response_data && 'data' in response_data) ? response_data.data : [];
-    // Normalize to an array of simple items when possible
-    if(Array.isArray(data)) return data;
-    return [];
 }

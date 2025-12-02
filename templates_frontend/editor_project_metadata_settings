@@ -1,4 +1,7 @@
 <div class="editor-metadata-settings">
-    <h2 class="eds-title">Project Settings</h2>
-
+    <h1>Project Settings</h1>
+    <div class="form-group">
+        <input type="checkbox" class="autopatch" id="settings.toc_enabled" data-patch="settings.toc_enabled" {{#if settings.toc_enabled}}checked{{/if}}>
+        <label for="settings.toc_enabled">Enable Table of Contents</label>
+    </div>
 </div>

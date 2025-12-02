@@ -217,6 +217,7 @@ body{
 .main-col{
     background-color: white;
     overflow: scroll;
+    padding: 20px 50px 20px 50px;
     width: 100%;
 }
 .divider{
