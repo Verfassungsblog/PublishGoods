@@ -1,5 +1,5 @@
 import {APIProjectData, EditorAPI} from "../api_requests";
-import {main_col} from "./Editor";
+import {init, main_col} from "./Editor";
 import {state} from "./Main";
 import {show_alert} from "../tools";
 
@@ -41,6 +41,9 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(data);
 
     init_autopatch();
+    // Add cover / backcover upload listeners
+    add_cover_listeners();
+
 }
 
 /**
@@ -76,10 +79,12 @@ function init_autopatch(){
             }else{
                 target.addEventListener("input", autopatch_listener);
             }
-        }else{
+        }else if (target.tagName.toLowerCase() === "select"){
+            target.addEventListener("change", autopatch_listener);
+        } else{
             //TODO: implement for textfields etc.
+            console.error("Autopatch not implemented for tag "+target.tagName.toLowerCase());
         }
-
     }
 }
 
@@ -112,7 +117,10 @@ async function autopatch_listener(e: Event){
         }else{
             value = target.value;
         }
-    }else{
+    }else if(target instanceof HTMLSelectElement){
+        value = target.value;
+    }
+    else{
         value = target.innerHTML;
     }
 
@@ -183,5 +191,82 @@ async function send_patch(){
         }
         show_alert("Couldn't save changes. Trying again!", "warning");
         await request_patch();
+    }
+}
+
+function add_cover_listeners(){
+    document.getElementById("settings.backcover_image").addEventListener("change", cover_upload_listener);
+    document.getElementById("settings.delete_backcover_image").addEventListener("click", delete_cover_listener);
+    document.getElementById("settings.cover_image").addEventListener("change", cover_upload_listener);
+    document.getElementById("settings.delete_cover_image").addEventListener("click", delete_cover_listener);
+}
+
+async function cover_upload_listener(e: Event){
+    let target = e.target as HTMLInputElement;
+    if(target.files && target.files.length > 0){
+        // 1. upload new cover image
+        try {
+            let resp = await editorApi.uploadToProject(state.project_id, target.files[0]);
+            console.log(resp);
+
+            // 2. Patch settings
+            let patch;
+            if(target.id === "settings.backcover_image"){
+                 patch = {
+                     settings: {
+                         backcover_image_path: resp.filename
+                     }
+                 }
+            }else{
+                patch = {
+                    settings: {
+                        cover_image_path: resp.filename
+                    }
+                }
+            }
+
+            await editorApi.patchProject(state.project_id, patch);
+            // Reload application & data:
+            await init();
+        }catch(e){
+            console.error("Failed to upload project settings", e);
+            show_alert("Couldn't upload cover image.", "error");
+        }
+    }
+}
+
+async function delete_cover_listener(e: Event){
+    let target = e.target as HTMLElement;
+
+    // 1. Delete image
+    let filename = target.getAttribute("data-cover-image-path");
+    if(!filename){
+        return;
+    }
+
+    try {
+        await editorApi.deleteProjectUpload(state.project_id, filename);
+        // 2. Delete from settings
+        let patch;
+        if (target.id === "settings.delete_cover_image") { // Delete cover
+            patch = {
+                settings: {
+                    cover_image_path: null,
+                }
+            }
+        } else {// Delete backcover
+            patch = {
+                settings: {
+                    backcover_image_path: null,
+                }
+            }
+        }
+
+        await editorApi.patchProject(state.project_id, patch);
+        // Reload application & data:
+        await init();
+    }catch(e){
+        console.error("Failed to delete cover image", e);
+        show_alert("Couldn't delete cover image.", "error");
     }
 }

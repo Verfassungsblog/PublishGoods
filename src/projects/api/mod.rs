@@ -232,48 +232,6 @@ pub async fn set_project_metadata(
     DeprecatedApiResult::new_data(())
 }
 
-/// GET /api/csl/styles
-/// Returns a list of all csl styles available
-///
-/// Returns:
-/// ApiResult with a list of strings containing the csl style filenames
-#[get("/api/csl/styles")]
-pub async fn get_csl_styles(
-    _session: Session,
-    settings: &State<Settings>,
-) -> Json<DeprecatedApiResult<Vec<String>>> {
-    let path = format!("{}/csl_styles", settings.data_path);
-    let mut styles = vec![];
-
-    match tokio::fs::read_dir(path).await {
-        Ok(mut dir) => loop {
-            let _entry = match dir.next_entry().await {
-                Ok(entry) => match entry {
-                    Some(entry) => {
-                        let file_name = entry.file_name().to_string_lossy().to_string();
-                        if file_name.ends_with(".csl") {
-                            styles.push((&file_name[..file_name.len() - 4]).to_string());
-                        }
-                    }
-                    None => {
-                        break;
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Error reading csl directory: {}", e);
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
-                }
-            };
-        },
-        Err(e) => {
-            eprintln!("Error reading csl styles: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
-        }
-    }
-
-    DeprecatedApiResult::new_data(styles)
-}
-
 #[get("/api/projects/<project_id>/settings")]
 pub async fn get_project_settings(
     project_id: String,
@@ -1429,35 +1387,16 @@ pub async fn delete_project_upload(
     filename: String,
     settings: &State<Settings>,
     _session: Session,
-) -> Json<DeprecatedApiResult<()>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            eprintln!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse project id".to_string(),
-            ));
-        }
-    };
+) -> APIResult<()> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
-    // Create projects upload directory if it doesn't exist
-    match tokio::fs::remove_file(format!(
+    tokio::fs::remove_file(format!(
         "{}/projects/{}/uploads/{}",
         settings.data_path, project_id, filename
     ))
-    .await
-    {
-        Ok(_) => DeprecatedApiResult::new_data(()),
-        Err(e) => {
-            eprintln!("Couldn't delete image: {}", e);
-            match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
-                }
-                _ => DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError),
-            }
-        }
-    }
+    .await?;
+
+    Ok(().into())
 }
 
 #[get("/api/projects/<project_id>/uploads/<filename>")]

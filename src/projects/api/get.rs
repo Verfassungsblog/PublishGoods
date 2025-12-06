@@ -1,10 +1,12 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::migration::load_project_data;
 use crate::storage::project_storage::sections::current::SectionOrTocV5;
 use crate::storage::project_storage::{ProjectMetadata, ProjectStorage};
 use crate::storage::{BibEntryV2, ProjectTemplateV2};
 use crate::utils::api_helpers::{APIResponse, APIResult};
+use crate::utils::csl::{list_available_locales, list_available_styles};
 use rocket::form::validate::Contains;
 use rocket::State;
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,8 @@ use vb_exchange::projects::ProjectSettingsV5;
 /// Similar to ['crate::storage::project_storage::ProjectData'] but some fields are only Some if specified in extend
 #[derive(Debug, Serialize, Deserialize)]
 pub struct APIProjectData {
+    /// Project uuid
+    pub project_id: uuid::Uuid,
     /// Project Title
     pub name: String,
     /// Project Description
@@ -33,6 +37,10 @@ pub struct APIProjectData {
     pub sections: Option<Vec<SectionOrTocV5>>,
     /// Optionally extended Bibliography
     pub bibliography: Option<HashMap<String, BibEntryV2>>,
+    /// Optionally extended available CSL styles
+    pub available_csl_styles: Option<Vec<String>>,
+    /// Optionally extended available CSL locales
+    pub available_csl_locales: Option<Vec<String>>,
 }
 
 /// GET /api/projects/<project_id>
@@ -45,8 +53,9 @@ pub async fn get_project(
     project_storage: &State<Arc<ProjectStorage>>,
     data_storage: &State<Arc<DataStorage>>,
 ) -> APIResult<APIProjectData> {
+    let project_id = Uuid::parse_str(project_id)?;
     let loaded_project = project_storage
-        .get_project(&Uuid::parse_str(project_id)?, settings)
+        .get_project(&project_id, settings)
         .await?
         .clone()
         .read()
@@ -54,6 +63,7 @@ pub async fn get_project(
         .clone();
 
     let mut api_response = APIProjectData {
+        project_id,
         name: loaded_project.name,
         description: loaded_project.description,
         template_id: loaded_project.template_id,
@@ -62,6 +72,8 @@ pub async fn get_project(
         settings: None,
         sections: None,
         bibliography: None,
+        available_csl_styles: None,
+        available_csl_locales: None,
     };
 
     if let Some(extend) = extend {
@@ -87,6 +99,12 @@ pub async fn get_project(
         }
         if parts.contains("bibliography") {
             api_response.bibliography = Some(loaded_project.bibliography);
+        }
+        if parts.contains("available_csl_styles") {
+            api_response.available_csl_styles = Some(list_available_styles(settings).await?);
+        }
+        if parts.contains("available_csl_locales") {
+            api_response.available_csl_locales = Some(list_available_locales(settings).await?);
         }
     }
 

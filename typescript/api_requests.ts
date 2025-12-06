@@ -1701,6 +1701,8 @@ export interface ProjectSettingsV5 {
 
 // Rust: pub struct APIProjectData { ... }
 export interface APIProjectData {
+    // Project id
+    project_id: string;
     // Project Title
     name: string;
     // Project Description
@@ -1717,6 +1719,11 @@ export interface APIProjectData {
     sections: SectionOrToc[] | null;
     // Optionally extended Bibliography
     bibliography: Record<string, BibEntryV2> | null;
+    // Optionally extend available_csl_styles
+    available_csl_styles: string[] | null;
+    // Optionally extend available_csl_locales
+    available_csl_locales: string[] | null;
+
 }
 
 export function EditorAPI(){
@@ -1732,7 +1739,7 @@ export function EditorAPI(){
      */
     async function getProject(
         project_id: string,
-        opts?: { extend?: ("template"|"metadata"|"settings"|"sections"|"bibliography")[] }
+        opts?: { extend?: ("template"|"metadata"|"settings"|"sections"|"bibliography" | "available_csl_styles" | "available_csl_locales")[] }
     ): Promise<APIProjectData> {
         const extend = opts?.extend && opts.extend.length > 0
             ? `?extend=${opts.extend.join(",")}`
@@ -1816,11 +1823,76 @@ export function EditorAPI(){
         return [];
     }
 
+    /**
+     * Upload an image file to a project.
+     *
+     * POST /api/projects/<project_id>/uploads
+     *
+     * The backend expects a multipart form field named "image" and responds with
+     * `{ success: 1, file: UploadedImage }` on success.
+     */
+    async function uploadToProject(
+        project_id: string,
+        file: File
+    ): Promise<UploadedImage> {
+        const formData = new FormData();
+        formData.append("image", file);
+
+        const response = await fetch(`/api/projects/${project_id}/uploads`, {
+            method: 'POST',
+            // Do not set Content-Type header explicitly so that the browser
+            // can add the correct multipart boundary.
+            body: formData,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to upload image to project: ${response.status}`);
+        }
+
+        const response_data: any = await response.json();
+        if (!response_data || response_data.success !== 1 || !response_data.file) {
+            throw new Error("Failed to upload image to project: invalid response");
+        }
+
+        return response_data.file as UploadedImage;
+    }
+
+    /**
+     * Delete a previously uploaded file for a project.
+     *
+     * DELETE /api/projects/<project_id>/uploads/<filename>
+     *
+     * Backend returns a deprecated ApiResult wrapper; we treat any non-error
+     * response as success and return null.
+     */
+    async function deleteProjectUpload(
+        project_id: string,
+        filename: string,
+    ): Promise<null> {
+        const response = await fetch(`/api/projects/${project_id}/uploads/${encodeURIComponent(filename)}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to delete project upload: ${response.status}`);
+        }
+
+        const response_data: any = await response.json();
+        if (response_data && response_data.error) {
+            throw new Error(`Failed to delete project upload: ${response_data.error}`);
+        }
+
+        return (response_data && 'data' in response_data) ? response_data.data : null;
+    }
+
 
     return {
         getProject,
         patchProject,
         getCslStyles,
         searchGnd,
+        uploadToProject,
+        deleteProjectUpload,
     };
 }

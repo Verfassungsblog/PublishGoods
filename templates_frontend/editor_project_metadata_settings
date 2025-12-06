@@ -1,7 +1,45 @@
 <div class="editor-metadata-settings">
     <h1>Project Settings</h1>
-    <div class="form-group">
+    <div class="form-group-inline">
         <input type="checkbox" class="autopatch" id="settings.toc_enabled" data-patch="settings.toc_enabled" {{#if settings.toc_enabled}}checked{{/if}}>
         <label for="settings.toc_enabled">Enable Table of Contents</label>
+    </div>
+    <div class="form-group-inline">
+        <input type="checkbox" class="autopatch" id="settings.add_soft_hyphens" data-patch="settings.add_soft_hyphens" {{#if settings.add_soft_hyphens}}checked{{/if}}>
+        <label for="settings.add_soft_hyphens">Add soft hyphens (activate when using vivliostyle)</label>
+    </div>
+    <div class="form-group col-6">
+        <label for="settings.csl_style">Citation Style (CSL)</label>
+        <select id="settings.csl_style" class="autopatch" data-patch="settings.csl_style">
+            <option value="">None</option>
+            {{#each available_csl_styles}}
+                <option value="{{this}}" {{#is this ../settings.csl_style}}selected{{/is}}>{{this}}</option>
+            {{/each}}
+        </select>
+    </div>
+    <div class="form-group col-6">
+        <label for="settings.csl_language_code">Citation Language</label>
+        <select id="settings.csl_language_code" class="autopatch" data-patch="settings.csl_language_code">
+            <option value="">None</option>
+            {{#each available_csl_locales}}
+                <option value="{{this}}" {{#is this ../settings.csl_language_code}}selected{{/is}}>{{this}}</option>
+            {{/each}}
+        </select>
+    </div>
+    <div class="form-group col-6">
+        <label for="settings.cover_image">Cover Image</label>
+        {{#if settings.cover_image_path}}
+            <img src="/api/projects/{{project_id}}/uploads/{{settings.cover_image_path}}" class="cover-preview" alt="Cover">
+        {{/if}}
+        <button id="settings.delete_cover_image" data-cover-image-path="{{settings.cover_image_path}}" class="cover-delete-btn btn btn-danger {{#unless settings.cover_image_path}}hide{{/unless}}">Delete</button>
+        <input type="file" class="form-control {{#if settings.cover_image_path}}hide{{/if}}" id="settings.cover_image" accept="image/*">
+    </div>
+    <div class="form-group col-6">
+        <label for="settings.cover_image">Back-cover Image</label>
+        {{#if settings.backcover_image_path}}
+            <img src="/api/projects/{{project_id}}/uploads/{{settings.backcover_image_path}}" class="cover-preview" alt="Back-cover">
+        {{/if}}
+        <button id="settings.delete_backcover_image" data-cover-image-path="{{settings.backcover_image_path}}" class="cover-delete-btn btn btn-danger {{#unless settings.backcover_image_path}}hide{{/unless}}">Delete</button>
+        <input type="file" class="form-control {{#if settings.backcover_image_path}}hide{{/if}}" id="settings.backcover_image" accept="image/*">
     </div>
 </div>

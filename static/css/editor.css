@@ -219,6 +219,8 @@ body{
     overflow: scroll;
     padding: 20px 50px 20px 50px;
     width: 100%;
+    container-name: main-col;
+    container-type: inline-size;
 }
 .divider{
     cursor: col-resize;
@@ -231,4 +233,83 @@ body{
 
 .hide{
     display: none;
+}
+.form-group{
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    justify-content: center;
+    padding-right: 10px;
+}
+.form-group-inline{
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+.form-group label{
+    min-width: fit-content;
+    margin-right: 10px;
+}
+.form-group select{
+    width: 100%;
+    max-width: fit-content;
+}
+label{
+    font-size: 14px;
+    color: #4357AD;
+    font-variant: small-caps;
+}
+select{
+    height:30px;
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+}
+.col-6{
+    width: 50% !important;
+    float: left;
+}
+
+@container main-col (max-width: 400px) {
+    .col-6{
+        float: none;
+    }
+}
+.cover-preview{
+    width: 100px;
+    border: 1px dashed gray;
+    padding: 2px;
+    border-radius: 2px;
+    margin-bottom: 5px;
+}
+.cover-delete-btn{
+    width: 100px;
+}
+
+.btn{
+    cursor: pointer;
+    border-radius: 2px;
+    background-color: white;
+    padding: 4px;
+}
+
+.btn-danger{
+    border: 1px solid #dc3545;
+    color: #dc3545;
+}
+
+.btn-danger:hover{
+    background-color: #dc3545;
+    color: white;
+}
+
+.btn-warning{
+    border: 1px solid #ffc107;
+    color: #ffc107;
+}
+
+.btn-danger:hover{
+    background-color: #ffc107;
+    color: white;
 }

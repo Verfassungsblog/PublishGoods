@@ -213,7 +213,6 @@ async fn rocket() -> _ {
                 session::login::process_login_form,
                 projects::create::show_create_project,
                 projects::api::delete_project_upload,
-                projects::api::get_csl_styles,
                 projects::create::process_create_project,
                 projects::list::list_projects,
                 projects::editor::show_editor,

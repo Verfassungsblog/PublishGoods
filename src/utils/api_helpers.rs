@@ -7,7 +7,7 @@ use rocket::response::Responder;
 use rocket::serde::json::Json;
 use rocket::{Request, Response, State};
 use serde::Serialize;
-use std::io::Cursor;
+use std::io::{Cursor, Error, ErrorKind};
 use std::sync::{Arc, RwLock};
 
 /// Attempts to parse a string as a UUID.
@@ -173,6 +173,21 @@ impl From<DataStorageError> for ApiError {
     fn from(value: DataStorageError) -> Self {
         match value {
             DataStorageError::NotFound(detail) => ApiErrorType::ResourceNotFound(detail).into(),
+        }
+    }
+}
+
+impl From<std::io::Error> for ApiError {
+    fn from(value: Error) -> Self {
+        match value.kind() {
+            ErrorKind::NotFound => {
+                warn!("IO Not Found error: {:?}", value);
+                ApiErrorType::ResourceNotFound(String::from("path")).into()
+            }
+            _ => {
+                error!("Internal Server Error: {:?}", value);
+                ApiErrorType::InternalServerError.into()
+            }
         }
     }
 }

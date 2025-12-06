@@ -44,5 +44,11 @@ async function editor_bibliography_switch_listener(e: Event){
 
 window.addEventListener('load', async () => {
     console.log('Loading Editor!');
+    // Register Handlebars helpers
+    // @ts-ignore
+    Handlebars.registerHelper("is", function(arg1: unknown, arg2: unknown, options: unknown){
+        // @ts-ignore
+        return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
+    });
     await main();
 });
