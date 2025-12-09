@@ -1739,7 +1739,7 @@ export function EditorAPI(){
      */
     async function getProject(
         project_id: string,
-        opts?: { extend?: ("template"|"metadata"|"settings"|"sections"|"bibliography" | "available_csl_styles" | "available_csl_locales")[] }
+        opts?: { extend?: ("template"|"metadata"|"metadata.authors"|"metadata.editors"|"settings"|"sections"|"bibliography" | "available_csl_styles" | "available_csl_locales")[] }
     ): Promise<APIProjectData> {
         const extend = opts?.extend && opts.extend.length > 0
             ? `?extend=${opts.extend.join(",")}`
