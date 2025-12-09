@@ -55,11 +55,11 @@ pub struct APIProjectMetadata {
     /// List of authors (uuid reference or free-form string)
     pub authors: Option<Vec<PersonUuidOrString>>,
     /// List of authors extended
-    pub authors_extended: Option<Vec<PersonOrString>>,
+    pub authors_expanded: Option<Vec<PersonOrString>>,
     /// List of editors (uuid reference or free-form string)
     pub editors: Option<Vec<PersonUuidOrString>>,
     /// List of editors extended
-    pub editors_extended: Option<Vec<PersonOrString>>,
+    pub editors_expanded: Option<Vec<PersonOrString>>,
     /// URL to a web version of the book or reference
     pub web_url: Option<String>,
     /// List of identifiers of the book (e.g. ISBNs)
@@ -98,9 +98,9 @@ impl From<ProjectMetadata> for APIProjectMetadata {
             title: value.title,
             subtitle: value.subtitle,
             authors: value.authors,
-            authors_extended: None,
+            authors_expanded: None,
             editors: value.editors,
-            editors_extended: None,
+            editors_expanded: None,
             web_url: value.web_url,
             identifiers: value.identifiers,
             published: value.published,
@@ -167,7 +167,7 @@ pub async fn get_project(
         }
         if parts.contains("metadata") {
             api_response.metadata = loaded_project.metadata.map(|md| md.into());
-            if let Some(metadata) = &api_response.metadata {
+            if let Some(metadata) = &mut api_response.metadata {
                 if let Some(authors) = &metadata.authors {
                     if parts.contains("metadata.authors") {
                         let mut authors_extended: Vec<PersonOrString> = Vec::new();
@@ -189,22 +189,23 @@ pub async fn get_project(
                                 }
                             }
                         }
+                        metadata.authors_expanded = Some(authors_extended);
                     }
                 }
 
                 if let Some(editors) = &metadata.editors {
                     if parts.contains("metadata.editors") {
-                        let mut editors_extended: Vec<PersonOrString> = Vec::new();
+                        let mut editors_expanded: Vec<PersonOrString> = Vec::new();
 
                         for editor in editors {
                             match editor {
                                 PersonUuidOrString::NameString(name) => {
-                                    editors_extended.push(PersonOrString::NameString(name.clone()))
+                                    editors_expanded.push(PersonOrString::NameString(name.clone()))
                                 }
                                 PersonUuidOrString::PersonUuid(uuid) => {
                                     match data_storage.get_person_cloned(&uuid) {
                                         Some(person) => {
-                                            editors_extended.push(PersonOrString::Person(person))
+                                            editors_expanded.push(PersonOrString::Person(person))
                                         }
                                         None => {
                                             warn!("Person with uuid used in project metadata, but no longer exists. Skipping.");
@@ -213,6 +214,7 @@ pub async fn get_project(
                                 }
                             }
                         }
+                        metadata.editors_expanded = Some(editors_expanded);
                     }
                 }
             }

@@ -1663,7 +1663,9 @@ export interface ProjectMetadata {
     title: string;
     subtitle: string | null;
     authors: PersonUuidOrString[] | null;
+    authors_expanded: PersonOrString[] | null;
     editors: PersonUuidOrString[] | null;
+    editors_expanded: PersonOrString[] | null;
     web_url: string | null;
     identifiers: Identifier[] | null;
     // Rust uses chrono::NaiveDate; it is serialized as an ISO date string like "YYYY-MM-DD"
