@@ -266,11 +266,21 @@ select{
     border: unset;
     border-bottom: 1px solid lightgray;
 }
+input[type=text]{
+    height:30px;
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+    width: 100%;
+}
 .col-6{
     width: 50% !important;
     float: left;
 }
-
+.col-fit{
+    float: left;
+    width: fit-content;
+}
 @container main-col (max-width: 400px) {
     .col-6{
         float: none;
@@ -309,7 +319,62 @@ select{
     color: #ffc107;
 }
 
-.btn-danger:hover{
+.btn-warning:hover{
     background-color: #ffc107;
     color: white;
+}
+h1{
+    clear: both;
+}
+.persons_list{
+    display: flex;
+    flex-wrap: wrap;
+}
+.metadata_person_div_name{
+    /* draw the visual chip around the name/icon, not around the dropzone */
+    border: 1px solid lightgray;
+    padding: 5px;
+    margin-right: 2px;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+}
+.metadata_persons_div{
+    margin: 0 5px 5px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.metadata_person_div_after{
+    width: 10px;
+    align-self: stretch;
+}
+.metadata_person_div_after.dragactive{
+    /* Match sidebar's subtle dropzone highlighting (similar to [data-dropzone].dz-visible) */
+    background-color: rgba(67,87,173,0.08);
+}
+.metadata_person_div_after.dragover{
+    width: 40px;
+    /* Match sidebar's strong drop target highlight (see [data-dropzone].drop-target) */
+    outline: 2px dashed #4357AD;
+    background-color: rgba(67,87,173,0.08);
+}
+#metadata_editors_first_dropzone{
+    width: 10px;
+    margin-left: -10px;
+}
+#metadata_editors_first_dropzone.dragover{
+    width: 40px;
+    /* Match sidebar's strong drop target highlight */
+    outline: 2px dashed #4357AD;
+    background-color: rgba(67,87,173,0.08);
+}
+.img-btn{
+    margin: 0;
+    padding: 0;
+    background-color: unset;
+    border: none;
+}
+.img-btn > svg{
+    display: flex;
 }

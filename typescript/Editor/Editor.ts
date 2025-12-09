@@ -14,7 +14,7 @@ export async function init() {
     // Initial fetch of project data
     let editorAPI = EditorAPI();
     try{
-        let data = await editorAPI.getProject(state.project_id, {extend: ["metadata", "settings", "template", "sections", "available_csl_locales", "available_csl_styles"]});
+        let data = await editorAPI.getProject(state.project_id, {extend: ["metadata", "metadata.editors", "metadata.authors", "settings", "template", "sections", "available_csl_locales", "available_csl_styles"]});
         console.log(data);
 
         // @ts-ignore

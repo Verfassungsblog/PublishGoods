@@ -26,7 +26,7 @@
             {{/each}}
         </select>
     </div>
-    <div class="form-group col-6">
+    <div class="form-group col-fit">
         <label for="settings.cover_image">Cover Image</label>
         {{#if settings.cover_image_path}}
             <img src="/api/projects/{{project_id}}/uploads/{{settings.cover_image_path}}" class="cover-preview" alt="Cover">
@@ -34,12 +34,51 @@
         <button id="settings.delete_cover_image" data-cover-image-path="{{settings.cover_image_path}}" class="cover-delete-btn btn btn-danger {{#unless settings.cover_image_path}}hide{{/unless}}">Delete</button>
         <input type="file" class="form-control {{#if settings.cover_image_path}}hide{{/if}}" id="settings.cover_image" accept="image/*">
     </div>
-    <div class="form-group col-6">
+    <div class="form-group col-fit">
         <label for="settings.cover_image">Back-cover Image</label>
         {{#if settings.backcover_image_path}}
             <img src="/api/projects/{{project_id}}/uploads/{{settings.backcover_image_path}}" class="cover-preview" alt="Back-cover">
         {{/if}}
         <button id="settings.delete_backcover_image" data-cover-image-path="{{settings.backcover_image_path}}" class="cover-delete-btn btn btn-danger {{#unless settings.backcover_image_path}}hide{{/unless}}">Delete</button>
         <input type="file" class="form-control {{#if settings.backcover_image_path}}hide{{/if}}" id="settings.backcover_image" accept="image/*">
+    </div>
+    <h1>Project Metadata</h1>
+    <div class="form-group">
+        <label for="metadata.title">Project Title</label>
+        <input type="text" id="metadata.title" data-patch="metadata.title" class="autopatch" value="{{metadata.title}}">
+    </div>
+    <div class="form-group">
+        <label for="metadata.subtitle">Subtitle</label>
+        <input type="text" id="metadata.subtitle" data-patch="metadata.subtitle" class="autopatch" value="{{metadata.subtitle}}">
+    </div>
+    <div>
+        <label>Authors</label>
+        <div id="metadata_authors_div" class="persons_list">
+            <div id="metadata_authors_first_dropzone" class="first_dropzone">
+            </div>
+            {{#each metadata.authors_expanded}}
+                {{> editor_project_metadata_settings_person_li group="authors"}}
+            {{/each}}
+        </div>
+        <div class="m-0 align-items-baseline">
+            <input type="text" style="width: 300px;" class="form-control form-control-sm" id="project_metadata_search_authors" placeholder="Add Author">
+            <ul class="list-group search_result_list hide" tabindex="0" id="project_metadata_search_authors_results">
+            </ul>
+        </div>
+    </div>
+    <div class="mt-3">
+        <label>Editors</label>
+        <div id="metadata_editors_div" class="persons_list">
+            <div id="metadata_editors_first_dropzone" class="first_dropzone">
+            </div>
+            {{#each metadata.editors_expanded}}
+                {{> editor_project_metadata_settings_person_li group="editors"}}
+            {{/each}}
+        </div>
+        <div class="m-0 align-items-baseline">
+            <input type="text" style="width: 300px;" class="form-control form-control-sm" id="section_metadata_search_editors" placeholder="Add Editor">
+            <ul class="list-group search_result_list hide" tabindex="0" id="section_metadata_search_editors_results">
+            </ul>
+        </div>
     </div>
 </div>

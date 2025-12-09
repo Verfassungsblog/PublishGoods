@@ -1,4 +1,4 @@
-import {APIProjectData, EditorAPI} from "../api_requests";
+import {APIProjectData, EditorAPI, PersonUuidOrString} from "../api_requests";
 import {init, main_col} from "./Editor";
 import {state} from "./Main";
 import {show_alert} from "../tools";
@@ -30,6 +30,8 @@ let last_patch : number|null = null;
  */
 let save_timeout : NodeJS.Timeout | null = null;
 
+let dragged_editor_element: HTMLElement | null = null;
+
 /**
  * Renders the project metadata settings view using the provided project data.
  *
@@ -44,6 +46,244 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     // Add cover / backcover upload listeners
     add_cover_listeners();
 
+    // Enable drag & drop + remove for project metadata authors & editors
+    add_authors_listeners();
+    add_editors_listeners();
+
+}
+
+function add_authors_listeners(){
+    const authors_divs = Array.from(document.querySelectorAll<HTMLElement>(".metadata_editors_div[data-group='authors']"));
+    const authors_dropzones = Array.from(document.getElementsByClassName("metadata_editors_div_after"))
+        .filter(el => (el as HTMLElement).closest('#metadata_authors_div')) as HTMLElement[];
+
+    const first_authors_dropzone = document.getElementById("metadata_authors_first_dropzone") as HTMLElement | null;
+    if(first_authors_dropzone){
+        authors_dropzones.push(first_authors_dropzone);
+    }
+
+    add_drag_and_drop_listeners(authors_divs, authors_dropzones, "authors");
+
+    const authors_rm_buttons = Array.from(document.querySelectorAll<HTMLElement>("#metadata_authors_div .metadata_editors_remove"));
+    const author_remove_listener = function(e: Event){
+        const target = e.target as HTMLElement;
+        const author_div = target.closest(".metadata_editors_div") as HTMLElement | null;
+        if(!author_div){
+            return;
+        }
+        author_div.remove();
+        patch_authors_order().then();
+    };
+
+    for(const button of authors_rm_buttons){
+        button.addEventListener("click", author_remove_listener);
+    }
+}
+
+function add_editors_listeners(){
+    const editors_divs = Array.from(document.querySelectorAll<HTMLElement>(".metadata_editors_div[data-group='editors']"));
+    const editors_dropzones = Array.from(document.getElementsByClassName("metadata_editors_div_after"))
+        .filter(el => (el as HTMLElement).closest('#metadata_editors_div')) as HTMLElement[];
+    const first_dropzone = document.getElementById("metadata_editors_first_dropzone") as HTMLElement | null;
+    if(first_dropzone){
+        editors_dropzones.push(first_dropzone);
+    }
+
+    add_drag_and_drop_listeners(editors_divs, editors_dropzones, "editors");
+
+    const editors_rm_buttons = Array.from(document.querySelectorAll<HTMLElement>("#metadata_editors_div .metadata_editors_remove"));
+    const editor_remove_listener = function(e: Event){
+        const target = e.target as HTMLElement;
+        const editor_div = target.closest(".metadata_editors_div") as HTMLElement | null;
+        if(!editor_div){
+            return;
+        }
+        editor_div.remove();
+        patch_editors_order().then();
+    };
+
+    for(const button of editors_rm_buttons){
+        button.addEventListener("click", editor_remove_listener);
+    }
+}
+
+function add_drag_and_drop_listeners(dragElements: HTMLElement[], dropZones: HTMLElement[], allowedGroup: string){
+    for (const element of dragElements) {
+        element.addEventListener("dragstart", function (e) {
+            // Always use the element the listener is attached to, not an inner SVG/button
+            dragged_editor_element = e.currentTarget as HTMLElement;
+
+            // Highlight eligible dropzones as soon as dragging starts
+            // (but do NOT highlight the dragged element's own dropzone
+            //  and avoid the first dropzone if the element is already first)
+            const draggedId = dragged_editor_element.getAttribute("data-id");
+            const parent = dragged_editor_element.parentElement;
+
+            for (const dz of dropZones) {
+                // Skip if we don't have an id for the dragged element
+                if (!draggedId) {
+                    dz.classList.add("dragactive");
+                    continue;
+                }
+
+                // Don't highlight the first dropzone when dragging the first element
+                if (dz.classList.contains("first_dropzone") && parent && parent.children.length > 1) {
+                    const firstElement = parent.children[1] as HTMLElement;
+                    if (firstElement.getAttribute("data-id") === draggedId) {
+                        continue;
+                    }
+                }
+
+                const afterId = dz.getAttribute("data-dropzone-after");
+
+                // Don't highlight the dropzone that belongs to the dragged element itself
+                if (afterId && afterId === draggedId) {
+                    continue;
+                }
+
+                dz.classList.add("dragactive");
+            }
+        });
+
+        element.addEventListener("dragend", function () {
+            dragged_editor_element = null;
+
+            // Remove drag highlight from all dropzones once dragging stops
+            for (const dz of dropZones) {
+                dz.classList.remove("dragactive");
+            }
+        });
+    }
+
+    for (const dropzone of dropZones) {
+        dropzone.addEventListener("dragenter", function (e) {
+            const target = e.target as HTMLElement;
+            const zone = e.currentTarget as HTMLElement;
+
+            if(!dragged_editor_element){
+                return;
+            }
+
+            // Don't show drop opportunity for first dropzone for first element
+            if(zone.classList.contains("first_dropzone")){
+                const parent = dragged_editor_element.parentElement;
+                if(parent && parent.children.length > 1){
+                    const first_element = parent.children[1] as HTMLElement;
+                    if(first_element.getAttribute("data-id") === dragged_editor_element.getAttribute("data-id")){
+                        return;
+                    }
+                }
+            }
+
+            if (dragged_editor_element.getAttribute("data-group") === allowedGroup &&
+                dragged_editor_element.getAttribute("data-id") !== zone.getAttribute("data-dropzone-after")) {
+                zone.classList.add("dragover");
+            }
+        });
+
+        dropzone.addEventListener("dragleave", function (e) {
+            const zone = e.currentTarget as HTMLElement;
+            zone.classList.remove("dragover");
+        });
+
+        dropzone.addEventListener("dragover", function (e) {
+            e.preventDefault();
+        });
+
+        dropzone.addEventListener("drop", function (e) {
+            const zone = e.currentTarget as HTMLElement;
+
+            if (!dragged_editor_element || dragged_editor_element.getAttribute("data-group") !== allowedGroup) {
+                return;
+            }
+
+            const dragged_element_id = dragged_editor_element.getAttribute("data-id");
+            const dropzone_id = zone.getAttribute("data-dropzone-after");
+
+            // If element is dropped into its own dropzone, nothing to do
+            if (dragged_element_id === dropzone_id) {
+                return;
+            }
+
+            if(zone.classList.contains("first_dropzone")){
+                const parent = dragged_editor_element.parentElement;
+                if(parent && parent.children.length > 1){
+                    const first_element = parent.children[1] as HTMLElement;
+                    if(first_element.getAttribute("data-id") === dragged_element_id){
+                        return;
+                    }
+                }
+
+                zone.classList.remove("dragover");
+                dragged_editor_element.parentNode?.removeChild(dragged_editor_element);
+                zone.insertAdjacentElement('afterend', dragged_editor_element);
+            }else{
+                zone.classList.remove("dragover");
+                dragged_editor_element.parentNode?.removeChild(dragged_editor_element);
+                zone.parentElement?.insertAdjacentElement('afterend', dragged_editor_element);
+            }
+
+            if(allowedGroup === 'editors'){
+                patch_editors_order().then();
+            }else if(allowedGroup === 'authors'){
+                patch_authors_order().then();
+            }
+        });
+    }
+}
+
+async function patch_editors_order(){
+    const editors_divs = Array.from(document.querySelectorAll<HTMLElement>(".metadata_editors_div[data-group='editors']"));
+    const editors: PersonUuidOrString[] = [];
+
+    for(const editor_div of editors_divs){
+        const entry_type = editor_div.getAttribute("data-entry-type");
+        if(entry_type === "Person"){
+            const id = editor_div.getAttribute("data-id");
+            if(id !== null){
+                editors.push({PersonUuid: id});
+            }
+        }else if(entry_type === "NameString"){
+            const name = editor_div.getAttribute("data-name");
+            if(name !== null){
+                editors.push({NameString: name});
+            }
+        }
+    }
+
+    try{
+        await editorApi.patchProject(state.project_id, {metadata: {editors}});
+    }catch (e){
+        console.error("Failed to save editors order", e);
+        show_alert("Couldn't save editors order.", "error");
+    }
+}
+
+async function patch_authors_order(){
+    const authors_divs = Array.from(document.querySelectorAll<HTMLElement>(".metadata_editors_div[data-group='authors']"));
+    const authors: PersonUuidOrString[] = [];
+
+    for(const author_div of authors_divs){
+        const entry_type = author_div.getAttribute("data-entry-type");
+        if(entry_type === "Person"){
+            const id = author_div.getAttribute("data-id");
+            if(id !== null){
+                authors.push({PersonUuid: id});
+            }
+        }else if(entry_type === "NameString"){
+            const name = author_div.getAttribute("data-name");
+            if(name !== null){
+                authors.push({NameString: name});
+            }
+        }
+    }
+
+    try{
+        await editorApi.patchProject(state.project_id, {metadata: {authors}});
+    }catch (e){
+        console.error("Failed to save authors order", e);
+        show_alert("Couldn't save authors order.", "error");
+    }
 }
 
 /**

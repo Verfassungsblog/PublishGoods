@@ -1,6 +1,7 @@
 use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::session::session_guard::Session;
 use crate::storage::data_storage::DataStorage;
+use crate::utils::api_helpers::{APIResponse, APIResult};
 use rocket::serde::json::Json;
 use rocket::State;
 use std::sync::{Arc, RwLock};
@@ -171,7 +172,7 @@ pub fn search_persons(
     data_storage: &State<Arc<DataStorage>>,
     query: String,
     limit: Option<usize>,
-) -> Json<DeprecatedApiResult<Vec<Person>>> {
+) -> APIResult<Vec<Person>> {
     let data_storage = Arc::clone(data_storage);
 
     let query = query.to_lowercase();
@@ -231,7 +232,7 @@ pub fn search_persons(
         }
     }
 
-    DeprecatedApiResult::new_data(result)
+    Ok(APIResponse::from(result))
 }
 
 /// DELETE /api/persons/<id>
