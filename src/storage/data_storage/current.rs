@@ -131,6 +131,15 @@ impl DataStorage {
         }
     }
 
+    /// Get person by id
+    /// Returns a [Person] as [Arc<RwLock<Person>>] if the person exists
+    pub fn get_person_cloned(&self, uuid: &uuid::Uuid) -> Option<Person> {
+        match self.data.read().unwrap().persons.get(uuid) {
+            None => None,
+            Some(data) => Some(data.read().unwrap().clone()),
+        }
+    }
+
     /// Check if person exists
     pub fn person_exists(&self, uuid: &uuid::Uuid) -> bool {
         self.data.read().unwrap().persons.contains_key(uuid)
