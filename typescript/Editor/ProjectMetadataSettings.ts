@@ -1,7 +1,7 @@
-import {APIProjectData, EditorAPI, PersonUuidOrString} from "../api_requests";
+import {APIProjectData, EditorAPI, PersonsAPI, PersonUuidOrString} from "../api_requests";
 import {init, main_col} from "./Editor";
 import {state} from "./Main";
-import {show_alert} from "../tools";
+import {add_search, show_alert} from "../tools";
 
 /**
  * Represents the primary interface for interacting with the editor.
@@ -9,6 +9,7 @@ import {show_alert} from "../tools";
  * manage editor state, and interact with editor-specific events and configurations.
  */
 const editorApi = EditorAPI();
+const personsApi = PersonsAPI();
 
 /**
  * Represents the data to be used for patching or updating a resource.
@@ -50,6 +51,156 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     add_authors_listeners();
     add_editors_listeners();
 
+    // Enable search + add for project metadata authors & editors
+    init_person_search();
+}
+
+function init_person_search(){
+    const authors_searchbar = document.getElementById("project_metadata_search_authors") as HTMLInputElement | null;
+    const authors_results = document.getElementById("project_metadata_search_authors_results") as HTMLElement | null;
+
+    if(authors_searchbar && authors_results){
+        const on_author_selected = async (selected: HTMLElement) => {
+            const person_id = selected.getAttribute("data-person-id");
+            if(!person_id){
+                return;
+            }
+
+            const existing = document.querySelector<HTMLElement>(`.metadata_editors_div[data-group='authors'][data-id='${person_id}']`);
+            if(existing){
+                show_alert("Author already added.", "warning");
+                return;
+            }
+
+            try{
+                const person = await personsApi.send_get_person_request(person_id);
+                const authors_div = document.getElementById("metadata_authors_div") as HTMLElement | null;
+                if(!authors_div){
+                    return;
+                }
+
+                // @ts-ignore
+                authors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_settings_person_li({
+                    Person: person,
+                    group: "authors"
+                }));
+
+                add_authors_listeners();
+                await patch_authors_order();
+            }catch (e){
+                console.error("Failed to add author", e);
+                show_alert("Couldn't add author.", "error");
+            }
+        };
+
+        add_search(
+            authors_searchbar,
+            authors_results,
+            personsApi.send_search_person_request,
+            // @ts-ignore
+            Handlebars.templates.search_person_li,
+            on_author_selected
+        );
+
+        authors_searchbar.addEventListener("keydown", async function (e: KeyboardEvent){
+            if(e.key !== "Enter"){
+                return;
+            }
+            const value = authors_searchbar.value.trim();
+            if(!value){
+                return;
+            }
+
+            const authors_div = document.getElementById("metadata_authors_div") as HTMLElement | null;
+            if(!authors_div){
+                return;
+            }
+
+            authors_searchbar.value = "";
+
+            // @ts-ignore
+            authors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_settings_person_li({
+                NameString: value,
+                group: "authors"
+            }));
+
+            add_authors_listeners();
+            await patch_authors_order();
+        });
+    }
+
+    const editors_searchbar = document.getElementById("section_metadata_search_editors") as HTMLInputElement | null;
+    const editors_results = document.getElementById("section_metadata_search_editors_results") as HTMLElement | null;
+
+    if(editors_searchbar && editors_results){
+        const on_editor_selected = async (selected: HTMLElement) => {
+            const person_id = selected.getAttribute("data-person-id");
+            if(!person_id){
+                return;
+            }
+
+            const existing = document.querySelector<HTMLElement>(`.metadata_editors_div[data-group='editors'][data-id='${person_id}']`);
+            if(existing){
+                show_alert("Editor already added.", "warning");
+                return;
+            }
+
+            try{
+                const person = await personsApi.send_get_person_request(person_id);
+                const editors_div = document.getElementById("metadata_editors_div") as HTMLElement | null;
+                if(!editors_div){
+                    return;
+                }
+
+                // @ts-ignore
+                editors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_settings_person_li({
+                    Person: person,
+                    group: "editors"
+                }));
+
+                add_editors_listeners();
+                await patch_editors_order();
+            }catch (e){
+                console.error("Failed to add editor", e);
+                show_alert("Couldn't add editor.", "error");
+            }
+        };
+
+        add_search(
+            editors_searchbar,
+            editors_results,
+            personsApi.send_search_person_request,
+            // @ts-ignore
+            Handlebars.templates.search_person_li,
+            on_editor_selected
+        );
+
+        editors_searchbar.addEventListener("keydown", async function (e: KeyboardEvent){
+            if(e.key !== "Enter"){
+                return;
+            }
+            const value = editors_searchbar.value.trim();
+            if(!value){
+                return;
+            }
+
+            const editors_div = document.getElementById("metadata_editors_div") as HTMLElement | null;
+            if(!editors_div){
+                return;
+            }
+
+            editors_searchbar.value = "";
+
+            // @ts-ignore
+            editors_div.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_settings_person_li({
+                NameString: value,
+                group: "editors"
+            }));
+
+            add_editors_listeners();
+            await patch_editors_order();
+        });
+    }
 }
 
 function add_authors_listeners(){
