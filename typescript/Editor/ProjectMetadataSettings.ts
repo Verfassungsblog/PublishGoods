@@ -33,6 +33,36 @@ let save_timeout : NodeJS.Timeout | null = null;
 
 let dragged_editor_element: HTMLElement | null = null;
 
+function prepareIdentifiersForTemplate(identifiers: any[]){
+    return identifiers.map(identifier => {
+        const rawType = identifier.identifier_type;
+
+        let typeKey: string | undefined = undefined;
+        let otherValue = "";
+
+        if(typeof rawType === "string"){
+            typeKey = rawType;
+        }else if(rawType && typeof rawType === "object"){
+            const entries = Object.entries(rawType);
+            if(entries.length){
+                typeKey = entries[0][0];
+                otherValue = typeKey === "Other" ? (entries[0][1] as string || "") : "";
+            }
+        }
+
+        const typeFlag = typeKey
+            ? {[typeKey]: typeKey === "Other" ? (otherValue || "") : true}
+            : {};
+
+        return {
+            ...identifier,
+            ...typeFlag,
+            name: identifier.name ?? (typeKey === "Other" ? otherValue : typeKey || ""),
+            value: identifier.value ?? ""
+        };
+    });
+}
+
 /**
  * Renders the project metadata settings view using the provided project data.
  *
@@ -40,8 +70,16 @@ let dragged_editor_element: HTMLElement | null = null;
  * @return {void} This function does not return a value.
  */
 export async function show_project_metadata_settings(data: APIProjectData) {
+    const preparedIdentifiers = prepareIdentifiersForTemplate(data.metadata?.identifiers || []);
+
     // @ts-ignore
-    main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(data);
+    main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings({
+        ...data,
+        metadata: {
+            ...data.metadata,
+            identifiers: preparedIdentifiers
+        }
+    });
 
     init_autopatch();
     // Add cover / backcover upload listeners
@@ -50,6 +88,9 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     // Enable drag & drop + remove for project metadata authors & editors
     add_authors_listeners();
     add_editors_listeners();
+
+    // Enable identifiers editing
+    init_identifiers_listeners();
 
     // Enable search + add for project metadata authors & editors
     init_person_search();
@@ -255,6 +296,164 @@ function add_editors_listeners(){
 
     for(const button of editors_rm_buttons){
         button.addEventListener("click", editor_remove_listener);
+    }
+}
+
+function init_identifiers_listeners(){
+    const typeSelect = document.getElementById("project_metadata_identifiers_type") as HTMLSelectElement | null;
+    const otherInput = document.getElementById("project_metadata_identifiers_other") as HTMLInputElement | null;
+    const nameInput = document.getElementById("project_metadata_identifiers_name") as HTMLInputElement | null;
+    const valueInput = document.getElementById("project_metadata_identifiers_value") as HTMLInputElement | null;
+    const addBtn = document.getElementById("project_metadata_identifiers_add") as HTMLButtonElement | null;
+    const list = document.getElementById("project_metadata_identifiers_list") as HTMLElement | null;
+
+    if(typeSelect && otherInput){
+        typeSelect.addEventListener("change", function(){
+            if(typeSelect.value === "Other"){
+                otherInput.style.display = "block";
+            }else{
+                otherInput.style.display = "none";
+                otherInput.value = "";
+            }
+        });
+    }
+
+    if(addBtn && list && typeSelect && nameInput && valueInput && otherInput){
+        addBtn.addEventListener("click", async function(){
+            const identifier_type = typeSelect.value;
+            const name = nameInput.value.trim();
+            const value = valueInput.value.trim();
+            const other = otherInput.value.trim();
+
+            if(identifier_type === "Other" && other === ""){
+                show_alert("Please specify other identifier type.", "warning");
+                return;
+            }
+            if(!value){
+                show_alert("Identifier value is required.", "warning");
+                return;
+            }
+
+            const identifierPayload: any = {
+                id: null,
+                name: name || (identifier_type === "Other" ? other : identifier_type),
+                value: value,
+                identifier_type: identifier_type === "Other" ? {Other: other} : {[identifier_type]: null}
+            };
+
+            const templateTypeFlag = identifier_type === "Other"
+                ? {Other: other}
+                : {[identifier_type]: true};
+
+            // @ts-ignore
+            list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_identifier_row({
+                id: identifierPayload.id,
+                name: identifierPayload.name,
+                value: identifierPayload.value,
+                ...templateTypeFlag
+            }));
+
+            nameInput.value = "";
+            valueInput.value = "";
+            if(identifier_type === "Other"){
+                otherInput.value = "";
+                otherInput.style.display = "none";
+                typeSelect.value = "DOI";
+            }
+
+            add_identifier_row_listeners(list.lastElementChild as HTMLElement);
+            await patch_identifiers();
+        });
+    }
+
+    const existingRows = Array.from(document.querySelectorAll<HTMLElement>(".project_metadata_identifier_row"));
+    for(const row of existingRows){
+        add_identifier_row_listeners(row);
+    }
+}
+
+function add_identifier_row_listeners(row: HTMLElement){
+    const removeBtn = row.querySelector<HTMLElement>(".project_metadata_identifier_remove_btn");
+    const typeSelect = row.querySelector<HTMLSelectElement>(".project_metadata_identifier_type");
+    const otherInput = row.querySelector<HTMLInputElement>(".project_metadata_identifier_other");
+    const nameInput = row.querySelector<HTMLInputElement>(".project_metadata_identifier_name");
+    const valueInput = row.querySelector<HTMLInputElement>(".project_metadata_identifier_value");
+
+    if(typeSelect && otherInput){
+        typeSelect.addEventListener("change", function(){
+            if(typeSelect.value === "Other"){
+                otherInput.classList.remove("hide");
+            }else{
+                otherInput.classList.add("hide");
+                otherInput.value = "";
+            }
+            patch_identifiers().then();
+        });
+    }
+
+    const inputs = [nameInput, valueInput, otherInput].filter(Boolean) as HTMLInputElement[];
+    for(const input of inputs){
+        input.addEventListener("input", function(){
+            // debounce using existing patch batching
+            patch_identifiers().then();
+        });
+    }
+
+    if(removeBtn){
+        removeBtn.addEventListener("click", function(){
+            row.remove();
+            patch_identifiers().then();
+        });
+    }
+}
+
+async function patch_identifiers(){
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".project_metadata_identifier_row"));
+    const identifiers: any[] = [];
+
+    for(const row of rows){
+        const idAttr = row.getAttribute("data-identifier-id");
+        const typeSelect = row.querySelector<HTMLSelectElement>(".project_metadata_identifier_type");
+        const otherInput = row.querySelector<HTMLInputElement>(".project_metadata_identifier_other");
+        const nameInput = row.querySelector<HTMLInputElement>(".project_metadata_identifier_name");
+        const valueInput = row.querySelector<HTMLInputElement>(".project_metadata_identifier_value");
+
+        if(!typeSelect || !valueInput){
+            continue;
+        }
+
+        const identifier_type_value = typeSelect.value;
+        const other = otherInput?.value.trim() || "";
+        const name = nameInput?.value.trim() || (identifier_type_value === "Other" ? other : identifier_type_value);
+        const value = valueInput.value.trim();
+
+        if(!value){
+            continue; // skip empty rows
+        }
+
+        let identifier_type: any;
+        if(identifier_type_value === "Other"){
+            if(!other){
+                continue;
+            }
+            identifier_type = {Other: other};
+        }else{
+            identifier_type = {[identifier_type_value]: null};
+        }
+
+        identifiers.push({
+            id: idAttr && idAttr !== "null" && idAttr !== "undefined" ? idAttr : null,
+            name,
+            value,
+            identifier_type
+        });
+    }
+
+    try{
+        await editorApi.patchProject(state.project_id, {metadata: {identifiers}});
+    }catch (e){
+        console.error("Failed to save identifiers", e);
+        show_alert("Couldn't save identifiers.", "error");
     }
 }
 

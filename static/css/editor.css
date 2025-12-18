@@ -339,6 +339,9 @@ h1{
     align-items: center;
     cursor: pointer;
 }
+.metadata_person_div_name > svg{
+    margin-right: 5px;
+}
 .metadata_persons_div{
     margin: 0 5px 5px 0;
     display: flex;
@@ -374,6 +377,7 @@ h1{
     padding: 0;
     background-color: unset;
     border: none;
+    cursor: pointer;
 }
 .img-btn > svg{
     display: flex;
@@ -401,4 +405,42 @@ h1{
 
 .search_result_list li:last-child{
     border-bottom: none;
+}
+.project_metadata_identifier_row{
+    display: flex;
+    flex-wrap: wrap;
+}
+.project_metadata_identifier_value{
+    width: auto !important;
+    min-width: 200px;
+    margin-left: 5px;
+    flex-grow: 1;
+}
+.project_metadata_identifier_name{
+    width: auto !important;
+    margin-left: 5px;
+    min-width: 100px;
+}
+.alert{
+    width: 80%;
+    margin: auto;
+    position: fixed;
+    top: 30px;
+    left: 50%;
+    transform: translate(-50%);
+    padding: 15px;
+    border-radius: 5px;
+    z-index: 10000;
+    opacity: 0.9;
+}
+.alert-close{
+    position: absolute;
+    opacity: 0.9;
+    right: 6px;
+}
+.alert-danger{
+
+}
+.alert-warning{
+    background-color: #ffc107;
 }

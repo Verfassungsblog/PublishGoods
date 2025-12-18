@@ -66,7 +66,7 @@
             </ul>
         </div>
     </div>
-    <div class="mt-3">
+    <div>
         <label>Editors</label>
         <div id="metadata_editors_div" class="persons_list">
             <div id="metadata_editors_first_dropzone" class="first_dropzone">
@@ -79,6 +79,37 @@
             <input type="text" style="width: 300px;" class="form-control form-control-sm" id="section_metadata_search_editors" placeholder="Add Editor">
             <ul class="list-group search_result_list hide" tabindex="0" id="section_metadata_search_editors_results">
             </ul>
+        </div>
+    </div>
+    <div>
+        <label>Identifiers</label>
+        <div id="project_metadata_identifiers_list">
+            {{#each metadata.identifiers}}
+                {{> editor_project_metadata_identifier_row}}
+            {{/each}}
+        </div>
+        <label for="project_metadata_identifiers_add_div">Add Identifier</label>
+        <div id="project_metadata_identifiers_add_div">
+            <div class="project_metadata_identifier_row">
+                <select id="project_metadata_identifiers_type">
+                    <option value="DOI">DOI</option>
+                    <option value="ISBN">ISBN</option>
+                    <option value="ISSN">ISSN</option>
+                    <option value="URL">URL</option>
+                    <option value="URN">URN</option>
+                    <option value="ORCID">ORCID</option>
+                    <option value="ROR">ROR</option>
+                    <option value="GND">GND</option>
+                    <option value="Other">Other</option>
+                </select>
+                <input type="text" class="project_metadata_identifier_other" id="project_metadata_identifiers_other" placeholder="Other type" style="display: none;">
+                <input type="text" class="project_metadata_identifier_name" id="project_metadata_identifiers_name" placeholder="Unique Name (e.g. ebook ISBN)">
+                <input type="text" class="project_metadata_identifier_value" id="project_metadata_identifiers_value" placeholder="Value (e.g. 10.123456/...)">
+                <button class="btn btn-sm btn-primary" id="project_metadata_identifiers_add">Add</button>
+            </div>
+            <div class="mt-2">
+
+            </div>
         </div>
     </div>
 </div>
