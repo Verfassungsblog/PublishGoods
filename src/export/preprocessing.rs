@@ -886,7 +886,7 @@ pub fn render_text(
             return format!("<sup class=\"endnote\"><a href=\"#note-{}\">{}</a></sup>", uuid, endnote_storage.len())
         }else if note_type == "footnote" {
             let uuid = uuid::Uuid::new_v4();
-            return format!("<span class=\"footnote\" id=\"footnote-{}\"><a class=\"footnote-marker\" href=\"#footnote-call-{}\"></a>{}</span><a class=\"footnote-call\" href=\"#footnote-{}\" id=\"footnote-call-{}\"></a>", uuid, uuid,  note_content, uuid, uuid)
+            return format!("<span class=\"footnote\" id=\"footnote-{}\"><a class=\"footnote-marker\" href=\"#footnote-call-{}\"></a>{}</span><a class=\"footnote-call\" href=\"#footnote-{}\" id=\"footnote-call-{}\"></a>", uuid, uuid, unescape_html(note_content), uuid, uuid)
         }else{
             String::new()
         }

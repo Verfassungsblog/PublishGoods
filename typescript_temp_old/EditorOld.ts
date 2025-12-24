@@ -11,7 +11,7 @@ const Strikethrough: any = require("@sotaproject/strikethrough");
 import * as API from "./api_requests";
 import * as Tools from "./tools";
 import {CustomStyleTool} from "./CustomStyleTool";
-import {CitationToolOld} from "./CitationToolOld";
+import {CitationTool} from "./CitationTool";
 import {BlockStyleTune} from "./BlockStyleTune";
 
 let typing_timer: number | null = null;
@@ -50,7 +50,7 @@ export async function show_editor(){
                 },
                 strikethrough: Strikethrough,
                 custom_style_tool: CustomStyleTool,
-                citation: CitationToolOld,
+                citation: CitationTool,
                 image: {
                     class: ImageTool,
                     config: {
@@ -83,7 +83,7 @@ export async function show_editor(){
 
         // Make all existing notes and citations clickable
         NoteTool.add_all_show_note_settings_listeners();
-        CitationToolOld.add_all_show_note_settings_listeners();
+        CitationTool.add_all_show_note_settings_listeners();
     }catch(e){
         console.error(e);
         Tools.show_alert("Couldn't load content.", "danger");

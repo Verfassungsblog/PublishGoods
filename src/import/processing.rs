@@ -1646,6 +1646,14 @@ impl ImportProcessor {
                             }
                         }
                     }
+                    if el.name == "em"{
+                        html.push_str(&format!("<i>{}</i>", &self.dom_to_html(el.clone(), footnotes, endnotes, convert_links, project_data.clone()).await));
+                        continue;
+                    }
+                    if el.name == "strong"{
+                        html.push_str(&format!("<b>{}</b>", &self.dom_to_html(el.clone(), footnotes, endnotes, convert_links, project_data.clone()).await));
+                        continue;
+                    }
 
                     let mut attrs: String = String::new();
                     for (attr, attrvalue) in el.attributes.iter() {
