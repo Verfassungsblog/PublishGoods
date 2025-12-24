@@ -973,6 +973,8 @@ function init_autopatch(){
             }
         }else if (target.tagName.toLowerCase() === "select"){
             target.addEventListener("change", autopatch_listener);
+        }else if (target.tagName.toLowerCase() === "textarea"){
+            target.addEventListener("input", autopatch_listener);
         } else{
             //TODO: implement for textfields etc.
             console.error("Autopatch not implemented for tag "+target.tagName.toLowerCase());
@@ -1009,7 +1011,7 @@ async function autopatch_listener(e: Event){
         }else{
             value = target.value;
         }
-    }else if(target instanceof HTMLSelectElement){
+    }else if(target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement){
         value = target.value;
     }
     else{

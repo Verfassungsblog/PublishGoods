@@ -268,11 +268,18 @@ select{
     border: unset;
     border-bottom: 1px solid lightgray;
 }
-input[type=text]{
+input[type=text],input[type=url],input[type=email],input[type=number],input[type=password],input[type=date]{
     height:30px;
     background-color: unset;
     border: unset;
     border-bottom: 1px solid lightgray;
+    width: 100%;
+}
+textarea{
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+    resize: vertical;
     width: 100%;
 }
 .col-6{

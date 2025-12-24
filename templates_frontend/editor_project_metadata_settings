@@ -51,6 +51,42 @@
         <label for="metadata.subtitle">Subtitle</label>
         <input type="text" id="metadata.subtitle" data-patch="metadata.subtitle" class="autopatch" value="{{metadata.subtitle}}">
     </div>
+    <div class="form-group">
+        <label for="metadata.web_url">Web URL</label>
+        <input type="url" id="metadata.web_url" data-patch="metadata.web_url" class="autopatch" value="{{metadata.web_url}}">
+    </div>
+    <div class="form-group col-6">
+        <label for="metadata.published">Date of Publication</label>
+        <input type="date" id="metadata.published" data-patch="metadata.published" class="autopatch" value="{{metadata.published}}">
+    </div>
+    <div class="form-group col-6">
+        <label for="metadata.number_of_pages">Number of Pages</label>
+        <input type="number" id="metadata.number_of_pages" data-patch="metadata.number_of_pages" class="autopatch" value="{{metadata.number_of_pages}}">
+    </div>
+    <div class="form-group col-6">
+        <label for="metadata.series">Series</label>
+        <input type="text" id="metadata.series" data-patch="metadata.series" class="autopatch" value="{{metadata.series}}">
+    </div>
+    <div class="form-group col-6">
+        <label for="metadata.volume">Volume</label>
+        <input type="text" id="metadata.volume" data-patch="metadata.volume" class="autopatch" value="{{metadata.volume}}">
+    </div>
+    <div class="form-group col-6">
+        <label for="metadata.edition">Edition</label>
+        <input type="text" id="metadata.edition" data-patch="metadata.edition" class="autopatch" value="{{metadata.edition}}">
+    </div>
+    <div class="form-group col-6">
+        <label for="metadata.publisher">Publisher</label>
+        <input type="text" id="metadata.publisher" data-patch="metadata.publisher" class="autopatch" value="{{metadata.publisher}}">
+    </div>
+    <div class="form-group">
+        <label for="metadata.short_abstract">Short Abstract</label>
+        <textarea id="metadata.short_abstract" rows="2" data-patch="metadata.short_abstract" class="autopatch">{{metadata.short_abstract}}</textarea>
+    </div>
+    <div class="form-group">
+        <label for="metadata.long_abstract">Long Abstract</label>
+        <textarea id="metadata.long_abstract" rows="5" data-patch="metadata.long_abstract" class="autopatch">{{metadata.long_abstract}}</textarea>
+    </div>
     <div>
         <label>Authors</label>
         <div id="metadata_authors_div" class="persons_list">
