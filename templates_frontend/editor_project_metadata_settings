@@ -61,7 +61,7 @@
             {{/each}}
         </div>
         <div class="m-0 align-items-baseline">
-            <input type="text" style="width: 300px;" class="form-control form-control-sm" id="project_metadata_search_authors" placeholder="Add Author">
+            <input type="text" class="form-control form-control-sm form-control-fixed-width" id="project_metadata_search_authors" placeholder="Add Author">
             <ul class="list-group search_result_list hide" tabindex="0" id="project_metadata_search_authors_results">
             </ul>
         </div>
@@ -76,7 +76,7 @@
             {{/each}}
         </div>
         <div class="m-0 align-items-baseline">
-            <input type="text" style="width: 300px;" class="form-control form-control-sm" id="section_metadata_search_editors" placeholder="Add Editor">
+            <input type="text" class="form-control form-control-sm form-control-fixed-width" id="section_metadata_search_editors" placeholder="Add Editor">
             <ul class="list-group search_result_list hide" tabindex="0" id="section_metadata_search_editors_results">
             </ul>
         </div>
@@ -89,7 +89,7 @@
             {{/each}}
         </div>
         <div class="m-0 align-items-baseline position-relative">
-            <input type="text" style="width: 300px;" class="form-control form-control-sm" id="project_metadata_search_keywords" placeholder="Add Keyword (GND or free text)">
+            <input type="text" class="form-control form-control-sm form-control-fixed-width" id="project_metadata_search_keywords" placeholder="Add Keyword (GND or free text)">
             <ul class="list-group search_result_list hide" tabindex="0" id="project_metadata_search_keywords_results">
             </ul>
         </div>
@@ -102,7 +102,7 @@
             {{/each}}
         </div>
         <div class="m-0 align-items-baseline">
-            <select style="width: 300px;" class="form-control form-control-sm" id="project_metadata_add_language">
+            <select class="form-control form-control-sm form-control-fixed-width" id="project_metadata_add_language">
                 <option value="">Select Language to add</option>
                 <option value="af-ZA">Afrikaans (South Africa) (af-ZA)</option>
                 <option value="sq-AL">Albanian (Albania) (sq-AL)</option>
@@ -355,6 +355,23 @@
                 <option value="tzm-Latn-DZ">Tamazight (Latin, Algeria) (tzm-Latn-DZ)</option>
                 <option value="ii-CN">Yi (People's Republic of China) (ii-CN)</option>
             </select>
+        </div>
+    </div>
+    <div>
+        <label for="project_metadata_license">License</label>
+        <div class="form-group-inline">
+            <select id="project_metadata_license" class="form-control form-control-sm form-control-fixed-width">
+                <option value="" {{#unless metadata.license}}selected{{/unless}}>None</option>
+                <option value="CC0" {{#is metadata.license "CC0"}}selected{{/is}}>CC0</option>
+                <option value="CC_BY_4" {{#is metadata.license "CC_BY_4"}}selected{{/is}}>CC BY 4.0</option>
+                <option value="CC_BY_SA_4" {{#is metadata.license "CC_BY_SA_4"}}selected{{/is}}>CC BY-SA 4.0</option>
+                <option value="CC_BY_ND_4" {{#is metadata.license "CC_BY_ND_4"}}selected{{/is}}>CC BY-ND 4.0</option>
+                <option value="CC_BY_NC_4" {{#is metadata.license "CC_BY_NC_4"}}selected{{/is}}>CC BY-NC 4.0</option>
+                <option value="CC_BY_NC_SA_4" {{#is metadata.license "CC_BY_NC_SA_4"}}selected{{/is}}>CC BY-NC-SA 4.0</option>
+                <option value="CC_BY_NC_ND_4" {{#is metadata.license "CC_BY_NC_ND_4"}}selected{{/is}}>CC BY-NC-ND 4.0</option>
+                <option value="Other" {{#if metadata.license.Other}}selected{{/if}}>Other</option>
+            </select>
+            <input type="text" id="project_metadata_license_other" class="form-control form-control-sm form-control-fixed-width {{#unless metadata.license.Other}}hide{{/unless}}" placeholder="Specify other license" value="{{metadata.license.Other}}">
         </div>
     </div>
     <div>

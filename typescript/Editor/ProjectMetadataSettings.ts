@@ -63,6 +63,9 @@ export async function show_project_metadata_settings(data: APIProjectData) {
 
     // Enable keywords editing
     init_keyword_search();
+
+    // Enable license editing
+    init_license_listeners();
 }
 
 function init_languages_listeners() {
@@ -136,6 +139,50 @@ async function patch_languages() {
         patch_data.metadata = {};
     }
     patch_data.metadata.languages = languages;
+    request_patch();
+}
+
+function init_license_listeners() {
+    const licenseSelect = document.getElementById("project_metadata_license") as HTMLSelectElement | null;
+    const licenseOtherInput = document.getElementById("project_metadata_license_other") as HTMLInputElement | null;
+
+    if (licenseSelect && licenseOtherInput) {
+        licenseSelect.addEventListener("change", () => {
+            if (licenseSelect.value === "Other") {
+                licenseOtherInput.classList.remove("hide");
+            } else {
+                licenseOtherInput.classList.add("hide");
+            }
+            patch_license();
+        });
+
+        licenseOtherInput.addEventListener("input", () => {
+            patch_license();
+        });
+    }
+}
+
+async function patch_license() {
+    const licenseSelect = document.getElementById("project_metadata_license") as HTMLSelectElement | null;
+    const licenseOtherInput = document.getElementById("project_metadata_license_other") as HTMLInputElement | null;
+
+    if (!licenseSelect || !licenseOtherInput) {
+        return;
+    }
+
+    let license: any;
+    if (licenseSelect.value === "Other") {
+        license = { Other: licenseOtherInput.value };
+    } else if (licenseSelect.value === "") {
+        license = null;
+    } else {
+        license = licenseSelect.value;
+    }
+
+    if (!patch_data.metadata) {
+        patch_data.metadata = {};
+    }
+    patch_data.metadata.license = license;
     request_patch();
 }
 

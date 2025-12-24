@@ -9,7 +9,9 @@ body, html{
 /* Ensure predictable sizing to reduce overflow risk */
 *, *::before, *::after { box-sizing: border-box; }
 
-.hide { display: none !important; }
+.form-control-fixed-width {
+    width: 300px;
+}
 
 body{
     font-family: 'Nunito', sans-serif;
