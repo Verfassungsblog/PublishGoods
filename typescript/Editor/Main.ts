@@ -46,8 +46,10 @@ window.addEventListener('load', async () => {
     console.log('Loading Editor!');
     // Register Handlebars helpers
     // @ts-ignore
-    Handlebars.registerHelper("is", function (arg1: unknown, arg2: unknown, options: unknown) {
-        // @ts-ignore
+    Handlebars.registerHelper("is", function (arg1: unknown, arg2: unknown, options: any) {
+        if (typeof arg1 === "object" && arg1 !== null && typeof arg2 === "string") {
+            if (arg1.hasOwnProperty(arg2)) return options.fn(this);
+        }
         return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
     });
 

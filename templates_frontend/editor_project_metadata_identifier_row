@@ -1,21 +1,21 @@
 <div class="project_metadata_identifier_row" data-identifier-id="{{id}}">
         <select class="project_metadata_identifier_type">
-            <option value="DOI" {{#if DOI}}selected{{/if}}>DOI</option>
-            <option value="ISBN" {{#if ISBN}}selected{{/if}}>ISBN</option>
-            <option value="ISSN" {{#if ISSN}}selected{{/if}}>ISSN</option>
-            <option value="URL" {{#if URL}}selected{{/if}}>URL</option>
-            <option value="URN" {{#if URN}}selected{{/if}}>URN</option>
-            <option value="ORCID" {{#if ORCID}}selected{{/if}}>ORCID</option>
-            <option value="ROR" {{#if ROR}}selected{{/if}}>ROR</option>
-            <option value="GND" {{#if GND}}selected{{/if}}>GND</option>
-            <option value="Other" {{#if Other}}selected{{/if}}>Other</option>
+            <option value="DOI" {{#is identifier_type "DOI"}}selected{{/is}}>DOI</option>
+            <option value="ISBN" {{#is identifier_type "ISBN"}}selected{{/is}}>ISBN</option>
+            <option value="ISSN" {{#is identifier_type "ISSN"}}selected{{/is}}>ISSN</option>
+            <option value="URL" {{#is identifier_type "URL"}}selected{{/is}}>URL</option>
+            <option value="URN" {{#is identifier_type "URN"}}selected{{/is}}>URN</option>
+            <option value="ORCID" {{#is identifier_type "ORCID"}}selected{{/is}}>ORCID</option>
+            <option value="ROR" {{#is identifier_type "ROR"}}selected{{/is}}>ROR</option>
+            <option value="GND" {{#is identifier_type "GND"}}selected{{/is}}>GND</option>
+            <option value="Other" {{#is identifier_type "Other"}}selected{{/is}}>Other</option>
         </select>
         <input type="text" class="project_metadata_identifier_name" placeholder="Unique Name (e.g. ebook ISBN)"
                value="{{name}}">
         <input type="text" class="project_metadata_identifier_value" placeholder="Value (e.g. 10.123456/...)"
                value="{{value}}">
-        <input type="text" class="project_metadata_identifier_other {{#unless Other}}hide{{/unless}}"
-               placeholder="Other type" value="{{Other}}">
+        <input type="text" class="project_metadata_identifier_other {{#unless identifier_type.Other}}hide{{/unless}}"
+               placeholder="Other type" value="{{identifier_type.Other}}">
         <button class="img-btn project_metadata_identifier_remove_btn">
             <svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="red">
                 <path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"></path>

@@ -33,35 +33,6 @@ let save_timeout : NodeJS.Timeout | null = null;
 
 let dragged_editor_element: HTMLElement | null = null;
 
-function prepareIdentifiersForTemplate(identifiers: any[]){
-    return identifiers.map(identifier => {
-        const rawType = identifier.identifier_type;
-
-        let typeKey: string | undefined = undefined;
-        let otherValue = "";
-
-        if(typeof rawType === "string"){
-            typeKey = rawType;
-        }else if(rawType && typeof rawType === "object"){
-            const entries = Object.entries(rawType);
-            if(entries.length){
-                typeKey = entries[0][0];
-                otherValue = typeKey === "Other" ? (entries[0][1] as string || "") : "";
-            }
-        }
-
-        const typeFlag = typeKey
-            ? {[typeKey]: typeKey === "Other" ? (otherValue || "") : true}
-            : {};
-
-        return {
-            ...identifier,
-            ...typeFlag,
-            name: identifier.name ?? (typeKey === "Other" ? otherValue : typeKey || ""),
-            value: identifier.value ?? ""
-        };
-    });
-}
 
 /**
  * Renders the project metadata settings view using the provided project data.
@@ -70,16 +41,8 @@ function prepareIdentifiersForTemplate(identifiers: any[]){
  * @return {void} This function does not return a value.
  */
 export async function show_project_metadata_settings(data: APIProjectData) {
-    const preparedIdentifiers = prepareIdentifiersForTemplate(data.metadata?.identifiers || []);
-
     // @ts-ignore
-    main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings({
-        ...data,
-        metadata: {
-            ...data.metadata,
-            identifiers: preparedIdentifiers
-        }
-    });
+    main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(data);
 
     init_autopatch();
     // Add cover / backcover upload listeners
@@ -92,11 +55,88 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     // Enable identifiers editing
     init_identifiers_listeners();
 
+    // Enable languages editing
+    init_languages_listeners();
+
     // Enable search + add for project metadata authors & editors
     init_person_search();
 
     // Enable keywords editing
     init_keyword_search();
+}
+
+function init_languages_listeners() {
+    const languages_add_select = document.getElementById("project_metadata_add_language") as HTMLSelectElement | null;
+
+    if (languages_add_select) {
+        languages_add_select.addEventListener("change", async () => {
+            const lang_tag = languages_add_select.value;
+            if (!lang_tag) {
+                return;
+            }
+
+            const existing = document.querySelector<HTMLElement>(`.metadata_language_div[data-lang='${lang_tag}']`);
+            if (existing) {
+                show_alert("Language already added.", "warning");
+                languages_add_select.value = "";
+                return;
+            }
+
+            const languages_list = document.getElementById("project_metadata_languages_list") as HTMLElement | null;
+            if (!languages_list) {
+                return;
+            }
+
+            languages_add_select.value = "";
+
+            // @ts-ignore
+            languages_list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_language_tag(lang_tag));
+
+            add_languages_listeners();
+            await patch_languages();
+        });
+    }
+
+    add_languages_listeners();
+}
+
+function add_languages_listeners() {
+    const language_remove_listener = async (e: Event) => {
+        const target = e.currentTarget as HTMLElement;
+        const parent = target.closest(".metadata_language_div");
+        if (parent) {
+            parent.remove();
+            await patch_languages();
+        }
+    };
+
+    const remove_btns = document.querySelectorAll(".metadata_language_remove");
+    remove_btns.forEach(btn => {
+        btn.removeEventListener("click", language_remove_listener);
+        btn.addEventListener("click", language_remove_listener);
+    });
+}
+
+async function patch_languages() {
+    const languages_list = document.getElementById("project_metadata_languages_list");
+    if (!languages_list) {
+        return;
+    }
+
+    const language_divs = languages_list.querySelectorAll(".metadata_language_div");
+    const languages: string[] = [];
+    language_divs.forEach(div => {
+        const lang = div.getAttribute("data-lang");
+        if (lang) {
+            languages.push(lang);
+        }
+    });
+
+    if (!patch_data.metadata) {
+        patch_data.metadata = {};
+    }
+    patch_data.metadata.languages = languages;
+    request_patch();
 }
 
 function init_keyword_search(){
@@ -474,17 +514,8 @@ function init_identifiers_listeners(){
                 identifier_type: identifier_type === "Other" ? {Other: other} : {[identifier_type]: null}
             };
 
-            const templateTypeFlag = identifier_type === "Other"
-                ? {Other: other}
-                : {[identifier_type]: true};
-
             // @ts-ignore
-            list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_identifier_row({
-                id: identifierPayload.id,
-                name: identifierPayload.name,
-                value: identifierPayload.value,
-                ...templateTypeFlag
-            }));
+            list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_identifier_row(identifierPayload));
 
             nameInput.value = "";
             valueInput.value = "";
