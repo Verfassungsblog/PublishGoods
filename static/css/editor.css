@@ -330,6 +330,37 @@ h1{
     display: flex;
     flex-wrap: wrap;
 }
+
+.keywords_list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.metadata_keyword_div {
+    background-color: #e9ecef;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 2px 8px;
+    display: flex;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.metadata_keyword_title {
+    margin-right: 5px;
+    display: flex;
+    align-items: center;
+}
+
+.metadata_keyword_remove {
+    padding: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
 .metadata_person_div_name{
     border: 1px solid lightgray;
     padding: 5px;

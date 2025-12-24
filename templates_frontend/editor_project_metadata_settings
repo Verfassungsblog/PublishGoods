@@ -82,6 +82,19 @@
         </div>
     </div>
     <div>
+        <label>Keywords</label>
+        <div id="project_metadata_keywords_list" class="keywords_list">
+            {{#each metadata.keywords}}
+                {{> editor_project_metadata_keyword_tag}}
+            {{/each}}
+        </div>
+        <div class="m-0 align-items-baseline position-relative">
+            <input type="text" style="width: 300px;" class="form-control form-control-sm" id="project_metadata_search_keywords" placeholder="Add Keyword (GND or free text)">
+            <ul class="list-group search_result_list hide" tabindex="0" id="project_metadata_search_keywords_results">
+            </ul>
+        </div>
+    </div>
+    <div>
         <label>Identifiers</label>
         <div id="project_metadata_identifiers_list">
             {{#each metadata.identifiers}}

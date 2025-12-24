@@ -11,7 +11,7 @@
         </button>
         {{/if}}
         <div class="form-check">
-            <input disabled class="form-check-input" value="{{id}}" type="checkbox" id="wp-category-{{prefix}}-{{id}}">
+            <input disabled="disabled" class="form-check-input" value="{{id}}" type="checkbox" id="wp-category-{{prefix}}-{{id}}">
             <label class="form-check-label" for="wp-category-{{prefix}}-{{id}}">
                 {{name}}
             </label>

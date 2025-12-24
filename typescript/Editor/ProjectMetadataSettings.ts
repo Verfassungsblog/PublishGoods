@@ -94,6 +94,139 @@ export async function show_project_metadata_settings(data: APIProjectData) {
 
     // Enable search + add for project metadata authors & editors
     init_person_search();
+
+    // Enable keywords editing
+    init_keyword_search();
+}
+
+function init_keyword_search(){
+    const keywords_searchbar = document.getElementById("project_metadata_search_keywords") as HTMLInputElement | null;
+    const keywords_results = document.getElementById("project_metadata_search_keywords_results") as HTMLElement | null;
+
+    if(keywords_searchbar && keywords_results){
+        const on_keyword_selected = async (selected: HTMLElement) => {
+            const gnd_id = selected.getAttribute("data-gnd-id");
+            const gnd_label = selected.getAttribute("data-gnd-label");
+
+            if(!gnd_id || !gnd_label){
+                return;
+            }
+
+            const existing = document.querySelector<HTMLElement>(`.metadata_keyword_div[data-gnd-id='${gnd_id}']`);
+            if(existing){
+                show_alert("Keyword already added.", "warning");
+                return;
+            }
+
+            const keywords_list = document.getElementById("project_metadata_keywords_list") as HTMLElement | null;
+            if(!keywords_list){
+                return;
+            }
+
+            keywords_searchbar.value = "";
+
+            // @ts-ignore
+            keywords_list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_keyword_tag({
+                title: gnd_label,
+                gnd: {
+                    value: gnd_id
+                }
+            }));
+
+            add_keyword_listeners();
+            await patch_keywords();
+        };
+
+        add_search(
+            keywords_searchbar,
+            keywords_results,
+            editorApi.searchGnd,
+            // @ts-ignore
+            Handlebars.templates.editor_project_metadata_search_gnd_li,
+            on_keyword_selected
+        );
+
+        keywords_searchbar.addEventListener("keydown", async function (e: KeyboardEvent){
+            if(e.key !== "Enter"){
+                return;
+            }
+            const value = keywords_searchbar.value.trim();
+            if(!value){
+                return;
+            }
+
+            const keywords_list = document.getElementById("project_metadata_keywords_list") as HTMLElement | null;
+            if(!keywords_list){
+                return;
+            }
+
+            keywords_searchbar.value = "";
+
+            // @ts-ignore
+            keywords_list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_keyword_tag({
+                title: value,
+                gnd: null
+            }));
+
+            add_keyword_listeners();
+            await patch_keywords();
+        });
+    }
+
+    add_keyword_listeners();
+}
+
+function add_keyword_listeners(){
+    const keywords_rm_buttons = Array.from(document.querySelectorAll<HTMLElement>("#project_metadata_keywords_list .metadata_keyword_remove"));
+    const keyword_remove_listener = function(e: Event){
+        const target = e.target as HTMLElement;
+        const keyword_div = target.closest(".metadata_keyword_div") as HTMLElement | null;
+        if(!keyword_div){
+            return;
+        }
+        keyword_div.remove();
+        patch_keywords().then();
+    };
+
+    for(const button of keywords_rm_buttons){
+        button.addEventListener("click", keyword_remove_listener);
+    }
+}
+
+async function patch_keywords(){
+    const keywords_divs = Array.from(document.querySelectorAll<HTMLElement>("#project_metadata_keywords_list .metadata_keyword_div"));
+    const keywords: any[] = [];
+
+    for(const div of keywords_divs){
+        const title = div.getAttribute("data-title");
+        const gnd_id = div.getAttribute("data-gnd-id");
+
+        if(!title){
+            continue;
+        }
+
+        let gnd = null;
+        if(gnd_id){
+            gnd = {
+                id: null,
+                name: "GND",
+                value: gnd_id,
+                identifier_type: "GND"
+            };
+        }
+
+        keywords.push({
+            title: title,
+            gnd: gnd
+        });
+    }
+
+    try{
+        await editorApi.patchProject(state.project_id, {metadata: {keywords}});
+    }catch (e){
+        console.error("Failed to save keywords", e);
+        show_alert("Couldn't save keywords.", "error");
+    }
 }
 
 function init_person_search(){

@@ -220,3 +220,10 @@ impl<T: Serialize> From<T> for APIResponse<T> {
         APIResponse { data: value }
     }
 }
+
+impl From<reqwest::Error> for ApiError {
+    fn from(value: reqwest::Error) -> Self {
+        error!("Reqwest Error: {:?}", value);
+        ApiErrorType::InternalServerError.into()
+    }
+}
