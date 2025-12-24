@@ -66,6 +66,97 @@ export async function show_project_metadata_settings(data: APIProjectData) {
 
     // Enable license editing
     init_license_listeners();
+
+    // Enable DDC selection
+    init_ddc_listeners();
+    if(data.metadata && data.metadata.ddc){
+        set_initial_ddc(data.metadata.ddc);
+    }
+}
+
+function init_ddc_listeners(){
+    const main_select = document.getElementById("project_metadata_ddc_main_classes") as HTMLSelectElement | null;
+    if(!main_select){
+        return;
+    }
+
+    main_select.addEventListener("change", () => {
+        const val = main_select.value;
+        // Hide all second and third level selects
+        document.querySelectorAll(".ddc_second_level, .ddc_third_level").forEach(el => el.classList.add("hide"));
+
+        if(val !== "none"){
+            const second_level = document.getElementById(`project_metadata_ddc_${val}`) as HTMLSelectElement | null;
+            if(second_level){
+                second_level.classList.remove("hide");
+                second_level.value = val; // Reset to "Select DDC x" placeholder
+            }
+            patch_ddc(val);
+        } else {
+            patch_ddc(null);
+        }
+    });
+
+    const second_level_selects = document.querySelectorAll(".ddc_second_level");
+    second_level_selects.forEach(select => {
+        select.addEventListener("change", (e) => {
+            const target = e.target as HTMLSelectElement;
+            const val = target.value;
+
+            // Hide all third level selects
+            document.querySelectorAll(".ddc_third_level").forEach(el => el.classList.add("hide"));
+
+            const third_level = document.getElementById(`project_metadata_ddc_${val}`) as HTMLSelectElement | null;
+            if(third_level){
+                third_level.classList.remove("hide");
+                third_level.value = val; // Reset to placeholder
+            }
+            patch_ddc(val);
+        });
+    });
+
+    const third_level_selects = document.querySelectorAll(".ddc_third_level");
+    third_level_selects.forEach(select => {
+        select.addEventListener("change", (e) => {
+            const target = e.target as HTMLSelectElement;
+            patch_ddc(target.value);
+        });
+    });
+}
+
+function set_initial_ddc(ddc: string){
+    const main_select = document.getElementById("project_metadata_ddc_main_classes") as HTMLSelectElement | null;
+    if(!main_select || !ddc){
+        return;
+    }
+
+    const first_digit = ddc.charAt(0);
+    main_select.value = first_digit;
+
+    const second_level = document.getElementById(`project_metadata_ddc_${first_digit}`) as HTMLSelectElement | null;
+    if(second_level){
+        second_level.classList.remove("hide");
+        if(ddc.length >= 2){
+            const second_digit = ddc.substring(0, 2);
+            second_level.value = second_digit;
+
+            const third_level = document.getElementById(`project_metadata_ddc_${second_digit}`) as HTMLSelectElement | null;
+            if(third_level){
+                third_level.classList.remove("hide");
+                if(ddc.length >= 3){
+                    third_level.value = ddc.substring(0, 3);
+                }
+            }
+        }
+    }
+}
+
+async function patch_ddc(value: string | null){
+    if(!patch_data.metadata){
+        patch_data.metadata = {};
+    }
+    patch_data.metadata.ddc = value;
+    request_patch();
 }
 
 function init_languages_listeners() {
