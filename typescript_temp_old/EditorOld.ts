@@ -1,4 +1,4 @@
-import EditorJS from "@editorjs/editorjs";
+/*import EditorJS from "@editorjs/editorjs";
 import Header from '@editorjs/header';
 // @ts-ignore
 import RawTool from '@editorjs/raw';
@@ -116,4 +116,4 @@ function typing_handler(){
     typing_timer = setTimeout(async function(){
         await save_changes();
     }, 500);
-}
+}*/
