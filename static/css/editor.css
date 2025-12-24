@@ -446,17 +446,18 @@ h1{
 .search_result_list li:last-child{
     border-bottom: none;
 }
-.project_metadata_identifier_row{
+.project_metadata_identifier_row, .project_metadata_custom_field_row{
     display: flex;
     flex-wrap: wrap;
+    margin-bottom: 5px;
 }
-.project_metadata_identifier_value{
+.project_metadata_identifier_value, .project_metadata_custom_field_value{
     width: auto !important;
     min-width: 200px;
     margin-left: 5px;
     flex-grow: 1;
 }
-.project_metadata_identifier_name{
+.project_metadata_identifier_name, .project_metadata_custom_field_key{
     width: auto !important;
     margin-left: 5px;
     min-width: 100px;

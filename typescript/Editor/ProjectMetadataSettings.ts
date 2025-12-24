@@ -67,6 +67,9 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     // Enable license editing
     init_license_listeners();
 
+    // Enable custom fields editing
+    init_custom_fields_listeners();
+
     // Enable DDC selection
     init_ddc_listeners();
     if(data.metadata && data.metadata.ddc){
@@ -756,6 +759,88 @@ async function patch_identifiers(){
     }catch (e){
         console.error("Failed to save identifiers", e);
         show_alert("Couldn't save identifiers.", "error");
+    }
+}
+
+function init_custom_fields_listeners() {
+    const addBtn = document.getElementById("project_metadata_custom_fields_add");
+    if (addBtn) {
+        addBtn.addEventListener("click", () => {
+            const keyInput = document.getElementById("project_metadata_custom_fields_new_key") as HTMLInputElement;
+            const valueInput = document.getElementById("project_metadata_custom_fields_new_value") as HTMLInputElement;
+            const key = keyInput.value.trim();
+            const value = valueInput.value.trim();
+
+            if (key) {
+                const list = document.getElementById("project_metadata_custom_fields_list");
+                // @ts-ignore
+                const html = Handlebars.templates.editor_project_metadata_custom_field_row({ key, value });
+                const tempDiv = document.createElement("div");
+                tempDiv.innerHTML = html;
+                const newRow = tempDiv.firstElementChild as HTMLElement;
+                list.appendChild(newRow);
+                add_custom_field_row_listeners(newRow);
+
+                keyInput.value = "";
+                valueInput.value = "";
+                patch_custom_fields();
+            } else {
+                show_alert("Field name cannot be empty.", "warning");
+            }
+        });
+    }
+
+    document.querySelectorAll(".project_metadata_custom_field_row[data-key]").forEach(row => {
+        add_custom_field_row_listeners(row as HTMLElement);
+    });
+}
+
+function add_custom_field_row_listeners(row: HTMLElement) {
+    const keyInput = row.querySelector(".project_metadata_custom_field_key") as HTMLInputElement;
+    const valueInput = row.querySelector(".project_metadata_custom_field_value") as HTMLInputElement;
+    const removeBtn = row.querySelector(".project_metadata_custom_field_remove_btn");
+
+    keyInput.addEventListener("change", () => {
+        const oldKey = row.getAttribute("data-key");
+        const newKey = keyInput.value.trim();
+        if (newKey && newKey !== oldKey) {
+            row.setAttribute("data-key", newKey);
+            patch_custom_fields();
+        } else if (!newKey) {
+            keyInput.value = oldKey || "";
+            show_alert("Field name cannot be empty.", "warning");
+        }
+    });
+
+    valueInput.addEventListener("change", () => {
+        patch_custom_fields();
+    });
+
+    if (removeBtn) {
+        removeBtn.addEventListener("click", () => {
+            row.remove();
+            patch_custom_fields();
+        });
+    }
+}
+
+async function patch_custom_fields() {
+    const custom_fields: Record<string, string> = {};
+    document.querySelectorAll("#project_metadata_custom_fields_list .project_metadata_custom_field_row").forEach(row => {
+        const keyInput = row.querySelector(".project_metadata_custom_field_key") as HTMLInputElement;
+        const valueInput = row.querySelector(".project_metadata_custom_field_value") as HTMLInputElement;
+        const key = keyInput.value.trim();
+        const value = valueInput.value.trim();
+        if (key) {
+            custom_fields[key] = value;
+        }
+    });
+
+    try {
+        await editorApi.patchProject(state.project_id, { metadata: { custom_fields } });
+    } catch (e) {
+        console.error("Failed to save custom fields", e);
+        show_alert("Couldn't save custom fields.", "error");
     }
 }
 

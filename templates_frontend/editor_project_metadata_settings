@@ -1953,4 +1953,20 @@
             </select>
         </div>
     </div>
+    <div>
+        <label>Custom Fields</label>
+        <div id="project_metadata_custom_fields_list">
+            {{#each metadata.custom_fields}}
+                {{> editor_project_metadata_custom_field_row key=@key value=this}}
+            {{/each}}
+        </div>
+        <label for="project_metadata_custom_fields_add_div">Add Custom Field</label>
+        <div id="project_metadata_custom_fields_add_div">
+            <div class="project_metadata_custom_field_row">
+                <input type="text" class="project_metadata_custom_field_key" id="project_metadata_custom_fields_new_key" placeholder="Field Name">
+                <input type="text" class="project_metadata_custom_field_value" id="project_metadata_custom_fields_new_value" placeholder="Value">
+                <button class="btn btn-sm btn-primary" id="project_metadata_custom_fields_add">Add</button>
+            </div>
+        </div>
+    </div>
 </div>
