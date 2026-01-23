@@ -2,6 +2,7 @@ import {state} from './Main';
 import {EditorAPI, SectionAPI} from '../api_requests';
 import {show_alert} from "../tools";
 import {show_project_metadata_settings} from "./ProjectMetadataSettings";
+import {showSectionEditor} from "./Section";
 
 export async function init() {
     let contents_panel : HTMLElement = document.getElementsByClassName("sidebar-full-contents-panel")[0] as HTMLElement;
@@ -21,6 +22,13 @@ export async function init() {
         contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
         // Attach drag and drop listeners after render
         add_dnd_listeners();
+        for (let section of Array.from(document.getElementsByClassName("sidebar-contents-section"))){
+            let navigateToSection = function(e: Event){
+                let target = e.target as HTMLElement;
+                showSectionEditor(target.getAttribute("data-section-id"));
+            }
+            section.addEventListener("click", navigateToSection);
+        }
         // Set project name
         project_name.innerText = data.metadata.title;
         project_name.addEventListener("click", init);

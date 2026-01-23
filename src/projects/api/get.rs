@@ -223,7 +223,13 @@ pub async fn get_project(
             api_response.settings = loaded_project.settings;
         }
         if parts.contains("sections") {
-            api_response.sections = Some(loaded_project.sections);
+            let mut sections = loaded_project.sections;
+            for section in sections.iter_mut() {
+                if let SectionOrTocV5::Section(section) = section {
+                    section.truncate_children_recursive();
+                }
+            }
+            api_response.sections = Some(sections);
         }
         if parts.contains("bibliography") {
             api_response.bibliography = Some(loaded_project.bibliography);

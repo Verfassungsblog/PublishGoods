@@ -9,13 +9,15 @@
 #![warn(clippy::missing_docs_in_private_items)]
 
 #[macro_use]
-extern crate rocket; //noinspection RsMainFunctionNotFound
+extern crate rocket;
+use crate::session::session_guard::Session;
+//noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
 use crate::storage::data_storage::current::User;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
-use crate::storage::{data_storage, save_data_worker};
+use crate::storage::{data_storage, save_data_worker, ProjectListEntry};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use crate::utils::csl::CslData;
 use argon2::password_hash::rand_core::OsRng;
@@ -23,7 +25,7 @@ use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
 use rocket::response::Redirect;
-use rocket::Request;
+use rocket::{Request, State};
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
 use tokio_rustls::rustls::server::WebPkiClientVerifier;

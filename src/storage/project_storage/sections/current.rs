@@ -65,6 +65,13 @@ impl Section {
         new_section
     }
 
+    pub fn truncate_children_recursive(&mut self) {
+        self.children = vec![];
+        for sub_section in self.sub_sections.iter_mut() {
+            sub_section.truncate_children_recursive();
+        }
+    }
+
     pub fn insert_child_section_as_child(
         &mut self,
         parent_section_id: &uuid::Uuid,
