@@ -3,13 +3,14 @@
 //!
 //! # Settings
 //! You have to create a new configuration file in the config folder to change the default settings.
-//! The default settings are stored in the file config/default.toml, create a new file named "local.toml" in the same folder.
+//! The default settings pub(crate)are stored in the file config/default.toml, create a new file named "local.toml" in the same folder.
 
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
 #[macro_use]
 extern crate rocket;
+use crate::projects::websocket::WebsocketManager;
 use crate::session::session_guard::Session;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
@@ -165,6 +166,8 @@ async fn rocket() -> _ {
     let import_manager =
         import::processing::ImportProcessor::start(settings.clone(), project_storage.clone());
 
+    let websocket_manager = Arc::new(WebsocketManager::new());
+
     info!("Starting web server...");
     rocket::build()
         .register("/", catchers![forward_to_login])
@@ -257,7 +260,8 @@ async fn rocket() -> _ {
                 settings_page::api::add_user,
                 settings_page::api::update_user,
                 settings_page::api::delete_user,
-                import::api::import_from_upload
+                import::api::import_from_upload,
+                projects::websocket::websocket,
             ],
         )
         .manage(SessionStorage::new())
@@ -267,6 +271,7 @@ async fn rocket() -> _ {
         .manage(import_manager)
         .manage(csl_data)
         .manage(rendering_manager)
+        .manage(websocket_manager)
 }
 
 //TODO: clean shutdown
