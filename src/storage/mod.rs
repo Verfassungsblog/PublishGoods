@@ -5,11 +5,11 @@ use crate::settings::Settings;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHasher};
 use bincode::{Decode, Encode};
-use hayagriva::types::EntryType;
 use hayagriva::types::{
     Date, Duration, DurationRange, FormatString, MaybeTyped, Numeric, NumericDelimiter,
     NumericValue, QualifiedUrl, SerialNumber,
 };
+use hayagriva::types::{EntryType, PageRanges, PageRangesPart};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -123,11 +123,7 @@ pub struct MyPersonsWithRoles {
 impl From<hayagriva::types::PersonsWithRoles> for MyPersonsWithRoles {
     fn from(value: hayagriva::types::PersonsWithRoles) -> Self {
         MyPersonsWithRoles {
-            names: value
-                .names
-                .iter()
-                .map(|p| <hayagriva::types::Person as Clone>::clone(&(*p)).into())
-                .collect(),
+            names: value.names.iter().map(|p| p.clone().into()).collect(),
             role: value.role.into(),
         }
     }
@@ -136,11 +132,7 @@ impl From<hayagriva::types::PersonsWithRoles> for MyPersonsWithRoles {
 impl From<MyPersonsWithRoles> for hayagriva::types::PersonsWithRoles {
     fn from(value: MyPersonsWithRoles) -> Self {
         hayagriva::types::PersonsWithRoles {
-            names: value
-                .names
-                .iter()
-                .map(|p| <MyPerson as Clone>::clone(&(*p)).into())
-                .collect(),
+            names: value.names.iter().map(|p| p.clone().into()).collect(),
             role: value.role.into(),
         }
     }
@@ -440,6 +432,94 @@ pub struct BibEntryV2 {
     pub parents: Vec<BibEntryV2>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+pub struct MyPublisher {
+    #[bincode(with_serde)]
+    pub name: MyFormatString,
+    #[bincode(with_serde)]
+    pub location: Option<MyFormatString>,
+}
+
+impl From<hayagriva::types::Publisher> for MyPublisher {
+    fn from(value: hayagriva::types::Publisher) -> Self {
+        let default_fs = FormatString::from_str("").unwrap();
+        let name = value.name().unwrap_or(&default_fs);
+        MyPublisher {
+            name: name.clone().into(),
+            location: value.location().map(|l| l.clone().into()),
+        }
+    }
+}
+
+impl From<MyPublisher> for hayagriva::types::Publisher {
+    fn from(value: MyPublisher) -> Self {
+        let name: FormatString = value.name.into();
+        hayagriva::types::Publisher::new(Some(name), value.location.map(|l| l.into()))
+    }
+}
+
+/// Struct similar to [hayagriva::Entry], but without special serde annotations, since Bincode doesn't support these
+/// For convenience, the struct implements [From] and [Into] for [hayagriva::Entry] and reverse
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct BibEntryV3 {
+    #[bincode(with_serde)]
+    pub key: uuid::Uuid,
+    #[bincode(with_serde)]
+    pub entry_type: EntryType,
+    #[bincode(with_serde)]
+    pub title: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub authors: Vec<MyPerson>,
+    #[bincode(with_serde)]
+    pub date: Option<MyDate>,
+    #[bincode(with_serde)]
+    pub editors: Vec<MyPerson>,
+    #[bincode(with_serde)]
+    pub affiliated: Vec<MyPersonsWithRoles>,
+    #[bincode(with_serde)]
+    pub publisher: Option<MyPublisher>,
+    #[bincode(with_serde)]
+    pub location: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub organization: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub issue: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub volume: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub volume_total: Option<MyNumeric>,
+    #[bincode(with_serde)]
+    pub edition: Option<MyMaybeTyped<MyNumeric>>,
+    #[bincode(with_serde)]
+    pub page_range: Option<MyMaybeTyped<MyPageRanges>>,
+    #[bincode(with_serde)]
+    pub page_total: Option<MyNumeric>,
+    #[bincode(with_serde)]
+    pub time_range: Option<MyMaybeTyped<MyDurationRange>>,
+    #[bincode(with_serde)]
+    pub runtime: Option<MyMaybeTyped<Duration>>,
+    #[bincode(with_serde)]
+    pub url: Option<MyQualifiedUrl>,
+    #[bincode(with_serde)]
+    pub serial_numbers: Option<BTreeMap<String, String>>,
+    #[bincode(with_serde)]
+    pub language: Option<String>,
+    #[bincode(with_serde)]
+    pub archive: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub archive_location: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub call_number: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub note: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub abstractt: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub genre: Option<MyFormatString>,
+    #[bincode(with_serde)]
+    pub parents: Vec<uuid::Uuid>,
+}
+
 impl From<OldBibEntry> for BibEntryV2 {
     fn from(value: OldBibEntry) -> Self {
         BibEntryV2 {
@@ -483,7 +563,14 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             None => None,
         };
         let publisher = match value.publisher() {
-            Some(publisher) => Some(publisher.clone().into()),
+            Some(publisher) => {
+                let default_fs = FormatString::from_str("").unwrap();
+                let name = publisher.name().unwrap_or(&default_fs);
+                Some(MyFormatString {
+                    value: name.value.to_string(),
+                    short: name.short.as_ref().map(|s| s.to_string()),
+                })
+            }
             None => None,
         };
         let location = match value.location() {
@@ -514,26 +601,17 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             Some(abstract_) => Some(abstract_.clone().into()),
             None => None,
         };
-        let annote = match value.annote() {
-            Some(annote) => Some(annote.clone().into()),
-            None => None,
-        };
+        let annote = None;
         let genre = match value.genre() {
             Some(genre) => Some(genre.clone().into()),
             None => None,
         };
         let authors = match value.authors() {
-            Some(authors) => authors
-                .iter()
-                .map(|x| <hayagriva::types::Person as Clone>::clone(&(*x)).into())
-                .collect(),
+            Some(authors) => authors.iter().map(|x| x.clone().into()).collect(),
             None => vec![],
         };
         let editors = match value.editors() {
-            Some(editors) => editors
-                .iter()
-                .map(|x| <hayagriva::types::Person as Clone>::clone(&(*x)).into())
-                .collect(),
+            Some(editors) => editors.iter().map(|x| x.clone().into()).collect(),
             None => vec![],
         };
 
@@ -555,7 +633,13 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             None => None,
         };
         let page_range = match value.page_range() {
-            Some(page_range) => Some(page_range.clone().into()),
+            Some(page_range) => match page_range {
+                MaybeTyped::Typed(t) => {
+                    let my_page_ranges: MyPageRanges = t.clone().into();
+                    Some(MyMaybeTyped::Typed(my_page_ranges.into()))
+                }
+                MaybeTyped::String(s) => Some(MyMaybeTyped::String(s.to_string())),
+            },
             None => None,
         };
         let volume_total = match value.volume_total() {
@@ -579,10 +663,7 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             None => None,
         };
         let affiliated = match value.affiliated() {
-            Some(affiliated) => affiliated
-                .iter()
-                .map(|x| <hayagriva::types::PersonsWithRoles as Clone>::clone(&(*x)).into())
-                .collect(),
+            Some(affiliated) => affiliated.iter().map(|x| x.clone().into()).collect(),
             None => vec![],
         };
         let time_range = match value.time_range() {
@@ -604,10 +685,7 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
         let parents_arr = value.parents();
         let mut parents = vec![];
         if parents_arr.len() > 0 {
-            parents = parents_arr
-                .iter()
-                .map(|x| (&<hayagriva::Entry as Clone>::clone(&(*x))).into())
-                .collect();
+            parents = parents_arr.iter().map(|x| (&x.clone()).into()).collect();
         }
         BibEntryV2 {
             key: value.key().to_string(),
@@ -652,13 +730,7 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if value.authors.len() > 0 {
-            entry.set_authors(
-                value
-                    .authors
-                    .iter()
-                    .map(|x| <MyPerson as Clone>::clone(&(*x)).into())
-                    .collect(),
-            )
+            entry.set_authors(value.authors.iter().map(|x| x.clone().into()).collect())
         }
 
         if let Some(date) = value.date {
@@ -666,13 +738,7 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if value.editors.len() > 0 {
-            entry.set_editors(
-                value
-                    .editors
-                    .iter()
-                    .map(|x| <MyPerson as Clone>::clone(&(*x)).into())
-                    .collect(),
-            );
+            entry.set_editors(value.editors.iter().map(|x| x.clone().into()).collect());
         }
 
         if value.affiliated.len() > 0 {
@@ -680,7 +746,10 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if let Some(publisher) = value.publisher {
-            entry.set_publisher(publisher.into());
+            entry.set_publisher(hayagriva::types::Publisher::new(
+                Some(publisher.into()),
+                None,
+            ));
         }
 
         if let Some(location) = value.location {
@@ -720,8 +789,11 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if let Some(page_range) = value.page_range {
-            let npage_range: MaybeTyped<Numeric> = match page_range {
-                MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
+            let npage_range: MaybeTyped<hayagriva::types::PageRanges> = match page_range {
+                MyMaybeTyped::Typed(t) => {
+                    let my_page_ranges: MyPageRanges = t.into();
+                    MaybeTyped::Typed(my_page_ranges.into())
+                }
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
             };
             entry.set_page_range(npage_range);
@@ -776,10 +848,6 @@ impl From<BibEntryV2> for hayagriva::Entry {
 
         if let Some(abstract_) = value.abstractt {
             entry.set_abstract_(abstract_.into());
-        }
-
-        if let Some(annote) = value.annote {
-            entry.set_annote(annote.into());
         }
 
         if let Some(genre) = value.genre {
@@ -1000,6 +1068,232 @@ impl From<MyQualifiedUrl> for QualifiedUrl {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MyPageRanges {
+    /// The given ranges.
+    pub ranges: Vec<MyPageRangesPart>,
+}
+
+impl From<hayagriva::types::PageRanges> for MyPageRanges {
+    fn from(value: hayagriva::types::PageRanges) -> Self {
+        MyPageRanges {
+            ranges: value.ranges.into_iter().map(|r| r.into()).collect(),
+        }
+    }
+}
+
+impl From<MyPageRanges> for hayagriva::types::PageRanges {
+    fn from(value: MyPageRanges) -> Self {
+        hayagriva::types::PageRanges {
+            ranges: value.ranges.into_iter().map(|r| r.into()).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MyPageRangesPart {
+    /// An and, i.e, `&`.
+    Ampersand,
+    /// A comma, i.e., `,`.
+    Comma,
+    /// An escaped range with start and end, e.g., `1\-4`.
+    EscapedRange(MyNumeric, MyNumeric),
+    /// A single page, e.g., `5`.
+    SinglePage(MyNumeric),
+    /// A full range, e.g., `1n8--1n14`.
+    Range(MyNumeric, MyNumeric),
+}
+
+impl From<hayagriva::types::PageRangesPart> for MyPageRangesPart {
+    fn from(value: PageRangesPart) -> Self {
+        match value {
+            PageRangesPart::Ampersand => MyPageRangesPart::Ampersand,
+            PageRangesPart::Comma => MyPageRangesPart::Comma,
+            PageRangesPart::EscapedRange(start, end) => {
+                MyPageRangesPart::EscapedRange(start.into(), end.into())
+            }
+            PageRangesPart::SinglePage(page) => MyPageRangesPart::SinglePage(page.into()),
+            PageRangesPart::Range(start, end) => MyPageRangesPart::Range(start.into(), end.into()),
+        }
+    }
+}
+
+impl From<MyPageRangesPart> for PageRangesPart {
+    fn from(value: MyPageRangesPart) -> Self {
+        match value {
+            MyPageRangesPart::Ampersand => PageRangesPart::Ampersand,
+            MyPageRangesPart::Comma => PageRangesPart::Comma,
+            MyPageRangesPart::EscapedRange(start, end) => {
+                PageRangesPart::EscapedRange(start.into(), end.into())
+            }
+            MyPageRangesPart::SinglePage(page) => PageRangesPart::SinglePage(page.into()),
+            MyPageRangesPart::Range(start, end) => PageRangesPart::Range(start.into(), end.into()),
+        }
+    }
+}
+
+impl From<MyPageRanges> for MyNumeric {
+    fn from(value: MyPageRanges) -> Self {
+        if value.ranges.is_empty() {
+            return MyNumeric {
+                value: MyNumericValue::Number(0),
+                prefix: None,
+                suffix: None,
+            };
+        }
+
+        let mut set = Vec::new();
+        let mut last_prefix = None;
+        let mut last_suffix = None;
+
+        for (i, range_part) in value.ranges.iter().enumerate() {
+            match range_part {
+                MyPageRangesPart::SinglePage(n) => {
+                    if let MyNumericValue::Number(val) = n.value {
+                        let delimiter = if i + 1 < value.ranges.iter().len() {
+                            match &value.ranges[i + 1] {
+                                MyPageRangesPart::Comma => Some(MyNumericDelimiter::Comma),
+                                MyPageRangesPart::Ampersand => Some(MyNumericDelimiter::Ampersand),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        set.push((val, delimiter));
+                        if last_prefix.is_none() {
+                            last_prefix = n.prefix.clone();
+                        }
+                        if last_suffix.is_none() {
+                            last_suffix = n.suffix.clone();
+                        }
+                    }
+                }
+                MyPageRangesPart::Range(start, end)
+                | MyPageRangesPart::EscapedRange(start, end) => {
+                    if let MyNumericValue::Number(s_val) = start.value {
+                        set.push((s_val, Some(MyNumericDelimiter::Hyphen)));
+                        if last_prefix.is_none() {
+                            last_prefix = start.prefix.clone();
+                        }
+                        if last_suffix.is_none() {
+                            last_suffix = start.suffix.clone();
+                        }
+                    }
+                    if let MyNumericValue::Number(e_val) = end.value {
+                        let delimiter = if i + 1 < value.ranges.iter().len() {
+                            match &value.ranges[i + 1] {
+                                MyPageRangesPart::Comma => Some(MyNumericDelimiter::Comma),
+                                MyPageRangesPart::Ampersand => Some(MyNumericDelimiter::Ampersand),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        set.push((e_val, delimiter));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if set.len() == 1 && set[0].1.is_none() {
+            MyNumeric {
+                value: MyNumericValue::Number(set[0].0),
+                prefix: last_prefix,
+                suffix: last_suffix,
+            }
+        } else {
+            MyNumeric {
+                value: MyNumericValue::Set(set),
+                prefix: last_prefix,
+                suffix: last_suffix,
+            }
+        }
+    }
+}
+
+impl From<MyNumeric> for MyPageRanges {
+    fn from(value: MyNumeric) -> Self {
+        match value.value {
+            MyNumericValue::Number(_) => MyPageRanges {
+                ranges: vec![MyPageRangesPart::SinglePage(value)],
+            },
+            MyNumericValue::Set(set) => {
+                let mut ranges = Vec::new();
+                let mut i = 0;
+                while i < set.len() {
+                    let (val, delim) = &set[i];
+                    let current_numeric = MyNumeric {
+                        value: MyNumericValue::Number(*val),
+                        prefix: value.prefix.clone(),
+                        suffix: value.suffix.clone(),
+                    };
+
+                    match delim {
+                        Some(MyNumericDelimiter::Hyphen) => {
+                            if i + 1 < set.len() {
+                                let (next_val, next_delim) = &set[i + 1];
+                                let next_numeric = MyNumeric {
+                                    value: MyNumericValue::Number(*next_val),
+                                    prefix: value.prefix.clone(),
+                                    suffix: value.suffix.clone(),
+                                };
+                                ranges.push(MyPageRangesPart::Range(current_numeric, next_numeric));
+                                if let Some(d) = next_delim {
+                                    match d {
+                                        MyNumericDelimiter::Comma => {
+                                            ranges.push(MyPageRangesPart::Comma)
+                                        }
+                                        MyNumericDelimiter::Ampersand => {
+                                            ranges.push(MyPageRangesPart::Ampersand)
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                i += 2;
+                                continue;
+                            } else {
+                                ranges.push(MyPageRangesPart::SinglePage(current_numeric));
+                            }
+                        }
+                        Some(MyNumericDelimiter::Comma) => {
+                            ranges.push(MyPageRangesPart::SinglePage(current_numeric));
+                            ranges.push(MyPageRangesPart::Comma);
+                        }
+                        Some(MyNumericDelimiter::Ampersand) => {
+                            ranges.push(MyPageRangesPart::SinglePage(current_numeric));
+                            ranges.push(MyPageRangesPart::Ampersand);
+                        }
+                        None => {
+                            ranges.push(MyPageRangesPart::SinglePage(current_numeric));
+                        }
+                    }
+                    i += 1;
+                }
+                MyPageRanges { ranges }
+            }
+        }
+    }
+}
+
+impl From<MyMaybeTyped<MyPageRanges>> for MyMaybeTyped<MyNumeric> {
+    fn from(value: MyMaybeTyped<MyPageRanges>) -> Self {
+        match value {
+            MyMaybeTyped::Typed(t) => MyMaybeTyped::Typed(t.into()),
+            MyMaybeTyped::String(s) => MyMaybeTyped::String(s),
+        }
+    }
+}
+
+impl From<MyMaybeTyped<MyNumeric>> for MyMaybeTyped<MyPageRanges> {
+    fn from(value: MyMaybeTyped<MyNumeric>) -> Self {
+        match value {
+            MyMaybeTyped::Typed(t) => MyMaybeTyped::Typed(t.into()),
+            MyMaybeTyped::String(s) => MyMaybeTyped::String(s),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MyFormatString {
     /// The canonical version of the string.
     pub value: String,
@@ -1171,6 +1465,7 @@ impl From<MyDate> for Date {
             month,
             day,
             approximate: value.approximate,
+            season: None,
         }
     }
 }
