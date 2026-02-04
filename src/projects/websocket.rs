@@ -36,7 +36,7 @@ impl DocumentState {
         document_id: &uuid::Uuid,
         active_clients: Option<Vec<uuid::Uuid>>,
         project_storage: Arc<ProjectStorage>,
-        settings: Arc<Settings>,
+        settings: &Settings,
     ) -> Self {
         debug!("Creating ydoc for section {}", document_id);
         let mut ydoc = Doc::new();
@@ -79,7 +79,7 @@ impl DocumentState {
         project_id: &uuid::Uuid,
         document_id: &uuid::Uuid,
         project_storage: Arc<ProjectStorage>,
-        settings: Arc<Settings>,
+        settings: &Settings,
     ) -> Result<(), ()> {
         let binary_update = self.doc.transact().encode_diff_v1(&StateVector::default());
 
@@ -291,7 +291,7 @@ pub async fn websocket<'a>(
     _session: Session,
     project_id: &'a str,
     project_storage: &'a State<Arc<ProjectStorage>>,
-    settings: &'a State<Arc<Settings>>,
+    settings: &'a State<Settings>,
     _data_storage: &'a State<Arc<DataStorage>>,
     websocket_manager: &'a State<Arc<WebsocketManager>>,
 ) -> ws::Channel<'a> {
@@ -374,7 +374,7 @@ pub async fn websocket<'a>(
                         &mut document_id,
                         websocket_manager.inner().clone(),
                         project_storage.clone(),
-                        settings.clone(),
+                        &settings,
                     ).await;
 
                     match result {
@@ -426,7 +426,7 @@ pub async fn websocket<'a>(
                             &project_id,
                             &doc_id,
                             project_storage.clone(),
-                            settings.clone()
+                            &settings
                         ).await;
                     }
                 }
@@ -444,7 +444,7 @@ async fn handle_client_msg(
     document_id: &mut Option<uuid::Uuid>,
     websocket_manager: Arc<WebsocketManager>,
     project_storage: Arc<ProjectStorage>,
-    settings: Arc<Settings>,
+    settings: &Settings,
 ) -> Result<Vec<WebsocketMessage>, ErrorMessage> {
     match msg {
         WebsocketMessage::CONNECT(msg) => {
@@ -462,7 +462,7 @@ async fn handle_client_msg(
                     &doc_id,
                     Some(vec![*client_id]),
                     project_storage.clone(),
-                    settings.clone(),
+                    settings,
                 )
                 .await;
                 websocket_manager
@@ -618,7 +618,7 @@ async fn handle_client_msg(
                                     project_id,
                                     &doc_id,
                                     project_storage.clone(),
-                                    settings.clone(),
+                                    settings,
                                 )
                                 .await;
                         }

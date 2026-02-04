@@ -1,11 +1,14 @@
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::content::current::NewContentBlock;
+use crate::storage::project_storage::sections::current::{SectionMetadataV6, SectionV6};
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use vb_exchange::deprecated::projects::data_storage::OldLanguage;
 use vb_exchange::projects::Identifier;
+use yrs::{Array, Doc, MapPrelim, ReadTxn, StateVector, Transact};
 
 /// Enum to differentiate between real sections and the position of the table of contents
 //TODO: remove
@@ -258,6 +261,88 @@ impl SectionOrTocV5 {
     }
 }
 
+impl From<SectionMetadataV5> for SectionMetadataV6 {
+    fn from(value: SectionMetadataV5) -> Self {
+        SectionMetadataV6 {
+            title: value.title,
+            toc_title_subtitle_override: value.toc_title_subtitle_override,
+            subtitle: value.subtitle,
+            authors: value.authors,
+            editors: value.editors,
+            web_url: value.web_url,
+            identifiers: value.identifiers,
+            published: value.published,
+            last_changed: value.last_changed,
+            lang: value.lang,
+            custom_fields: HashMap::new(),
+        }
+    }
+}
+
+fn convert_contentblocks_to_yrs(blocks: Vec<NewContentBlock>) -> Doc {
+    let doc = Doc::new();
+    {
+        let blocks_array = doc.get_or_insert_array("blocks");
+        let mut txn = doc.transact_mut();
+
+        for block in blocks {
+            let prelim: MapPrelim = block.into();
+            blocks_array.push_back(&mut txn, prelim);
+        }
+    }
+    doc
+}
+
+impl From<SectionV5> for SectionV6 {
+    fn from(value: SectionV5) -> Self {
+        let doc = convert_contentblocks_to_yrs(value.children);
+        let content = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+
+        SectionV6 {
+            id: value.id,
+            css_classes: value.css_classes,
+            sub_sections: value
+                .sub_sections
+                .into_iter()
+                .map(SectionV6::from)
+                .collect(),
+            content,
+            visible_in_toc: value.visible_in_toc,
+            metadata: value.metadata.into(),
+        }
+    }
+}
+
+impl From<SectionOrTocV5> for SectionV6 {
+    fn from(value: SectionOrTocV5) -> Self {
+        match value {
+            SectionOrTocV5::Section(section) => section.into(),
+            SectionOrTocV5::Toc => SectionV6 {
+                id: Some(uuid::Uuid::new_v4()),
+                css_classes: Vec::new(),
+                sub_sections: Vec::new(),
+                content: Vec::new(),
+                visible_in_toc: true,
+                metadata: SectionMetadataV6 {
+                    title: "Table of Contents".to_string(),
+                    toc_title_subtitle_override: None,
+                    subtitle: None,
+                    authors: Vec::new(),
+                    editors: Vec::new(),
+                    web_url: None,
+                    identifiers: Vec::new(),
+                    published: None,
+                    last_changed: None,
+                    lang: None,
+                    custom_fields: HashMap::new(),
+                },
+            },
+        }
+    }
+}
+
 /// Struct holds all data for a section (e.g. chapter, part, ...)
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct SectionV3 {
@@ -457,5 +542,106 @@ impl Into<SectionMetadataV4> for SectionMetadataV3 {
             last_changed: self.last_changed,
             lang: self.lang.map(|l| l.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::project_storage::sections::content::current::BlockData;
+    use vb_exchange::projects::BlockType;
+    use yrs::updates::decoder::Decode;
+    use yrs::Map;
+
+    #[test]
+    fn test_section_v5_to_v6_migration() {
+        let block = NewContentBlock {
+            id: "1".to_string(),
+            block_type: BlockType::Paragraph,
+            data: BlockData::Paragraph {
+                text: "Hello migration".to_string(),
+            },
+            css_classes: vec![],
+            revision_id: None,
+        };
+
+        let section_v5 = SectionV5 {
+            id: Some(uuid::Uuid::new_v4()),
+            css_classes: vec!["class1".to_string()],
+            sub_sections: vec![SectionV5 {
+                id: Some(uuid::Uuid::new_v4()),
+                css_classes: vec![],
+                sub_sections: vec![],
+                children: vec![],
+                visible_in_toc: true,
+                metadata: SectionMetadataV5 {
+                    title: "Sub Section".to_string(),
+                    toc_title_subtitle_override: None,
+                    subtitle: None,
+                    authors: vec![],
+                    editors: vec![],
+                    web_url: None,
+                    identifiers: vec![],
+                    published: None,
+                    last_changed: None,
+                    lang: None,
+                },
+            }],
+            children: vec![block],
+            visible_in_toc: true,
+            metadata: SectionMetadataV5 {
+                title: "Main Section".to_string(),
+                toc_title_subtitle_override: Some("Override".to_string()),
+                subtitle: Some("Subtitle".to_string()),
+                authors: vec![],
+                editors: vec![],
+                web_url: None,
+                identifiers: vec![],
+                published: None,
+                last_changed: None,
+                lang: None,
+            },
+        };
+
+        let section_v6: SectionV6 = section_v5.clone().into();
+
+        assert_eq!(section_v6.id, section_v5.id);
+        assert_eq!(section_v6.css_classes, section_v5.css_classes);
+        assert_eq!(section_v6.visible_in_toc, section_v5.visible_in_toc);
+        assert_eq!(section_v6.metadata.title, section_v5.metadata.title);
+        assert_eq!(section_v6.metadata.subtitle, section_v5.metadata.subtitle);
+        assert_eq!(section_v6.sub_sections.len(), 1);
+        assert_eq!(section_v6.sub_sections[0].metadata.title, "Sub Section");
+
+        // Verify content document
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            txn.apply_update(yrs::Update::decode_v1(&section_v6.content).unwrap())
+                .unwrap();
+        }
+
+        let blocks_array = doc.get_or_insert_array("blocks");
+        let txn = doc.transact();
+        assert_eq!(blocks_array.len(&txn), 1);
+
+        let block_map = blocks_array
+            .get(&txn, 0)
+            .unwrap()
+            .cast::<yrs::types::map::MapRef>()
+            .unwrap();
+        assert_eq!(
+            block_map.get(&txn, "type").unwrap().to_string(&txn),
+            "paragraph"
+        );
+        let data_map = block_map
+            .get(&txn, "data")
+            .unwrap()
+            .cast::<yrs::types::map::MapRef>()
+            .unwrap();
+        assert_eq!(
+            data_map.get(&txn, "text").unwrap().to_string(&txn),
+            "Hello migration"
+        );
     }
 }

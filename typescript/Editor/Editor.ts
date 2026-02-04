@@ -24,7 +24,7 @@ export async function init() {
         add_dnd_listeners();
         for (let section of Array.from(document.getElementsByClassName("sidebar-contents-section"))){
             let navigateToSection = function(e: Event){
-                let target = e.target as HTMLElement;
+                let target = (e.target as HTMLElement).closest('.sidebar-contents-section') as HTMLElement;
                 showSectionEditor(target.getAttribute("data-section-id"));
             }
             section.addEventListener("click", navigateToSection);

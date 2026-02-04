@@ -1,15 +1,15 @@
 use crate::storage::project_storage::current::{
-    PersonUuidOrString, ProjectDataV10, ProjectMetadataV5,
+    Bibliography, PersonUuidOrString, ProjectDataV10, ProjectMetadataV5,
 };
+use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::sections::migration::{
     SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionOrTocV5,
 };
 use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
-use crate::storage::{BibEntryV2, OldBibEntry};
+use crate::storage::{BibEntryV2, BibEntryV3, MyPublisher, OldBibEntry};
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
-use rocket::http::hyper::body::HttpBody;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
@@ -133,16 +133,12 @@ pub fn load_project_data(
                 bincode::config::standard(),
             )?)
         };
+        version = 10;
     }
-
-    unimplemented!();
-
-    /* TODO: implement migration from v09 to v10
 
     let mut v10_data: Option<ProjectDataV10> = None;
     if version == 10 {
         v10_data = if let Some(v9_data) = v9_data {
-
             Some(v9_data.into())
         } else {
             Some(bincode::decode_from_std_read::<ProjectDataV10, _, _>(
@@ -156,8 +152,6 @@ pub fn load_project_data(
         Some(data) => Ok(data),
         None => Err(ProjectStorageError::InvalidVersionNumber),
     }
-
-     */
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
@@ -759,4 +753,70 @@ impl From<ProjectMetadataV3> for ProjectMetadataV4 {
             publisher: value.publisher,
         }
     }
+}
+
+impl From<ProjectDataV9> for ProjectDataV10 {
+    fn from(mut value: ProjectDataV9) -> Self {
+        let bibliography = extract_bibliography(value.bibliography.into_values().collect());
+
+        ProjectDataV10 {
+            name: value.name,
+            description: value.description,
+            template_id: value.template_id,
+            last_interaction: value.last_interaction,
+            metadata: value.metadata,
+            settings: value.settings,
+            sections: value.sections.into_iter().map(|s| s.into()).collect(),
+            bibliography,
+        }
+    }
+}
+
+fn extract_bibliography(old_entries: Vec<BibEntryV2>) -> Bibliography {
+    let mut res = Bibliography::new();
+    for entry in old_entries {
+        let parents = extract_bibliography(entry.parents);
+        let parent_ids: Vec<uuid::Uuid> = parents.entries.keys().cloned().collect();
+        for parent in parents.entries {
+            res.entries.insert(parent.0, parent.1);
+        }
+
+        let publisher: Option<MyPublisher> = entry.publisher.map(|publ| MyPublisher {
+            name: publ,
+            location: None,
+        });
+
+        let entry_v3 = BibEntryV3 {
+            key: uuid::Uuid::new_v4(),
+            entry_type: entry.entry_type,
+            title: entry.title,
+            authors: entry.authors,
+            date: entry.date,
+            editors: entry.editors,
+            affiliated: entry.affiliated,
+            publisher,
+            location: entry.location,
+            organization: entry.organization,
+            issue: entry.issue,
+            volume: entry.volume,
+            volume_total: entry.volume_total,
+            edition: entry.edition,
+            page_range: entry.page_range.map(|pr| pr.into()),
+            page_total: entry.page_total,
+            time_range: entry.time_range,
+            runtime: entry.runtime,
+            url: entry.url,
+            serial_numbers: entry.serial_numbers,
+            language: entry.language,
+            archive: entry.archive,
+            archive_location: entry.archive_location,
+            call_number: entry.call_number,
+            note: entry.note,
+            abstractt: entry.abstractt,
+            genre: entry.genre,
+            parents: parent_ids,
+        };
+        res.entries.insert(entry_v3.key, entry_v3);
+    }
+    res
 }
