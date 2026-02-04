@@ -7,7 +7,7 @@ use crate::storage::project_storage::current::{
 use crate::storage::project_storage::sections::content::current::{
     NewContentBlock, NewContentBlockEditorJSFormat,
 };
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{ProjectMetadata, ProjectStorage, ProjectStorageError};
 use crate::storage::ProjectTemplateV2;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
@@ -142,7 +142,7 @@ pub async fn get_project_contents(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> Json<DeprecatedApiResult<Vec<SectionOrTocV5>>> {
+) -> Json<DeprecatedApiResult<Vec<Section>>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -165,16 +165,7 @@ pub async fn get_project_contents(
 
     let mut contents = Vec::new();
     for entry in project.sections.iter() {
-        match entry {
-            SectionOrTocV5::Toc => {
-                contents.push(entry.clone());
-            }
-            SectionOrTocV5::Section(section) => {
-                contents.push(SectionOrTocV5::Section(
-                    section.clone_without_contentblocks(),
-                ));
-            }
-        }
+        contents.push(entry.clone_without_content());
     }
 
     DeprecatedApiResult::new_data(contents)
@@ -188,8 +179,8 @@ pub async fn add_content(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-    content: Json<SectionOrTocV5>,
-) -> Json<DeprecatedApiResult<SectionOrTocV5>> {
+    content: Json<Section>,
+) -> Json<DeprecatedApiResult<Section>> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
         Err(e) => {
@@ -202,13 +193,8 @@ pub async fn add_content(
 
     // Check if Section or Toc, generate uuid if section
     let mut content = content.into_inner();
-    match &mut content {
-        SectionOrTocV5::Section(section) => {
-            if let None = section.id {
-                section.id = Some(uuid::Uuid::new_v4());
-            }
-        }
-        SectionOrTocV5::Toc => {}
+    if let None = content.id {
+        content.id = Some(uuid::Uuid::new_v4());
     }
 
     let project_storage = Arc::clone(project_storage);
@@ -298,8 +284,7 @@ pub async fn move_content_after(
         Ok(_) => DeprecatedApiResult::new_data(()),
         Err(_) => {
             println!("Couldn't find content with id {}", after_id);
-            //TODO re-add content to the end
-            project.sections.push(SectionOrTocV5::Section(content));
+            project.sections.push(content);
             DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
         }
     }
@@ -372,98 +357,10 @@ pub async fn move_content_child_of(
         Err(_) => {
             println!("Couldn't find content with id {}", parent_id);
             //TODO re-add content to the end
-            project.sections.push(SectionOrTocV5::Section(content));
+            project.sections.push(content);
             DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
         }
     }
-}
-
-/// GET /api/projects/<project_id>/sections/<content_path>/content_blocks
-/// Get all content blocks in a section
-#[get("/api/projects/<project_id>/sections/<content_path>/content_blocks")]
-pub async fn get_content_blocks_in_section(
-    project_id: String,
-    content_path: String,
-    _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-) -> APIResult<Vec<NewContentBlockEditorJSFormat>> {
-    let project_id = uuid::Uuid::parse_str(&project_id)?;
-
-    let mut path = vec![];
-
-    for part in content_path.split(":") {
-        path.push(uuid::Uuid::parse_str(part)?);
-    }
-
-    if path.len() == 0 {
-        println!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
-    }
-
-    let project_storage = Arc::clone(project_storage);
-
-    let project = project_storage.get_project(&project_id, settings).await?;
-
-    let project = project.read().unwrap();
-
-    let section = get_section_by_path(&project, &path)?;
-
-    let mut blocks: Vec<NewContentBlockEditorJSFormat> = vec![];
-
-    for block in section.children.iter() {
-        blocks.push(NewContentBlockEditorJSFormat::from(block.clone()))
-    }
-    Ok(blocks.into())
-}
-
-/// PUT /api/projects/<project_id>/sections/<content_path>/content_blocks
-/// Replace all content blocks in a section
-#[put(
-    "/api/projects/<project_id>/sections/<content_path>/content_blocks",
-    data = "<blocks>"
-)]
-pub async fn set_content_blocks_in_section(
-    project_id: String,
-    content_path: String,
-    blocks: Json<Vec<NewContentBlockEditorJSFormat>>,
-    _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-) -> APIResult<()> {
-    let project_id = uuid::Uuid::parse_str(&project_id)?;
-
-    let mut path = vec![];
-
-    for part in content_path.split(":") {
-        path.push(uuid::Uuid::parse_str(part)?);
-    }
-
-    if path.len() == 0 {
-        println!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
-    }
-
-    let project_storage = Arc::clone(project_storage);
-
-    let project = project_storage.get_project(&project_id, settings).await?;
-
-    let mut project = project.write().unwrap();
-
-    let section = get_section_by_path_mut(&mut project, &path)?;
-
-    let mut new_blocks: Vec<NewContentBlock> = vec![];
-
-    for block in blocks.iter() {
-        let new_block: NewContentBlock = block
-            .clone()
-            .try_into()
-            .map_err(|e| ApiErrorType::UnparsableParameter(e))?;
-        new_blocks.push(new_block);
-    }
-
-    section.children = new_blocks;
-    Ok(().into())
 }
 
 #[derive(FromForm)]

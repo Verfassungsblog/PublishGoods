@@ -49,6 +49,8 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
 /// * `None` - If the language could not be detected or is not supported
 pub fn detect_language_for_section(section: &Section) -> Option<language::Language> {
     debug!("Trying to detect language for section");
+    unimplemented!();
+    /*
 
     let content_to_analyze: String = section
         .children
@@ -67,6 +69,8 @@ pub fn detect_language_for_section(section: &Section) -> Option<language::Langua
         },
         None => None,
     }
+
+     */
 }
 /// Converts a [`Language`] to a BCP-47 compliant [`language::Language`].
 ///

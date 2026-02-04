@@ -1,4 +1,5 @@
 use crate::session::session_guard::Session;
+use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
 use dashmap::DashMap;
@@ -6,9 +7,9 @@ use rocket::futures::{SinkExt, StreamExt};
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Error;
-use std::ops::Rem;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use yrs::Doc;
 
 pub struct WebsocketManager {
     pub documents: DashMap<uuid::Uuid, DocumentState>,
@@ -17,6 +18,29 @@ pub struct WebsocketManager {
 pub struct DocumentState {
     pub broadcast_tx: broadcast::Sender<BroadcastMessage>,
     pub active_clients: Vec<uuid::Uuid>,
+    pub doc: Doc,
+}
+
+impl DocumentState {
+    pub async fn create_doc(
+        &mut self,
+        project_id: uuid::Uuid,
+        document_id: uuid::Uuid,
+        project_storage: Arc<ProjectStorage>,
+        project_settings: Arc<Settings>,
+    ) -> Self {
+        let mut ydoc = Doc::new();
+        let project_lock = project_storage
+            .get_project(&project_id, &project_settings)
+            .await
+            .unwrap()
+            .clone();
+        let project = project_lock.read().unwrap();
+
+        //TODO!
+
+        unimplemented!()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -192,12 +216,12 @@ pub struct ErrorMessage {
     pub error: String,
 }
 
-#[get("/api/projects/<_project_id>/websocket")]
+#[get("/api/projects/<project_id>/websocket")]
 pub fn websocket<'a>(
     ws: ws::WebSocket,
     _session: Session,
-    _project_id: &'a str,
-    _project_storage: &'a State<Arc<ProjectStorage>>,
+    project_id: &'a str,
+    project_storage: &'a State<Arc<ProjectStorage>>,
     _data_storage: &'a State<Arc<DataStorage>>,
     websocket_manager: &'a State<Arc<WebsocketManager>>,
 ) -> ws::Channel<'a> {
@@ -259,11 +283,17 @@ pub fn websocket<'a>(
                             let (tx, rx) = {
                                 let mut state = websocket_manager.documents.entry(msg.document_id).or_insert_with(|| {
                                     debug!("Creating new broadcast channel for document {}", msg.document_id);
+                                    unimplemented!();
+                                    /*
                                     let (tx, _) = broadcast::channel(100);
+
+                                    //todo!
                                     DocumentState {
                                         broadcast_tx: tx,
                                         active_clients: Vec::new(),
                                     }
+
+                                     */
                                 });
                                 debug!("Reusing existing broadcast channel for document {}", msg.document_id);
                                 state.active_clients.push(client_id);

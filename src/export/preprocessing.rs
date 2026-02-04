@@ -1,16 +1,11 @@
 use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::ProjectData;
 use crate::utils::csl::CslData;
 use async_recursion::async_recursion;
 use base64::engine::general_purpose;
 use base64::Engine;
-use hayagriva::citationberg::LocaleCode;
-use hayagriva::{BibliographyDriver, BibliographyRequest};
-use hayagriva::{BufWriteFormat, CitationItem, CitationRequest};
 use hyphenation::{Hyphenator, Load, Standard};
 use image::{DynamicImage, ImageOutputFormat};
 use language::Language;
@@ -19,12 +14,8 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
-use vb_exchange::projects::PreparedLicense;
 use vb_exchange::projects::PreparedProject;
-use vb_exchange::projects::{
-    PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedMetadata, PreparedSection,
-    PreparedSectionMetadata,
-};
+use vb_exchange::projects::{PersonOrString, PreparedContentBlock, PreparedSection};
 use vb_exchange::RenderingError;
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
@@ -59,6 +50,8 @@ pub async fn prepare_project(
     sections_to_include: Option<Vec<uuid::Uuid>>,
     project_id: &uuid::Uuid,
 ) -> Result<PreparedProject, RenderingError> {
+    unimplemented!();
+    /*
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata {
@@ -197,6 +190,8 @@ pub async fn prepare_project(
         settings: project_data.settings,
         sections: data,
     })
+
+     */
 }
 
 /// Renders formatted citation strings for all bibliography entries in a project according to the current CSL style and language settings.
@@ -224,6 +219,8 @@ pub async fn prepare_project(
 /// # Panics
 /// - Panics if no CSL style is available in `csl_data`.
 pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMap<String, String> {
+    unimplemented!();
+    /*
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();
@@ -316,6 +313,8 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
         }
     }
     res
+
+     */
 }
 
 /// Renders a `Section` into a `PreparedSection`, resolving metadata, author/editor references, and formatting content.
@@ -340,6 +339,8 @@ pub async fn render_section(
     project_id: &uuid::Uuid,
     add_soft_hyphens: bool,
 ) -> PreparedSection {
+    unimplemented!();
+    /*
     let published = match section.metadata.published {
         Some(date) => Some(date.into()),
         None => None,
@@ -470,6 +471,8 @@ pub async fn render_section(
         visible_in_toc: section.visible_in_toc,
         endnotes,
     }
+
+     */
 }
 
 /// Returns the hyphenation dictionary for the given language, if available.

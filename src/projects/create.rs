@@ -1,6 +1,7 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::current::Bibliography;
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::storage::ProjectTemplateV2;
 use rocket::http::Status;
@@ -82,7 +83,7 @@ pub async fn process_create_project(
         metadata: None,
         settings: None,
         sections: vec![],
-        bibliography: HashMap::new(),
+        bibliography: Bibliography::new(),
     };
 
     match project_storage.insert_project(project_data, settings).await {

@@ -1,8 +1,8 @@
-use crate::storage::project_storage::sections::current::{SectionMetadataV5, SectionV5};
+use crate::storage::project_storage::sections::current::{SectionMetadataV6, SectionV6};
 
 pub mod content;
 pub mod current;
 pub mod migration;
 
-pub type Section = SectionV5;
-pub type SectionMetadata = SectionMetadataV5;
+pub type Section = SectionV6;
+pub type SectionMetadata = SectionMetadataV6;

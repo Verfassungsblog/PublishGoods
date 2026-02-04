@@ -1,9 +1,8 @@
 use crate::storage::project_storage::current::{
-    PersonUuidOrString, ProjectDataV9, ProjectMetadataV5,
+    PersonUuidOrString, ProjectDataV10, ProjectMetadataV5,
 };
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
 use crate::storage::project_storage::sections::migration::{
-    SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4,
+    SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionOrTocV5,
 };
 use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
 use crate::storage::{BibEntryV2, OldBibEntry};
@@ -136,10 +135,29 @@ pub fn load_project_data(
         };
     }
 
-    match v9_data {
+    unimplemented!();
+
+    /* TODO: implement migration from v09 to v10
+
+    let mut v10_data: Option<ProjectDataV10> = None;
+    if version == 10 {
+        v10_data = if let Some(v9_data) = v9_data {
+
+            Some(v9_data.into())
+        } else {
+            Some(bincode::decode_from_std_read::<ProjectDataV10, _, _>(
+                &mut file,
+                bincode::config::standard(),
+            )?)
+        };
+    }
+
+    match v10_data {
         Some(data) => Ok(data),
         None => Err(ProjectStorageError::InvalidVersionNumber),
     }
+
+     */
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
@@ -276,6 +294,20 @@ impl From<ProjectDataV7> for ProjectDataV8 {
             bibliography: value.bibliography,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectDataV9 {
+    pub name: String,
+    pub description: Option<String>,
+    #[bincode(with_serde)]
+    pub template_id: uuid::Uuid,
+    pub last_interaction: u64,
+    pub metadata: Option<ProjectMetadataV5>,
+    pub settings: Option<ProjectSettingsV5>,
+    pub sections: Vec<SectionOrTocV5>,
+    #[bincode(with_serde)]
+    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
 }
 
 impl From<ProjectDataV8> for ProjectDataV9 {

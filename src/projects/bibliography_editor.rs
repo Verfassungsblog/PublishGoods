@@ -4,7 +4,6 @@ use crate::storage::project_storage::ProjectStorage;
 use rocket::http::Status;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use std::sync::Arc;
 
 #[get("/projects/<project_id>/bibliography")]
 pub async fn show_bib_editor(
@@ -35,7 +34,6 @@ pub async fn show_bib_editor(
 }
 
 pub mod api {
-
     use hayagriva::types::EntryType;
     use std::sync::Arc;
 
@@ -85,6 +83,7 @@ pub mod api {
             .read()
             .unwrap()
             .bibliography
+            .entries
             .keys()
             .map(|a| a.to_string())
             .collect();
@@ -158,7 +157,7 @@ pub mod api {
 
         let mut res = vec![];
 
-        for (key, entry) in project.read().unwrap().bibliography.iter() {
+        for (key, entry) in project.read().unwrap().bibliography.entries.iter() {
             if key.contains(&query) {
                 res.push(entry.clone());
             } else if let Some(title) = entry.title.as_ref() {
@@ -217,6 +216,7 @@ pub mod api {
             .write()
             .unwrap()
             .bibliography
+            .entries
             .insert(new_bib_entry.key.clone(), entry.clone());
         return DeprecatedApiResult::new_data(entry);
     }
@@ -251,11 +251,17 @@ pub mod api {
             Err(_) => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
         };
 
-        if project.read().unwrap().bibliography.get(key).is_none() {
+        if project
+            .read()
+            .unwrap()
+            .bibliography
+            .get_entry(key)
+            .is_none()
+        {
             return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
         }
 
-        project.write().unwrap().bibliography.remove(key);
+        project.write().unwrap().bibliography.entries.remove(key);
         project
             .write()
             .unwrap()

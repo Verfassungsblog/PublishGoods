@@ -1,21 +1,15 @@
 use crate::storage::project_storage::current::PersonUuidOrString;
-use crate::storage::project_storage::sections::content::current::NewContentBlock;
 use crate::storage::project_storage::sections::Section;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use vb_exchange::projects::Identifier;
 
+/// Struct holds all metadata for a section
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub enum SectionOrTocV5 {
-    Section(SectionV5),
-    Toc,
-}
-
-/// Struct holds all data for a section (e.g. chapter, part, ...)
-#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct SectionV5 {
+pub struct SectionV6 {
     /// Unique id of the section
     /// Only None if the section is not yet saved in the database
     #[bincode(with_serde)]
@@ -23,18 +17,18 @@ pub struct SectionV5 {
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
     /// Holds all subsections
-    pub sub_sections: Vec<SectionV5>,
-    // Holds all content blocks
-    pub children: Vec<NewContentBlock>,
+    pub sub_sections: Vec<SectionV6>,
+    /// Holds a copy of the yrs document
+    pub content: Vec<u8>,
     /// If true, the section is visible in the table of contents
     pub visible_in_toc: bool,
     /// Metadata of the section
-    pub metadata: SectionMetadataV5,
+    pub metadata: SectionMetadataV6,
 }
 
 /// Struct holds all metadata of a section
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct SectionMetadataV5 {
+pub struct SectionMetadataV6 {
     pub title: String,
     pub toc_title_subtitle_override: Option<String>,
     pub subtitle: Option<String>,
@@ -50,25 +44,39 @@ pub struct SectionMetadataV5 {
     pub last_changed: Option<NaiveDateTime>,
     #[bincode(with_serde)]
     pub lang: Option<Language>,
+    /// additional fields
+    pub custom_fields: HashMap<String, String>,
 }
 
 impl Section {
-    pub fn clone_without_contentblocks(&self) -> Section {
-        let mut new_section = self.clone();
-        new_section.children = vec![];
+    pub fn clone_without_content(&self) -> Section {
+        let mut new_section = Section {
+            id: self.id.clone(),
+            css_classes: self.css_classes.clone(),
+            sub_sections: self.sub_sections.clone(),
+            content: vec![],
+            visible_in_toc: self.visible_in_toc.clone(),
+            metadata: self.metadata.clone(),
+        };
         new_section
     }
 
     pub fn clone_without_subsections(&self) -> Section {
-        let mut new_section = self.clone();
-        new_section.sub_sections = vec![];
+        let mut new_section = Section {
+            id: self.id.clone(),
+            css_classes: self.css_classes.clone(),
+            sub_sections: Vec::new(),
+            content: self.content.clone(),
+            visible_in_toc: self.visible_in_toc.clone(),
+            metadata: self.metadata.clone(),
+        };
         new_section
     }
 
-    pub fn truncate_children_recursive(&mut self) {
-        self.children = vec![];
+    pub fn truncate_content_recursive(&mut self) {
+        self.content = vec![];
         for sub_section in self.sub_sections.iter_mut() {
-            sub_section.truncate_children_recursive();
+            sub_section.truncate_content_recursive();
         }
     }
 
@@ -128,15 +136,6 @@ impl Section {
                 Some(section)
             }
             None => None,
-        }
-    }
-}
-
-impl SectionOrTocV5 {
-    pub fn into_section(self) -> Option<SectionV5> {
-        match self {
-            SectionOrTocV5::Section(section) => Some(section),
-            SectionOrTocV5::Toc => None,
         }
     }
 }

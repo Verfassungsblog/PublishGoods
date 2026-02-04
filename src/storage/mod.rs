@@ -251,19 +251,23 @@ pub enum MyMaybeTyped<T> {
     String(String),
 }
 
-impl<T> From<MyMaybeTyped<T>> for hayagriva::types::MaybeTyped<T> {
-    fn from(value: MyMaybeTyped<T>) -> Self {
-        match value {
-            MyMaybeTyped::Typed(t) => hayagriva::types::MaybeTyped::Typed(t),
+impl<T> MyMaybeTyped<T> {
+    pub fn to_hayagriva<U>(self) -> hayagriva::types::MaybeTyped<U>
+    where
+        T: Into<U>,
+    {
+        match self {
+            MyMaybeTyped::Typed(t) => hayagriva::types::MaybeTyped::Typed(t.into()),
             MyMaybeTyped::String(s) => hayagriva::types::MaybeTyped::String(s),
         }
     }
-}
 
-impl<T> From<hayagriva::types::MaybeTyped<T>> for MyMaybeTyped<T> {
-    fn from(value: hayagriva::types::MaybeTyped<T>) -> Self {
+    pub fn from_hayagriva<U>(value: hayagriva::types::MaybeTyped<U>) -> Self
+    where
+        U: Into<T>,
+    {
         match value {
-            hayagriva::types::MaybeTyped::Typed(t) => MyMaybeTyped::Typed(t),
+            hayagriva::types::MaybeTyped::Typed(t) => MyMaybeTyped::Typed(t.into()),
             hayagriva::types::MaybeTyped::String(s) => MyMaybeTyped::String(s),
         }
     }
@@ -621,22 +625,23 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
         };
 
         let issue = match value.issue() {
-            Some(issue) => Some(issue.clone().into()),
+            Some(issue) => Some(MyMaybeTyped::from_hayagriva(issue.clone())),
             None => None,
         };
         let volume = match value.volume() {
-            Some(volume) => Some(volume.clone().into()),
+            Some(volume) => Some(MyMaybeTyped::from_hayagriva(volume.clone())),
             None => None,
         };
         let edition = match value.edition() {
-            Some(edition) => Some(edition.clone().into()),
+            Some(edition) => Some(MyMaybeTyped::from_hayagriva(edition.clone())),
             None => None,
         };
         let page_range = match value.page_range() {
             Some(page_range) => match page_range {
                 MaybeTyped::Typed(t) => {
                     let my_page_ranges: MyPageRanges = t.clone().into();
-                    Some(MyMaybeTyped::Typed(my_page_ranges.into()))
+                    let my_numeric: MyNumeric = my_page_ranges.into();
+                    Some(MyMaybeTyped::Typed(my_numeric))
                 }
                 MaybeTyped::String(s) => Some(MyMaybeTyped::String(s.to_string())),
             },
@@ -667,18 +672,11 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             None => vec![],
         };
         let time_range = match value.time_range() {
-            Some(time_range) => match time_range {
-                hayagriva::types::MaybeTyped::Typed(t) => {
-                    Some(MyMaybeTyped::Typed(t.clone().into()))
-                }
-                hayagriva::types::MaybeTyped::String(s) => {
-                    Some(MyMaybeTyped::String(s.to_string()))
-                }
-            },
+            Some(time_range) => Some(MyMaybeTyped::from_hayagriva(time_range.clone())),
             None => None,
         };
         let runtime = match value.runtime() {
-            Some(runtime) => Some(runtime.clone().into()),
+            Some(runtime) => Some(MyMaybeTyped::from_hayagriva(runtime.clone())),
             None => None,
         };
 
@@ -761,19 +759,11 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if let Some(issue) = value.issue {
-            let nissue: MaybeTyped<Numeric> = match issue {
-                MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
-                MyMaybeTyped::String(s) => MaybeTyped::String(s),
-            };
-            entry.set_issue(nissue);
+            entry.set_issue(issue.to_hayagriva());
         }
 
         if let Some(volume) = value.volume {
-            let nvolume: MaybeTyped<Numeric> = match volume {
-                MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
-                MyMaybeTyped::String(s) => MaybeTyped::String(s),
-            };
-            entry.set_volume(nvolume);
+            entry.set_volume(volume.to_hayagriva());
         }
 
         if let Some(volume_total) = value.volume_total {
@@ -781,11 +771,7 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if let Some(edition) = value.edition {
-            let nedition: MaybeTyped<Numeric> = match edition {
-                MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
-                MyMaybeTyped::String(s) => MaybeTyped::String(s),
-            };
-            entry.set_edition(nedition);
+            entry.set_edition(edition.to_hayagriva());
         }
 
         if let Some(page_range) = value.page_range {
@@ -804,15 +790,11 @@ impl From<BibEntryV2> for hayagriva::Entry {
         }
 
         if let Some(time_range) = value.time_range {
-            let ntime_range: MaybeTyped<DurationRange> = match time_range {
-                MyMaybeTyped::Typed(t) => MaybeTyped::Typed(t.into()),
-                MyMaybeTyped::String(s) => MaybeTyped::String(s),
-            };
-            entry.set_time_range(ntime_range);
+            entry.set_time_range(time_range.to_hayagriva());
         }
 
         if let Some(runtime) = value.runtime {
-            entry.set_runtime(runtime.into());
+            entry.set_runtime(runtime.to_hayagriva());
         }
 
         if let Some(url) = value.url {
@@ -1309,15 +1291,6 @@ pub struct MyNumeric {
     pub prefix: Option<Box<String>>,
     /// A string that is appended to the value.
     pub suffix: Option<Box<String>>,
-}
-
-impl From<MaybeTyped<Numeric>> for MyMaybeTyped<MyNumeric> {
-    fn from(value: MaybeTyped<Numeric>) -> MyMaybeTyped<MyNumeric> {
-        match value {
-            MaybeTyped::Typed(n) => MyMaybeTyped::Typed(n.into()),
-            MaybeTyped::String(s) => MyMaybeTyped::String(s),
-        }
-    }
 }
 
 impl From<Numeric> for MyNumeric {

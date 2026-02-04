@@ -16,7 +16,6 @@ use crate::import::wordpress::{
 use crate::settings::Settings;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::storage::BibEntryV2;
@@ -589,6 +588,9 @@ impl ImportProcessor {
          */
 
         debug!("Found non-category link. Trying to import single post");
+
+        unimplemented!();
+        /*
         let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
 
         let additional_author_names = if import_author_names {
@@ -608,6 +610,8 @@ impl ImportProcessor {
         .await?;
 
         Ok(())
+
+         */
     }
 
     /// Tries to resolve the author id from the wordpress api
@@ -670,108 +674,112 @@ impl ImportProcessor {
         convert_links: bool,
         imported_authors: Vec<PersonUuidOrString>,
     ) -> Result<(), ImportError> {
-        let subtitle = match &post.acf {
-            None => None,
-            Some(acf) => match &acf.subheadline {
+        unimplemented!();
+        /*
+            let subtitle = match &post.acf {
                 None => None,
-                Some(subheadline) => Some(subheadline.clone()),
-            },
-        };
+                Some(acf) => match &acf.subheadline {
+                    None => None,
+                    Some(subheadline) => Some(subheadline.clone()),
+                },
+            };
 
-        let mut identifiers = vec![];
+            let mut identifiers = vec![];
 
-        if let Some(acf) = &post.acf {
-            if let Some(crossref_doi) = &acf.crossref_doi {
-                identifiers.push(Identifier {
-                    id: Some(uuid::Uuid::new_v4()),
-                    name: "DOI".to_string(),
-                    value: crossref_doi.clone(),
-                    identifier_type: IdentifierType::DOI,
-                });
-            } else if let Some(doi) = &acf.doi {
-                identifiers.push(Identifier {
-                    id: Some(uuid::Uuid::new_v4()),
-                    name: "DOI".to_string(),
-                    value: doi.clone(),
-                    identifier_type: IdentifierType::DOI,
-                });
+            if let Some(acf) = &post.acf {
+                if let Some(crossref_doi) = &acf.crossref_doi {
+                    identifiers.push(Identifier {
+                        id: Some(uuid::Uuid::new_v4()),
+                        name: "DOI".to_string(),
+                        value: crossref_doi.clone(),
+                        identifier_type: IdentifierType::DOI,
+                    });
+                } else if let Some(doi) = &acf.doi {
+                    identifiers.push(Identifier {
+                        id: Some(uuid::Uuid::new_v4()),
+                        name: "DOI".to_string(),
+                        value: doi.clone(),
+                        identifier_type: IdentifierType::DOI,
+                    });
+                }
             }
-        }
 
-        let lang = if cfg!(feature = "language_detection") {
-            detect_language_for_post(&post)
-        } else {
-            None
-        };
+            let lang = if cfg!(feature = "language_detection") {
+                detect_language_for_post(&post)
+            } else {
+                None
+            };
 
-        let section = Section {
-            id: Some(uuid::Uuid::new_v4()),
-            css_classes: vec![],
-            sub_sections: vec![],
-            children: vec![],
-            visible_in_toc: true,
-            metadata: SectionMetadata {
-                title: post.title.rendered.clone(),
-                toc_title_subtitle_override: None,
-                subtitle,
-                authors: imported_authors,
-                editors: vec![],
-                web_url: Some(post.link.clone()),
-                identifiers,
-                published: Some(post.date.date()),
-                last_changed: Some(post.modified),
-                lang,
-            },
-        };
+            let section = Section {
+                id: Some(uuid::Uuid::new_v4()),
+                css_classes: vec![],
+                sub_sections: vec![],
+                children: vec![],
+                visible_in_toc: true,
+                metadata: SectionMetadata {
+                    title: post.title.rendered.clone(),
+                    toc_title_subtitle_override: None,
+                    subtitle,
+                    authors: imported_authors,
+                    editors: vec![],
+                    web_url: Some(post.link.clone()),
+                    identifiers,
+                    published: Some(post.date.date()),
+                    last_changed: Some(post.modified),
+                    lang,
+                },
+            };
 
-        debug!("{:?}", section);
+            debug!("{:?}", section);
 
-        self.import_html_from_wp(
-            section,
-            post.content.rendered.clone(),
-            project,
-            endnotes,
-            shift_headings_up,
-            convert_links,
-        )
-        .await
-    }
-
-    async fn get_wp_post_by_link(
-        &self,
-        slug: String,
-        api: &WordpressAPI,
-    ) -> Result<Post, ImportError> {
-        let mut posts = match api
-            .get_posts(
-                WordpressAPIContext::default(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(slug.to_string()),
-                None,
-                None,
+            self.import_html_from_wp(
+                section,
+                post.content.rendered.clone(),
+                project,
+                endnotes,
+                shift_headings_up,
+                convert_links,
             )
             .await
-        {
-            Ok(posts) => match posts.data {
-                PostDataType::FullPosts(posts) => posts,
-                _ => {
-                    return Err(ImportError::WordPressApiError(
-                        WordpressAPIError::InvalidURL,
-                    ))
-                }
-            },
-            Err(e) => return Err(ImportError::WordPressApiError(e)),
-        };
-        if posts.len() != 1 {
-            return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
         }
-        Ok(posts.pop().unwrap())
+
+        async fn get_wp_post_by_link(
+            &self,
+            slug: String,
+            api: &WordpressAPI,
+        ) -> Result<Post, ImportError> {
+            let mut posts = match api
+                .get_posts(
+                    WordpressAPIContext::default(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(slug.to_string()),
+                    None,
+                    None,
+                )
+                .await
+            {
+                Ok(posts) => match posts.data {
+                    PostDataType::FullPosts(posts) => posts,
+                    _ => {
+                        return Err(ImportError::WordPressApiError(
+                            WordpressAPIError::InvalidURL,
+                        ))
+                    }
+                },
+                Err(e) => return Err(ImportError::WordPressApiError(e)),
+            };
+            if posts.len() != 1 {
+                return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
+            }
+            Ok(posts.pop().unwrap())
+
+             */
     }
 
     async fn convert_file(
@@ -783,6 +791,7 @@ impl ImportProcessor {
         shift_headings_up: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
+        unimplemented!();
         let mut file = match tokio::fs::File::open(file_path).await {
             Ok(file) => file,
             Err(e) => {
@@ -883,6 +892,7 @@ impl ImportProcessor {
         input: InputKind,
         input_format: InputFormat,
     ) -> Result<String, ImportError> {
+        unimplemented!();
         let task = spawn_blocking({
             move || {
                 let mut pandoc = pandoc::new();
@@ -924,6 +934,8 @@ impl ImportProcessor {
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
+        unimplemented!();
+        /*
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -1190,7 +1202,7 @@ impl ImportProcessor {
             .unwrap()
             .sections
             .push(SectionOrTocV5::Section(section));
-        Ok(())
+        Ok(())*/
     }
 
     async fn import_html_from_pandoc(
@@ -1201,6 +1213,8 @@ impl ImportProcessor {
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
+        unimplemented!();
+        /*
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -1515,6 +1529,7 @@ impl ImportProcessor {
             .sections
             .push(SectionOrTocV5::Section(section));
         Ok(())
+         */
     }
 
     //TODO: maybe also copy classes and ids from the html
@@ -1527,6 +1542,8 @@ impl ImportProcessor {
         convert_links: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
+        unimplemented!();
+        /*
         let mut html = String::new();
         for node in ele.children {
             match node {
@@ -1646,12 +1663,34 @@ impl ImportProcessor {
                             }
                         }
                     }
-                    if el.name == "em"{
-                        html.push_str(&format!("<i>{}</i>", &self.dom_to_html(el.clone(), footnotes, endnotes, convert_links, project_data.clone()).await));
+                    if el.name == "em" {
+                        html.push_str(&format!(
+                            "<i>{}</i>",
+                            &self
+                                .dom_to_html(
+                                    el.clone(),
+                                    footnotes,
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone()
+                                )
+                                .await
+                        ));
                         continue;
                     }
-                    if el.name == "strong"{
-                        html.push_str(&format!("<b>{}</b>", &self.dom_to_html(el.clone(), footnotes, endnotes, convert_links, project_data.clone()).await));
+                    if el.name == "strong" {
+                        html.push_str(&format!(
+                            "<b>{}</b>",
+                            &self
+                                .dom_to_html(
+                                    el.clone(),
+                                    footnotes,
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone()
+                                )
+                                .await
+                        ));
                         continue;
                     }
 
@@ -1682,6 +1721,8 @@ impl ImportProcessor {
             }
         }
         html
+
+         */
     }
 
     async fn import_bib_entries(
@@ -1690,6 +1731,9 @@ impl ImportProcessor {
         bib_file_path: &str,
         settings: &Settings,
     ) -> Result<(), ImportError> {
+        unimplemented!();
+        /*
+
         let mut bib_file_content = String::new();
         let mut bib_file = match tokio::fs::File::open(bib_file_path).await {
             Ok(bib_file) => bib_file,
@@ -1732,6 +1776,7 @@ impl ImportProcessor {
         }
 
         Ok(())
+         */
     }
 }
 

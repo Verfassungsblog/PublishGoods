@@ -1,22 +1,27 @@
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{
     ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION,
 };
-use crate::storage::{BibEntryV2, MultipleFileLocks, ProjectListEntry};
+use crate::storage::{
+    BibEntryV2, BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges, ProjectListEntry,
+};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
+use hayagriva::types::{DurationRange, MaybeTyped, Numeric, SerialNumber};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
+use unic_langid_impl::LanguageIdentifier;
 use uuid::Uuid;
 use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
@@ -370,6 +375,7 @@ impl ProjectStorage {
     }
 
     pub(crate) async fn save_project_to_disk(
+        //todo: create as new file and move after saving
         &self,
         uuid: &uuid::Uuid,
         settings: &Settings,
@@ -439,17 +445,157 @@ impl ProjectStorage {
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
-pub struct ProjectDataV9 {
+pub struct ProjectDataV10 {
+    //todo: migration logic from v9 to v10. Important: We need to replace bib entry usages to use the new uuid instead of the key
     pub name: String,
     pub description: Option<String>,
     #[bincode(with_serde)]
-    pub template_id: uuid::Uuid,
+    pub template_id: Uuid,
     pub last_interaction: u64,
     pub metadata: Option<ProjectMetadataV5>,
     pub settings: Option<ProjectSettingsV5>,
-    pub sections: Vec<SectionOrTocV5>,
+    pub sections: Vec<SectionV6>,
     #[bincode(with_serde)]
-    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+    pub bibliography: Bibliography,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct Bibliography {
+    #[bincode(with_serde)]
+    pub entries: HashMap<Uuid, BibEntryV3>,
+}
+
+impl Bibliography {
+    pub fn new() -> Bibliography {
+        Bibliography {
+            entries: HashMap::new(),
+        }
+    }
+    pub fn add_entry(&mut self, entry: BibEntryV3) {
+        self.entries.insert(entry.key, entry);
+    }
+    pub fn get_entry(&self, key: &Uuid) -> Option<&BibEntryV3> {
+        self.entries.get(key)
+    }
+
+    pub fn get_entry_as_hayagriva(&self, key: &Uuid) -> Option<hayagriva::Entry> {
+        let value = self.get_entry(key)?.clone();
+
+        let mut parents: Vec<hayagriva::Entry> = vec![];
+        for parent in &value.parents {
+            if let Some(parent) = self.get_entry_as_hayagriva(parent) {
+                // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
+                parents.push(parent);
+            }
+        }
+
+        let mut entry = hayagriva::Entry::new(&value.key.to_string(), value.entry_type);
+
+        if let Some(title) = value.title {
+            entry.set_title(title.into());
+        }
+
+        if value.authors.len() > 0 {
+            entry.set_authors(value.authors.iter().map(|x| x.clone().into()).collect())
+        }
+
+        if let Some(date) = value.date {
+            entry.set_date(date.into());
+        }
+
+        if value.editors.len() > 0 {
+            entry.set_editors(value.editors.iter().map(|x| x.clone().into()).collect());
+        }
+
+        if value.affiliated.len() > 0 {
+            entry.set_affiliated(value.affiliated.into_iter().map(|x| x.into()).collect());
+        }
+
+        if let Some(publisher) = value.publisher {
+            entry.set_publisher(publisher.into());
+        }
+
+        if let Some(location) = value.location {
+            entry.set_location(location.into());
+        }
+
+        if let Some(organization) = value.organization {
+            entry.set_organization(organization.into());
+        }
+
+        if let Some(issue) = value.issue {
+            entry.set_issue(issue.into());
+        }
+
+        if let Some(volume) = value.volume {
+            entry.set_volume(volume.into())
+        }
+
+        if let Some(volume_total) = value.volume_total {
+            entry.set_volume_total(volume_total.into());
+        }
+
+        if let Some(edition) = value.edition {
+            entry.set_edition(edition.into())
+        }
+
+        if let Some(page_range) = value.page_range {
+            entry.set_page_range(page_range.into())
+        }
+
+        if let Some(page_total) = value.page_total {
+            entry.set_page_total(page_total.into());
+        }
+
+        if let Some(time_range) = value.time_range {
+            entry.set_time_range(time_range.into())
+        }
+
+        if let Some(runtime) = value.runtime {
+            entry.set_runtime(runtime.into());
+        }
+
+        if let Some(url) = value.url {
+            entry.set_url(url.into());
+        }
+
+        if let Some(serial_numbers) = value.serial_numbers {
+            entry.set_serial_number(SerialNumber(serial_numbers));
+        }
+
+        if let Some(language) = value.language {
+            entry.set_language(
+                LanguageIdentifier::from_str(&language)
+                    .unwrap_or(LanguageIdentifier::from_str("en-GB").unwrap()),
+            );
+        }
+
+        if let Some(archive) = value.archive {
+            entry.set_archive(archive.into());
+        }
+
+        if let Some(archive_location) = value.archive_location {
+            entry.set_archive_location(archive_location.into());
+        }
+
+        if let Some(call_number) = value.call_number {
+            entry.set_call_number(call_number.into());
+        }
+
+        if let Some(note) = value.note {
+            entry.set_note(note.into());
+        }
+
+        if let Some(abstract_) = value.abstractt {
+            entry.set_abstract_(abstract_.into());
+        }
+
+        if let Some(genre) = value.genre {
+            entry.set_genre(genre.into());
+        }
+
+        Some(entry)
+    }
 }
 
 /// New default metadata version
@@ -499,22 +645,20 @@ pub struct ProjectMetadataV5 {
     pub custom_fields: HashMap<String, String>,
 }
 
-impl ProjectDataV9 {
+impl ProjectDataV10 {
     // TODO migrate to using path instead of the id and searching for it
     pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<Section> {
-        let pos = self.sections.iter().position(|section| match section {
-            SectionOrTocV5::Section(section) => section.id == Some(*section_to_remove_id),
-            _ => false,
-        });
+        let pos = self
+            .sections
+            .iter()
+            .position(|section| section.id == Some(*section_to_remove_id));
 
         match pos {
-            Some(pos) => self.sections.remove(pos).into_section(),
+            Some(pos) => Some(self.sections.remove(pos)),
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrTocV5::Section(section) = section {
-                        if let Some(removed) = section.remove_child_section(section_to_remove_id) {
-                            return Some(removed);
-                        }
+                    if let Some(removed) = section.remove_child_section(section_to_remove_id) {
+                        return Some(removed);
                     }
                 }
                 None
@@ -527,18 +671,16 @@ impl ProjectDataV9 {
         section_to_insert: Section,
     ) -> Result<(), ()> {
         for section in &mut self.sections {
-            if let SectionOrTocV5::Section(section) = section {
-                // Check if this is the parent section
-                if section.id == Some(*parent_section_id) {
-                    section.sub_sections.insert(0, section_to_insert);
+            // Check if this is the parent section
+            if section.id == Some(*parent_section_id) {
+                section.sub_sections.insert(0, section_to_insert);
+                return Ok(());
+            } else {
+                // Check if one of the children is the parent section
+                if let Some(_) =
+                    section.insert_child_section_as_child(parent_section_id, &section_to_insert)
+                {
                     return Ok(());
-                } else {
-                    // Check if one of the children is the parent section
-                    if let Some(_) =
-                        section.insert_child_section_as_child(parent_section_id, &section_to_insert)
-                    {
-                        return Ok(());
-                    }
                 }
             }
         }
@@ -549,25 +691,22 @@ impl ProjectDataV9 {
         previous_element: &uuid::Uuid,
         section_to_insert: Section,
     ) -> Result<(), ()> {
-        let pos = self.sections.iter().position(|section| match section {
-            SectionOrTocV5::Section(section) => section.id == Some(*previous_element),
-            _ => false,
-        });
+        let pos = self
+            .sections
+            .iter()
+            .position(|section| section.id == Some(*previous_element));
 
         match pos {
             Some(pos) => {
-                self.sections
-                    .insert(pos + 1, SectionOrTocV5::Section(section_to_insert));
+                self.sections.insert(pos + 1, section_to_insert);
                 Ok(())
             }
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrTocV5::Section(section) = section {
-                        if let Some(_) =
-                            section.insert_child_section_after(previous_element, &section_to_insert)
-                        {
-                            return Ok(());
-                        }
+                    if let Some(_) =
+                        section.insert_child_section_after(previous_element, &section_to_insert)
+                    {
+                        return Ok(());
                     }
                 }
                 Err(())
@@ -582,12 +721,8 @@ pub fn get_section_by_path_mut<'a>(
 ) -> Result<&'a mut Section, ApiError> {
     // Find first section
     let first_section_opt = project.sections.iter_mut().find_map(|section| {
-        if let SectionOrTocV5::Section(section) = section {
-            if section.id.unwrap_or_default() == path[0] {
-                Some(section)
-            } else {
-                None
-            }
+        if section.id.unwrap_or_default() == path[0] {
+            Some(section)
         } else {
             None
         }
@@ -632,10 +767,8 @@ pub fn get_section_by_path<'a>(
 
     // Find first section
     for section in project.sections.iter() {
-        if let SectionOrTocV5::Section(section) = section {
-            if section.id.unwrap_or_default() == path[0] {
-                first_section = Some(section);
-            }
+        if section.id.unwrap_or_default() == path[0] {
+            first_section = Some(section);
         }
     }
 

@@ -6,7 +6,6 @@ use crate::storage::project_storage::current::{
     get_section_by_path, get_section_by_path_mut, PersonUuidOrString,
 };
 use crate::storage::project_storage::sections::content::current::NewContentBlock;
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
@@ -18,6 +17,7 @@ use rocket::form::validate::Contains;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::State;
+use std::collections::HashMap;
 /// Contains API routes to view and modify sections inside a project
 use std::sync::Arc;
 use vb_exchange::projects::Identifier;
@@ -31,8 +31,6 @@ pub struct APISectionResult {
     pub css_classes: Vec<String>,
     /// Holds all subsections
     pub sub_sections: Option<Vec<Section>>,
-    // Holds all content blocks
-    pub children: Vec<NewContentBlock>,
     /// If true, the section is visible in the table of contents
     pub visible_in_toc: bool,
     /// Metadata of the section
@@ -40,7 +38,7 @@ pub struct APISectionResult {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API version for [`SectionMetadataV4`] with optional expansion of authors and editors
+/// API version for [`SectionMetadataV6`] with optional expansion of authors and editors
 pub struct APISectionMetadataResult {
     pub title: String,
     pub toc_title_subtitle_override: Option<String>,
@@ -54,6 +52,7 @@ pub struct APISectionMetadataResult {
     pub published: Option<NaiveDate>,
     pub last_changed: Option<NaiveDateTime>,
     pub lang: Option<Language>,
+    pub custom_fields: HashMap<String, String>,
 }
 
 /// GET /api/projects/<project_id>/sections/<content_path>?<expand>
@@ -229,6 +228,7 @@ pub async fn get_section(
         last_changed: section.metadata.last_changed,
         lang: section.metadata.lang,
         toc_title_subtitle_override: section.metadata.toc_title_subtitle_override,
+        custom_fields: section.metadata.custom_fields,
     };
     let section_id = match section.id {
         Some(id) => id,
@@ -246,7 +246,6 @@ pub async fn get_section(
         id: section_id,
         css_classes: section.css_classes,
         sub_sections,
-        children: section.children,
         visible_in_toc: section.visible_in_toc,
         metadata: metadata_res,
     };
@@ -545,7 +544,7 @@ pub async fn move_section_after(
         Ok(_) => Ok(().into()),
         Err(_) => {
             // rollback: append to root to avoid data loss
-            project.sections.push(SectionOrTocV5::Section(section));
+            project.sections.push(section);
             Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
         }
     }
@@ -581,7 +580,7 @@ pub async fn move_section_child_of(
         Ok(_) => Ok(().into()),
         Err(_) => {
             // rollback: append to root to avoid data loss
-            project.sections.push(SectionOrTocV5::Section(section));
+            project.sections.push(section);
             Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
         }
     }

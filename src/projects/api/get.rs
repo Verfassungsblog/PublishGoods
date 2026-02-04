@@ -1,11 +1,11 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::current::PersonUuidOrString;
+use crate::storage::project_storage::current::{Bibliography, PersonUuidOrString};
 use crate::storage::project_storage::migration::load_project_data;
-use crate::storage::project_storage::sections::current::SectionOrTocV5;
+use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{ProjectMetadata, ProjectStorage};
-use crate::storage::{BibEntryV2, ProjectTemplateV2};
+use crate::storage::{BibEntryV2, BibEntryV3, ProjectTemplateV2};
 use crate::utils::api_helpers::{APIResponse, APIResult};
 use crate::utils::csl::{list_available_locales, list_available_styles};
 use chrono::NaiveDate;
@@ -37,9 +37,9 @@ pub struct APIProjectData {
     /// Optionally extended ProjectSettings
     pub settings: Option<ProjectSettingsV5>,
     /// Optionally extended Sections
-    pub sections: Option<Vec<SectionOrTocV5>>,
+    pub sections: Option<Vec<Section>>,
     /// Optionally extended Bibliography
-    pub bibliography: Option<HashMap<String, BibEntryV2>>,
+    pub bibliography: Option<Bibliography>,
     /// Optionally extended available CSL styles
     pub available_csl_styles: Option<Vec<String>>,
     /// Optionally extended available CSL locales
@@ -225,9 +225,7 @@ pub async fn get_project(
         if parts.contains("sections") {
             let mut sections = loaded_project.sections;
             for section in sections.iter_mut() {
-                if let SectionOrTocV5::Section(section) = section {
-                    section.truncate_children_recursive();
-                }
+                section.truncate_content_recursive();
             }
             api_response.sections = Some(sections);
         }

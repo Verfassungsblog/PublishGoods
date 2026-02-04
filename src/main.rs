@@ -11,14 +11,13 @@
 #[macro_use]
 extern crate rocket;
 use crate::projects::websocket::WebsocketManager;
-use crate::session::session_guard::Session;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
 use crate::storage::data_storage::current::User;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
-use crate::storage::{data_storage, save_data_worker, ProjectListEntry};
+use crate::storage::{data_storage, save_data_worker};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use crate::utils::csl::CslData;
 use argon2::password_hash::rand_core::OsRng;
@@ -26,7 +25,7 @@ use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
 use rocket::response::Redirect;
-use rocket::{Request, State};
+use rocket::Request;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
@@ -221,17 +220,11 @@ async fn rocket() -> _ {
                 projects::create::process_create_project,
                 projects::list::list_projects,
                 projects::editor::show_editor,
-                projects::bibliography_editor::show_bib_editor,
                 projects::api::get::get_project,
-                projects::bibliography_editor::api::get_library,
-                projects::bibliography_editor::api::update_bib_entry,
                 projects::api::get_project_template,
                 projects::api::set_project_template,
                 projects::api::patch::patch_project,
                 projects::api::list_templates,
-                projects::bibliography_editor::api::get_bib_entry,
-                projects::bibliography_editor::api::search_bib_entry,
-                projects::bibliography_editor::api::add_bib_entry,
                 projects::api::delete_project,
                 persons::api::delete_person,
                 persons::list::list_persons,
@@ -249,8 +242,6 @@ async fn rocket() -> _ {
                 projects::api::sections::delete_section,
                 projects::api::sections::move_section_after,
                 projects::api::sections::move_section_child_of,
-                projects::api::get_content_blocks_in_section,
-                projects::api::set_content_blocks_in_section,
                 projects::api::upload_to_project,
                 import::api::poll_import_status,
                 projects::api::get_project_upload,

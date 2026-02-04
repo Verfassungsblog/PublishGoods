@@ -1,8 +1,5 @@
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::content::current::NewContentBlock;
-use crate::storage::project_storage::sections::current::{
-    SectionMetadataV5, SectionOrTocV5, SectionV5,
-};
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
@@ -190,6 +187,45 @@ impl From<SectionV3> for SectionV4 {
     }
 }
 
+/// Struct holds all data for a section (e.g. chapter, part, ...)
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct SectionV5 {
+    /// Unique id of the section
+    /// Only None if the section is not yet saved in the database
+    #[bincode(with_serde)]
+    pub id: Option<uuid::Uuid>,
+    /// Additional classes to style the Section
+    pub css_classes: Vec<String>,
+    /// Holds all subsections
+    pub sub_sections: Vec<SectionV5>,
+    // Holds all content blocks
+    pub children: Vec<NewContentBlock>,
+    /// If true, the section is visible in the table of contents
+    pub visible_in_toc: bool,
+    /// Metadata of the section
+    pub metadata: SectionMetadataV5,
+}
+
+/// Struct holds all metadata of a section
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct SectionMetadataV5 {
+    pub title: String,
+    pub toc_title_subtitle_override: Option<String>,
+    pub subtitle: Option<String>,
+    #[bincode(with_serde)]
+    pub authors: Vec<PersonUuidOrString>,
+    #[bincode(with_serde)]
+    pub editors: Vec<PersonUuidOrString>,
+    pub web_url: Option<String>,
+    pub identifiers: Vec<Identifier>,
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    #[bincode(with_serde)]
+    pub last_changed: Option<NaiveDateTime>,
+    #[bincode(with_serde)]
+    pub lang: Option<Language>,
+}
+
 impl From<SectionV4> for SectionV5 {
     fn from(value: SectionV4) -> Self {
         SectionV5 {
@@ -203,6 +239,21 @@ impl From<SectionV4> for SectionV5 {
             children: value.children,
             visible_in_toc: value.visible_in_toc,
             metadata: value.metadata.into(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub enum SectionOrTocV5 {
+    Section(SectionV5),
+    Toc,
+}
+
+impl SectionOrTocV5 {
+    pub fn into_section(self) -> Option<SectionV5> {
+        match self {
+            SectionOrTocV5::Section(section) => Some(section),
+            SectionOrTocV5::Toc => None,
         }
     }
 }
