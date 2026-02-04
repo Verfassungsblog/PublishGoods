@@ -374,7 +374,7 @@ impl ProjectStorage {
         Ok(())
     }
 
-    pub(crate) async fn save_project_to_disk(
+    pub async fn save_project_to_disk(
         //todo: create as new file and move after saving
         &self,
         uuid: &uuid::Uuid,
@@ -524,11 +524,11 @@ impl Bibliography {
         }
 
         if let Some(issue) = value.issue {
-            entry.set_issue(issue.into());
+            entry.set_issue(issue.to_hayagriva());
         }
 
         if let Some(volume) = value.volume {
-            entry.set_volume(volume.into())
+            entry.set_volume(volume.to_hayagriva())
         }
 
         if let Some(volume_total) = value.volume_total {
@@ -536,11 +536,18 @@ impl Bibliography {
         }
 
         if let Some(edition) = value.edition {
-            entry.set_edition(edition.into())
+            entry.set_edition(edition.to_hayagriva())
         }
 
         if let Some(page_range) = value.page_range {
-            entry.set_page_range(page_range.into())
+            let npage_range: MaybeTyped<hayagriva::types::PageRanges> = match page_range {
+                MyMaybeTyped::Typed(t) => {
+                    let my_page_ranges: MyPageRanges = t.into();
+                    MaybeTyped::Typed(my_page_ranges.into())
+                }
+                MyMaybeTyped::String(s) => MaybeTyped::String(s),
+            };
+            entry.set_page_range(npage_range);
         }
 
         if let Some(page_total) = value.page_total {
@@ -548,11 +555,11 @@ impl Bibliography {
         }
 
         if let Some(time_range) = value.time_range {
-            entry.set_time_range(time_range.into())
+            entry.set_time_range(time_range.to_hayagriva())
         }
 
         if let Some(runtime) = value.runtime {
-            entry.set_runtime(runtime.into());
+            entry.set_runtime(runtime.to_hayagriva());
         }
 
         if let Some(url) = value.url {
@@ -712,6 +719,24 @@ impl ProjectDataV10 {
                 Err(())
             }
         }
+    }
+
+    pub fn get_section(&self, section_id: &uuid::Uuid) -> Option<&Section> {
+        for section in &self.sections {
+            if let Some(found) = section.get_section(section_id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    pub fn get_section_mut(&mut self, section_id: &uuid::Uuid) -> Option<&mut Section> {
+        for section in &mut self.sections {
+            if let Some(found) = section.get_section_mut(section_id) {
+                return Some(found);
+            }
+        }
+        None
     }
 }
 

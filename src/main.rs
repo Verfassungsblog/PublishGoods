@@ -5,8 +5,8 @@
 //! You have to create a new configuration file in the config folder to change the default settings.
 //! The default settings pub(crate)are stored in the file config/default.toml, create a new file named "local.toml" in the same folder.
 
-#![warn(missing_docs)]
-#![warn(clippy::missing_docs_in_private_items)]
+// #![warn(missing_docs)]
+// #![warn(clippy::missing_docs_in_private_items)]
 
 #[macro_use]
 extern crate rocket;

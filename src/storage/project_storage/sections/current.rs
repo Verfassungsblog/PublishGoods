@@ -138,4 +138,28 @@ impl Section {
             None => None,
         }
     }
+
+    pub fn get_section(&self, section_id: &uuid::Uuid) -> Option<&Section> {
+        if self.id == Some(*section_id) {
+            return Some(self);
+        }
+        for section in &self.sub_sections {
+            if let Some(found) = section.get_section(section_id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    pub fn get_section_mut(&mut self, section_id: &uuid::Uuid) -> Option<&mut Section> {
+        if self.id == Some(*section_id) {
+            return Some(self);
+        }
+        for section in &mut self.sub_sections {
+            if let Some(found) = section.get_section_mut(section_id) {
+                return Some(found);
+            }
+        }
+        None
+    }
 }
