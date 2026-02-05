@@ -20,6 +20,18 @@ let currentEditor: EditorJS | null = null;
 let currentYjsBinding: any = null;
 let currentEditorBinding: any = null;
 
+/**
+ * Mounts the section editor view and binds EditorJS to the section's Yjs document.
+ *
+ * This function is responsible for:
+ * - Cleaning up any previous editor/binding instances.
+ * - Rendering the section editor template.
+ * - Creating the `YjsBinding` websocket-backed doc.
+ * - Creating the EditorJS instance.
+ * - Wiring EditorJS `onChange` into the binding.
+ *
+ * @param section_id Section/document id.
+ */
 export async function showSectionEditor(section_id: string){
     console.log("Loading section editor for section: " + section_id);
 
@@ -85,8 +97,20 @@ export async function showSectionEditor(section_id: string){
     });
 }
 
+/**
+ * Creates a two-way binding between a Yjs `blocks` array and an EditorJS instance.
+ *
+ * The binding:
+ * - Applies local EditorJS edits into Yjs (`origin = 'local'`).
+ * - Applies remote Yjs updates from the server into EditorJS without echoing them back.
+ * - Stores a stable Yjs uuid per EditorJS block using the `data-y2-uuid` holder attribute.
+ *
+ * @param doc Yjs document.
+ * @param editor EditorJS instance.
+ */
 function createEditorBinding(doc: any, editor: EditorJS) {
-    const DEBUG_BINDING = true;
+    /** Enable verbose debug logging for the binding. Keep `false` by default. */
+    const DEBUG_BINDING = false;
     const yBlocks = doc.getArray('blocks');
     // Keep a simple UUID set so we can ignore EditorJS events that are side-effects of
     // initial render / remote renders.
@@ -112,11 +136,20 @@ function createEditorBinding(doc: any, editor: EditorJS) {
     // Keep a secondary mapping so we can still resolve our uuid and suppress echo writes.
     const editorIdToUuid = new Map<string, string>();
 
+    /**
+     * Marks a Yjs block uuid as recently modified by a remote update.
+     *
+     * We use this to suppress EditorJS `onChange` events that are side-effects of applying
+     * remote updates (prevents ping-pong loops).
+     */
     function markRemoteTouched(uuid: string | null | undefined) {
         if (!uuid) return;
         remoteTouchedUntil.set(uuid, Date.now() + REMOTE_TOUCH_TTL_MS);
     }
 
+    /**
+     * Returns `true` if the given uuid was modified by a remote update very recently.
+     */
     function wasRecentlyRemoteTouched(uuid: string | null | undefined): boolean {
         if (!uuid) return false;
         const until = remoteTouchedUntil.get(uuid);
@@ -128,6 +161,11 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return true;
     }
 
+    /**
+     * Executes `fn` while suppressing EditorJS events for a short time window.
+     *
+     * EditorJS can emit `onChange` asynchronously after we apply an update.
+     */
     function withSuppressedEditorEvents(fn: () => void) {
         suppressEditorEvents++;
         try {
@@ -145,6 +183,11 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 
     const dmp = new DiffMatchPatch();
 
+    /**
+     * Applies a diff between the current `ytext` content and `next` using `diff-match-patch`.
+     *
+     * This preserves Yjs text structure and avoids replacing whole blocks for small edits.
+     */
     function applyStringDiffToYText(ytext: Y.Text, next: string): boolean {
         const prev = ytext.toString();
         if (prev === next) return true;
@@ -171,6 +214,12 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return true;
     }
 
+    /**
+     * Builds a Yjs block representation from EditorJS `target.save()` output.
+     *
+     * Mirrors the backend yrs schema (see Rust `NewContentBlock -> MapPrelim`):
+     * `{ id, type, data: {...}, tunes?: {...} }`, storing text fields as `Y.Text`.
+     */
     function yBlockFromEditorSaved(uuid: string, toolName: string | null, savedData: any): any {
         // Mirror the yrs schema produced by `NewContentBlock -> MapPrelim` on the backend:
         // { id, type, data: { text|level|items|html|... }, tunes?: { block_style_tunes: { css_classes } } }
@@ -240,6 +289,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             if (data.withBackground !== undefined) yData.set('withBackground', data.withBackground);
             if (data.stretched !== undefined) yData.set('stretched', data.stretched);
         } else {
+            console.warn('[SectionBinding] Unsupported block type', type, data);
             // Unknown tool or unexpected payload: keep a plain JSON snapshot for now.
             yBlock.set('data', data);
         }
@@ -256,6 +306,14 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return yBlock;
     }
 
+    /**
+     * Attempts to apply an EditorJS change to an existing Yjs block without replacing the block.
+     *
+     * For supported block types, this updates the relevant `Y.Text` fields using minimal diffs
+     * and updates simple scalar fields (e.g. header `level`).
+     *
+     * @returns `true` if applied in-place; `false` if the caller should fall back to a full block replacement.
+     */
     function tryApplyInPlaceTextUpdate(existing: any, toolName: string | null, savedData: any): boolean {
         if (!existing || typeof existing !== 'object') return false;
         // We only support Y.Map-based blocks for in-place updates.
@@ -319,6 +377,15 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return false;
     }
 
+    /**
+     * Resolves the EditorJS tool name for an onChange event.
+     *
+     * `target.save()` typically returns only the tool data and may omit the type.
+     * We prefer:
+     * - `target.name` (Block API),
+     * - then `editor.blocks.getBlockByIndex(index)?.name`,
+     * - then `savedData.type`.
+     */
     function getToolNameForEvent(index: any, target: any, savedData: any): string | null {
         // EditorJS Block API has `name` (tool key) and `save()` returns only tool data.
         // Prefer block api / target name over savedData fields.
@@ -337,18 +404,30 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return null;
     }
 
+    /**
+     * Normalizes an EditorJS event index to a non-negative integer.
+     */
     function toFiniteIndex(rawIndex: any, fallback: number): number {
         const n = typeof rawIndex === 'number' ? rawIndex : Number(rawIndex);
         if (!Number.isFinite(n)) return fallback;
         return Math.max(0, Math.floor(n));
     }
 
+    /**
+     * Clamps an index into the `[0..len]` range.
+     */
     function clampIndex(index: number, len: number): number {
         if (index < 0) return 0;
         if (index > len) return len;
         return index;
     }
 
+    /**
+     * Resolves the binding uuid for an EditorJS block event.
+     *
+     * Primary source: `target.holder[data-y2-uuid]`.
+     * Fallback: EditorJS internal id (`blockId`) which we map to a uuid via `editorIdToUuid`.
+     */
     function getUuidFromEditorTarget(target: any, fallback?: string | null): string | null {
         const fromAttr = target?.holder?.getAttribute?.("data-y2-uuid") || null;
         if (fromAttr) return fromAttr;
@@ -361,6 +440,9 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return fb;
     }
 
+    /**
+     * Attaches the binding uuid to an EditorJS block (DOM holder attribute) and caches it.
+     */
     function setUuidOnEditorTarget(target: any, uuid: string) {
         if (target?.holder?.setAttribute) {
             target.holder.setAttribute("data-y2-uuid", uuid);
@@ -370,11 +452,17 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         }
     }
 
+    /**
+     * Finds the index of a Yjs block by its binding uuid.
+     */
     function findYjsIndexByUuid(uuid: string): number {
         const arr = yBlocks.toArray();
         return arr.findIndex((b: any) => normalizeBlockData(b).uuid === uuid);
     }
 
+    /**
+     * Inserts a single Yjs block into EditorJS at `index` and attaches the binding uuid.
+     */
     async function renderBlockIntoEditor(editorBlock: any, index: number) {
         const normalized = normalizeBlockData(editorBlock);
 
@@ -393,6 +481,9 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         }
     }
 
+    /**
+     * Finds an EditorJS block API object by its internal id.
+     */
     function findEditorBlockApiById(editorId: string): any | null {
         for (let i = 0; i < editor.blocks.getBlocksCount(); i++) {
             const blockApi: any = editor.blocks.getBlockByIndex(i);
@@ -401,6 +492,9 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return null;
     }
 
+    /**
+     * Finds an EditorJS block API object by our binding uuid (`data-y2-uuid`).
+     */
     function findEditorBlockApiByUuid(uuid: string): any | null {
         for (let i = 0; i < editor.blocks.getBlocksCount(); i++) {
             const blockApi: any = editor.blocks.getBlockByIndex(i);
@@ -410,6 +504,12 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         return null;
     }
 
+    /**
+     * Full safety-net rerender from the current Yjs document state.
+     *
+     * We try hard to apply remote updates in-place. This is only used if EditorJS
+     * gets out of sync (e.g. throws/rejects during `blocks.update`).
+     */
     async function rerenderAllFromYjs(reason: string) {
         try {
             // This is a safety-net fallback when we can't reliably apply an in-place update
@@ -447,6 +547,10 @@ function createEditorBinding(doc: any, editor: EditorJS) {
     }
 
     let rerenderTimer: any = null;
+
+    /**
+     * Debounces full rerenders to avoid hammering EditorJS if multiple failures happen at once.
+     */
     function scheduleRerender(reason: string) {
         if (rerenderTimer) return;
         rerenderTimer = setTimeout(() => {
@@ -459,6 +563,12 @@ function createEditorBinding(doc: any, editor: EditorJS) {
     // IMPORTANT: don't capture Yjs/Editor state too early; recompute inside the timer, otherwise
     // EditorJS may have re-indexed blocks and `blocks.update` may throw "Incorrect index".
     const deepUpdateTimers = new Map<string, any>();
+
+    /**
+     * Schedules an in-place update of a single EditorJS block from the latest Yjs state.
+     *
+     * Used for deep Yjs events (e.g. `Y.Text` changes inside `data`).
+     */
     function scheduleDeepBlockUpdate(index: number) {
         const yBlockNow = yBlocks.get(index);
         const uuid = normalizeBlockData(yBlockNow).uuid;
@@ -513,6 +623,14 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         }, 0));
     }
 
+    /**
+     * Handles EditorJS `onChange` events and applies them into Yjs.
+     *
+     * This method is intentionally conservative to prevent feedback loops:
+     * - ignores events during initial render
+     * - ignores events while suppressed
+     * - ignores events for uuids recently touched by remote updates
+     */
     function onBlockEventEditorJS(api: any, event: any) {
         if (destroyed) return;
         if (!initialRenderDone) return;
@@ -525,6 +643,10 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             console.error("onBlockEventEditorJS: Error in event queue:", err);
         });
 
+        /**
+         * Serially processes EditorJS events, snapshots `target.save()` results,
+         * and applies the aggregated changes to Yjs in a single transaction.
+         */
         async function processEvents(evs: any[]) {
             if (destroyed) return;
             const eventDataList: any[] = [];
@@ -660,6 +782,11 @@ function createEditorBinding(doc: any, editor: EditorJS) {
         }
     }
 
+    /**
+     * Performs the initial EditorJS render from the current Yjs `blocks` array.
+     *
+     * This is invoked after we have applied at least one server update.
+     */
     function initialRender() {
         if (destroyed) return;
         if (initialRenderDone) return;
@@ -724,10 +851,19 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 
     let yObserver: any = null;
 
+    /**
+     * Starts observing the Yjs `blocks` array (deep) and applies remote updates into EditorJS.
+     */
     function startObserver() {
         if (yObserver) return;
-        
-        yObserver = (eventArray: any[], transaction: any) => {
+
+        /**
+         * Yjs observer callback for remote (server-origin) updates.
+         *
+         * We only handle `transaction.origin === 'server'` here. Local edits are applied
+         * from EditorJS into Yjs in `onBlockEventEditorJS`.
+         */
+        function yObserverHandler(eventArray: any[], transaction: any) {
             if (destroyed) return;
             if (transaction.origin !== 'server') return;
             if (!initialRenderDone) return;
@@ -808,13 +944,18 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                     }
                 }
             }));
-        };
+        }
+
+        yObserver = yObserverHandler;
         yBlocks.observeDeep(yObserver);
     }
 
     return {
         onBlockEventEditorJS,
         initialRender,
+        /**
+         * Destroys the binding and stops observing Yjs.
+         */
         destroy: () => {
             destroyed = true;
             if (yObserver) {
@@ -824,7 +965,15 @@ function createEditorBinding(doc: any, editor: EditorJS) {
     };
 }
 
+/**
+ * Converts a Yjs block representation into the plain EditorJS data shape.
+ *
+ * This function is used both for initial render and for applying remote updates.
+ */
 function normalizeBlockData(block: any) {
+    /**
+     * Recursively converts Yjs types (`Y.Text`, `Y.Map`, `Y.Array`) into plain JS values.
+     */
     function valueToJs(val: any): any {
         if (val == null) return val;
         if (val instanceof Y.Text) return val.toString();

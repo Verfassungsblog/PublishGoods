@@ -1,13 +1,36 @@
 import * as Y from 'yjs';
 import {WebsocketClient} from './Websocket';
 
-const DEBUG_YJS_UPDATES = true;
+/**
+ * Enable verbose debug logging for Yjs update origins and stacks.
+ *
+ * Keep this `false` by default to avoid noisy logs and to prevent DevTools from
+ * eagerly inspecting complex Yjs objects during frequent updates.
+ */
+const DEBUG_YJS_UPDATES = false;
 
+/**
+ * Creates a Yjs document binding backed by the project websocket.
+ *
+ * Responsibilities:
+ * - Maintain a local `Y.Doc`.
+ * - Request initial document state after `welcome`.
+ * - Apply server updates (`origin = 'server'`).
+ * - Send local updates back to the server (everything except `origin = 'server'`).
+ *
+ * @param projectId Project UUID (string) used to create the websocket client.
+ * @param documentId Document UUID (string) used to connect and scope messages.
+ */
 export function YjsBinding(projectId: string, documentId: string) {
     const doc = new Y.Doc();
     const ws = WebsocketClient(projectId);
     let destroyed = false;
 
+    /**
+     * Sets up websocket handlers to keep `doc` in sync with the server.
+     *
+     * @param documentId The document id to connect to.
+     */
     function setupWebsocket(documentId: string) {
         ws.on('welcome', () => {
             if (destroyed) return;
@@ -24,18 +47,19 @@ export function YjsBinding(projectId: string, documentId: string) {
             Y.applyUpdate(doc, update, 'server');
             
             trigger('update', doc);
-            
-            // Debug print the document state
-            console.log('Current document state:');
-            console.log(doc);
+
+            if (DEBUG_YJS_UPDATES) {
+                console.log('Current document state (debug):', {
+                    guid: (doc as any).guid,
+                    clientID: (doc as any).clientID,
+                });
+            }
         });
 
         doc.on('update', (update, origin) => {
             if (destroyed) return;
 
             if (DEBUG_YJS_UPDATES) {
-                // `origin` should be exactly the value passed to `Y.applyUpdate` (e.g. 'server')
-                // or the transaction origin used for local writes (we use 'local' in Section.ts).
                 const stack = new Error().stack;
                 console.log('[YjsBinding] doc.update', {
                     origin,
@@ -46,7 +70,6 @@ export function YjsBinding(projectId: string, documentId: string) {
 
             if (origin !== 'server') {
                 if (update.length <= 2 && update[0] === 0 && (update.length === 1 || update[1] === 0)) {
-                    // console.log('Empty local update, skipping send to server');
                     return;
                 }
                 console.log('Local update, sending to server... Origin:', origin, 'Length:', update.length);
@@ -71,6 +94,12 @@ export function YjsBinding(projectId: string, documentId: string) {
 
     const handlers: { [key: string]: ((data: any) => void)[] } = {};
 
+    /**
+     * Registers a handler for a binding event.
+     *
+     * Currently supported events:
+     * - `update`: triggered after a server update has been applied to the `Y.Doc`.
+     */
     function on(event: string, handler: (data: any) => void) {
         if (!handlers[event]) {
             handlers[event] = [];
@@ -78,6 +107,12 @@ export function YjsBinding(projectId: string, documentId: string) {
         handlers[event].push(handler);
     }
 
+    /**
+     * Triggers a binding event.
+     *
+     * @param event Event name.
+     * @param data Payload passed to handlers.
+     */
     function trigger(event: string, data: any) {
         if (handlers[event]) {
             handlers[event].forEach(h => h(data));
@@ -86,6 +121,9 @@ export function YjsBinding(projectId: string, documentId: string) {
 
     setupWebsocket(documentId);
 
+    /**
+     * Returns the underlying `Y.Doc` instance.
+     */
     function getDoc(): Y.Doc {
         return doc;
     }
@@ -93,6 +131,11 @@ export function YjsBinding(projectId: string, documentId: string) {
     return {
         getDoc,
         on,
+        /**
+         * Destroys the binding and disconnects the websocket.
+         *
+         * The binding becomes inert after destruction.
+         */
         destroy: () => {
             if (destroyed) return;
             destroyed = true;
