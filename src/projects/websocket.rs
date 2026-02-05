@@ -323,7 +323,11 @@ pub async fn websocket<'a>(
         loop {
             tokio::select! {
                 // Handle messages from the client
-                Some(result) = stream.next() => {
+                msg_result = stream.next() => {
+                    let result = match msg_result {
+                        Some(result) => result,
+                        None => break, // Stream closed
+                    };
                     let msg = match result {
                         Ok(msg) => msg,
                         Err(_) => break, // Connection closed
@@ -361,7 +365,10 @@ pub async fn websocket<'a>(
                             if let Some(msg) = error_msg {
                                 let error_ws_msg = WebsocketMessage::ERROR(msg);
                                 let data: Vec<u8> = error_ws_msg.into();
-                                let _ = stream.send(data.into()).await;
+                                if let Err(e) = stream.send(data.into()).await {
+                                    error!("Failed to send error message: {}", e);
+                                    break;
+                                }
                             }
                             continue;
                         }
@@ -382,12 +389,18 @@ pub async fn websocket<'a>(
                         Ok(responses) => {
                             for response in responses {
                                 let data: Vec<u8> = response.into();
-                                let _ = stream.send(data.into()).await;
+                                if let Err(e) = stream.send(data.into()).await {
+                                    error!("Failed to send response: {}", e);
+                                    break;
+                                }
                             }
                         }
                         Err(err) => {
                             let data: Vec<u8> = WebsocketMessage::ERROR(err).into();
-                            let _ = stream.send(data.into()).await;
+                            if let Err(e) = stream.send(data.into()).await {
+                                error!("Failed to send handle_client_msg error: {}", e);
+                                break;
+                            }
                         }
                     }
                 },
@@ -401,9 +414,13 @@ pub async fn websocket<'a>(
                 } => {
                     if broadcast_msg.sender_id != client_id { // Don't send messages back to the sender
                         let data: Vec<u8> = broadcast_msg.message.into();
-                        let _ = stream.send(data.into()).await;
+                        if let Err(e) = stream.send(data.into()).await {
+                            error!("Failed to send broadcast message: {}", e);
+                            break;
+                        }
                     }
-                }
+                },
+                else => break,
             }
         }
 
