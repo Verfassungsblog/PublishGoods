@@ -31,6 +31,7 @@
     "codemirror": "^6.0.1",
     "editorjs-undo": "^2.0.26",
     "handlebars": "^4.7.8",
-    "pdfjs-dist": "^4.0.379"
+    "pdfjs-dist": "^4.0.379",
+    "yjs": "^13.6.10"
   }
 }

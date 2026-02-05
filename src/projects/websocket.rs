@@ -372,6 +372,7 @@ pub async fn websocket<'a>(
                         &client_id,
                         &project_id,
                         &mut document_id,
+                        &mut broadcast_rx,
                         websocket_manager.inner().clone(),
                         project_storage.clone(),
                         &settings,
@@ -442,6 +443,7 @@ async fn handle_client_msg(
     client_id: &uuid::Uuid,
     project_id: &uuid::Uuid,
     document_id: &mut Option<uuid::Uuid>,
+    broadcast_rx: &mut Option<broadcast::Receiver<BroadcastMessage>>,
     websocket_manager: Arc<WebsocketManager>,
     project_storage: Arc<ProjectStorage>,
     settings: &Settings,
@@ -472,6 +474,8 @@ async fn handle_client_msg(
                     .or_insert(new_state)
                     .clone()
             };
+
+            broadcast_rx.replace(state.broadcast_tx.subscribe());
 
             let responses = vec![WebsocketMessage::WELCOME(WelcomeMessage {
                 client_id: *client_id,
@@ -528,7 +532,9 @@ async fn handle_client_msg(
                         })
                     }
                 };
-                if let Err(e) = doc.doc.transact_mut().apply_update(update) {
+
+                let mut txn = doc.doc.transact_mut();
+                if let Err(e) = txn.apply_update(update) {
                     error!("Failed to apply yrs update: {}", e);
                     return Err(ErrorMessage {
                         status: 500,
@@ -538,6 +544,7 @@ async fn handle_client_msg(
 
                 // Broadcast update to all clients (except the sender)
                 let sender = doc.broadcast_tx.clone();
+                drop(txn); // must drop txn before dropping doc or using it
                 drop(doc);
                 let _ = sender.send(BroadcastMessage {
                     sender_id: *client_id,
