@@ -1,6 +1,8 @@
 import * as Y from 'yjs';
 import {WebsocketClient} from './Websocket';
 
+const DEBUG_YJS_UPDATES = true;
+
 export function YjsBinding(projectId: string, documentId: string) {
     const doc = new Y.Doc();
     const ws = WebsocketClient(projectId);
@@ -30,6 +32,18 @@ export function YjsBinding(projectId: string, documentId: string) {
 
         doc.on('update', (update, origin) => {
             if (destroyed) return;
+
+            if (DEBUG_YJS_UPDATES) {
+                // `origin` should be exactly the value passed to `Y.applyUpdate` (e.g. 'server')
+                // or the transaction origin used for local writes (we use 'local' in Section.ts).
+                const stack = new Error().stack;
+                console.log('[YjsBinding] doc.update', {
+                    origin,
+                    length: update?.length,
+                    stack,
+                });
+            }
+
             if (origin !== 'server') {
                 if (update.length <= 2 && update[0] === 0 && (update.length === 1 || update[1] === 0)) {
                     // console.log('Empty local update, skipping send to server');

@@ -2,13 +2,15 @@ import {main_col} from "./Editor";
 import {YjsBinding} from "./YjsBinding";
 import {state} from "./Main";
 import EditorJS from "@editorjs/editorjs";
+import * as Y from 'yjs';
+import DiffMatchPatch from 'diff-match-patch';
 // @ts-ignore
 import Header from "@editorjs/header";
 // @ts-ignore
 import List from "@editorjs/list";
 // @ts-ignore
 import Quote from "@editorjs/quote";
-// @ts-ignore
+// @ts-ignoreO
 import Raw from "@editorjs/raw";
 // @ts-ignore
 import ImageTool from "@editorjs/image";
@@ -84,6 +86,7 @@ export async function showSectionEditor(section_id: string){
 }
 
 function createEditorBinding(doc: any, editor: EditorJS) {
+    const DEBUG_BINDING = true;
     const yBlocks = doc.getArray('blocks');
     // Keep a simple UUID set so we can ignore EditorJS events that are side-effects of
     // initial render / remote renders.
@@ -93,8 +96,246 @@ function createEditorBinding(doc: any, editor: EditorJS) {
     let initialRenderPromise: Promise<void> | null = null;
     let destroyed = false;
 
+    // Some EditorJS operations (notably `blocks.update`) can trigger `onChange` asynchronously,
+    // after we already released our mutex. Use an explicit suppression counter to prevent
+    // remote-applied changes from being echoed back into Yjs.
+    let suppressEditorEvents = 0;
+
+    // Additional guard: even with suppression, EditorJS may emit `block-changed` after a remote
+    // `blocks.update`/`blocks.insert` due to internal normalization. Track remote-touched block ids
+    // for a short time window and ignore corresponding EditorJS events.
+    const remoteTouchedUntil = new Map<string, number>();
+    const REMOTE_TOUCH_TTL_MS = 2500;
+
+    // EditorJS manages its own internal block ids. Sometimes during updates (notably when changing
+    // header level) EditorJS may re-create block DOM and temporarily lose our `data-y2-uuid` marker.
+    // Keep a secondary mapping so we can still resolve our uuid and suppress echo writes.
+    const editorIdToUuid = new Map<string, string>();
+
+    function markRemoteTouched(uuid: string | null | undefined) {
+        if (!uuid) return;
+        remoteTouchedUntil.set(uuid, Date.now() + REMOTE_TOUCH_TTL_MS);
+    }
+
+    function wasRecentlyRemoteTouched(uuid: string | null | undefined): boolean {
+        if (!uuid) return false;
+        const until = remoteTouchedUntil.get(uuid);
+        if (!until) return false;
+        if (Date.now() > until) {
+            remoteTouchedUntil.delete(uuid);
+            return false;
+        }
+        return true;
+    }
+
+    function withSuppressedEditorEvents(fn: () => void) {
+        suppressEditorEvents++;
+        try {
+            fn();
+        } finally {
+            // Defer unsuppression to cover async `onChange` emissions.
+            setTimeout(() => {
+                suppressEditorEvents = Math.max(0, suppressEditorEvents - 1);
+            }, 2000);
+        }
+    }
+
     // Serial queue for event processing to avoid race conditions during async save()
     let eventQueue = Promise.resolve();
+
+    const dmp = new DiffMatchPatch();
+
+    function applyStringDiffToYText(ytext: Y.Text, next: string): boolean {
+        const prev = ytext.toString();
+        if (prev === next) return true;
+
+        const diffs = dmp.diff_main(prev, next, false);
+        dmp.diff_cleanupEfficiency(diffs);
+
+        let index = 0;
+        for (const [op, text] of diffs) {
+            if (op === DiffMatchPatch.DIFF_EQUAL) {
+                index += text.length;
+            } else if (op === DiffMatchPatch.DIFF_DELETE) {
+                if (text.length > 0) {
+                    ytext.delete(index, text.length);
+                }
+            } else if (op === DiffMatchPatch.DIFF_INSERT) {
+                if (text.length > 0) {
+                    ytext.insert(index, text);
+                    index += text.length;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    function yBlockFromEditorSaved(uuid: string, toolName: string | null, savedData: any): any {
+        // Mirror the yrs schema produced by `NewContentBlock -> MapPrelim` on the backend:
+        // { id, type, data: { text|level|items|html|... }, tunes?: { block_style_tunes: { css_classes } } }
+        const type = toolName || savedData?.type;
+        const data = savedData?.data || {};
+        const tunes = savedData?.tunes;
+
+        const yBlock = new Y.Map();
+        yBlock.set('id', uuid);
+        if (type) {
+            yBlock.set('type', type);
+        }
+
+        const yData = new Y.Map();
+
+        if (type === 'paragraph' && typeof data.text === 'string') {
+            const yText = new Y.Text();
+            yText.insert(0, data.text);
+            yData.set('text', yText);
+        } else if (type === 'header') {
+            if (typeof data.text === 'string') {
+                const yText = new Y.Text();
+                yText.insert(0, data.text);
+                yData.set('text', yText);
+            }
+            if (data.level !== undefined) yData.set('level', data.level);
+        } else if (type === 'raw' && typeof data.html === 'string') {
+            const yText = new Y.Text();
+            yText.insert(0, data.html);
+            yData.set('html', yText);
+        } else if (type === 'quote') {
+            if (typeof data.text === 'string') {
+                const yText = new Y.Text();
+                yText.insert(0, data.text);
+                yData.set('text', yText);
+            }
+            if (typeof data.caption === 'string') {
+                const yCaption = new Y.Text();
+                yCaption.insert(0, data.caption);
+                yData.set('caption', yCaption);
+            }
+            if (data.alignment !== undefined) yData.set('alignment', data.alignment);
+        } else if (type === 'list') {
+            if (data.style !== undefined) yData.set('style', data.style);
+            const yItems = new Y.Array();
+            if (Array.isArray(data.items)) {
+                for (const it of data.items) {
+                    const yItem = new Y.Text();
+                    yItem.insert(0, String(it ?? ''));
+                    yItems.push([yItem]);
+                }
+            }
+            yData.set('items', yItems);
+        } else if (type === 'image') {
+            if (data.file && typeof data.file === 'object') {
+                const yFile = new Y.Map();
+                if (data.file.url !== undefined) yFile.set('url', data.file.url);
+                if (data.file.filename !== undefined) yFile.set('filename', data.file.filename);
+                yData.set('file', yFile);
+            }
+            if (typeof data.caption === 'string') {
+                const yCaption = new Y.Text();
+                yCaption.insert(0, data.caption);
+                yData.set('caption', yCaption);
+            }
+            if (data.withBorder !== undefined) yData.set('withBorder', data.withBorder);
+            if (data.withBackground !== undefined) yData.set('withBackground', data.withBackground);
+            if (data.stretched !== undefined) yData.set('stretched', data.stretched);
+        } else {
+            // Unknown tool or unexpected payload: keep a plain JSON snapshot for now.
+            yBlock.set('data', data);
+        }
+
+        if (!yBlock.has('data')) {
+            yBlock.set('data', yData);
+        }
+
+        // Preserve tunes if present (esp. block_style_tunes css_classes)
+        if (tunes && typeof tunes === 'object') {
+            yBlock.set('tunes', tunes);
+        }
+
+        return yBlock;
+    }
+
+    function tryApplyInPlaceTextUpdate(existing: any, toolName: string | null, savedData: any): boolean {
+        if (!existing || typeof existing !== 'object') return false;
+        // We only support Y.Map-based blocks for in-place updates.
+        if (!(existing instanceof Y.Map)) return false;
+
+        const nextType = toolName || savedData?.type;
+        const nextData = savedData?.data || {};
+
+        const currentType = existing.get('type');
+        if (currentType && nextType && currentType !== nextType) return false;
+        if (!currentType && nextType) {
+            // If an earlier write inserted a block without type, fix it in-place.
+            existing.set('type', nextType);
+        }
+
+        const yData = existing.get('data');
+        if (!(yData instanceof Y.Map)) return false;
+
+        // Paragraph/header/quote/raw store their text fields as Y.Text on the backend.
+        if (nextType === 'paragraph') {
+            const yText = yData.get('text');
+            if (yText instanceof Y.Text && typeof nextData.text === 'string') {
+                return applyStringDiffToYText(yText, nextData.text);
+            }
+            return false;
+        }
+        if (nextType === 'header') {
+            const yText = yData.get('text');
+            if (yText instanceof Y.Text && typeof nextData.text === 'string') {
+                applyStringDiffToYText(yText, nextData.text);
+            } else if (typeof nextData.text === 'string') {
+                return false;
+            }
+            if (nextData.level !== undefined) {
+                yData.set('level', nextData.level);
+            }
+            return true;
+        }
+        if (nextType === 'raw') {
+            const yHtml = yData.get('html');
+            if (yHtml instanceof Y.Text && typeof nextData.html === 'string') {
+                return applyStringDiffToYText(yHtml, nextData.html);
+            }
+            return false;
+        }
+        if (nextType === 'quote') {
+            const yText = yData.get('text');
+            const yCaption = yData.get('caption');
+            if (yText instanceof Y.Text && typeof nextData.text === 'string') {
+                applyStringDiffToYText(yText, nextData.text);
+            } else if (typeof nextData.text === 'string') {
+                return false;
+            }
+            if (yCaption instanceof Y.Text && typeof nextData.caption === 'string') {
+                applyStringDiffToYText(yCaption, nextData.caption);
+            }
+            if (nextData.alignment !== undefined) yData.set('alignment', nextData.alignment);
+            return true;
+        }
+        // List and image changes can be more structural; keep fallback path for now.
+        return false;
+    }
+
+    function getToolNameForEvent(index: any, target: any, savedData: any): string | null {
+        // EditorJS Block API has `name` (tool key) and `save()` returns only tool data.
+        // Prefer block api / target name over savedData fields.
+        const fromTarget = target?.name;
+        if (typeof fromTarget === 'string' && fromTarget.length > 0) return fromTarget;
+
+        const idx = toFiniteIndex(index, -1);
+        if (idx >= 0) {
+            const blockApi: any = editor.blocks.getBlockByIndex(idx);
+            const fromBlockApi = blockApi?.name;
+            if (typeof fromBlockApi === 'string' && fromBlockApi.length > 0) return fromBlockApi;
+        }
+
+        const fromSaved = savedData?.type;
+        if (typeof fromSaved === 'string' && fromSaved.length > 0) return fromSaved;
+        return null;
+    }
 
     function toFiniteIndex(rawIndex: any, fallback: number): number {
         const n = typeof rawIndex === 'number' ? rawIndex : Number(rawIndex);
@@ -110,12 +351,22 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 
     function getUuidFromEditorTarget(target: any, fallback?: string | null): string | null {
         const fromAttr = target?.holder?.getAttribute?.("data-y2-uuid") || null;
-        return fromAttr || fallback || null;
+        if (fromAttr) return fromAttr;
+
+        // If holder marker is missing, try resolving via EditorJS internal block id.
+        const fb = fallback || null;
+        if (fb && editorIdToUuid.has(fb)) {
+            return editorIdToUuid.get(fb) || fb;
+        }
+        return fb;
     }
 
     function setUuidOnEditorTarget(target: any, uuid: string) {
         if (target?.holder?.setAttribute) {
             target.holder.setAttribute("data-y2-uuid", uuid);
+        }
+        if (target?.id && typeof target.id === 'string') {
+            editorIdToUuid.set(target.id, uuid);
         }
     }
 
@@ -126,19 +377,146 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 
     async function renderBlockIntoEditor(editorBlock: any, index: number) {
         const normalized = normalizeBlockData(editorBlock);
-        // Pass uuid as EditorJS block id, so onChange gives us stable identifiers.
-        editor.blocks.insert(normalized.type, normalized.data, null, index, false, undefined, normalized.uuid);
 
-        const blockApi = editor.blocks.getBlockByIndex(index);
+        // IMPORTANT: Do NOT try to force EditorJS block ids to match our Yjs uuids.
+        // EditorJS manages its own internal ids; attempting to override them can break
+        // `blocks.update()` ("Incorrect index"). We store our uuid on the holder attribute.
+        editor.blocks.insert(normalized.type, normalized.data, null, index, false);
+
+        const blockApi: any = editor.blocks.getBlockByIndex(index);
         if (blockApi?.holder && normalized.uuid) {
             blockApi.holder.setAttribute("data-y2-uuid", normalized.uuid);
             internalStore.set(normalized.uuid, true);
+            if (typeof blockApi.id === 'string') {
+                editorIdToUuid.set(blockApi.id, normalized.uuid);
+            }
         }
+    }
+
+    function findEditorBlockApiById(editorId: string): any | null {
+        for (let i = 0; i < editor.blocks.getBlocksCount(); i++) {
+            const blockApi: any = editor.blocks.getBlockByIndex(i);
+            if (blockApi?.id === editorId) return blockApi;
+        }
+        return null;
+    }
+
+    function findEditorBlockApiByUuid(uuid: string): any | null {
+        for (let i = 0; i < editor.blocks.getBlocksCount(); i++) {
+            const blockApi: any = editor.blocks.getBlockByIndex(i);
+            const attr = blockApi?.holder?.getAttribute?.('data-y2-uuid');
+            if (attr === uuid) return blockApi;
+        }
+        return null;
+    }
+
+    async function rerenderAllFromYjs(reason: string) {
+        try {
+            // This is a safety-net fallback when we can't reliably apply an in-place update
+            // (e.g. EditorJS throws "Incorrect index"). It should be rare; we log it.
+            console.warn('[SectionBinding] Fallback to full editor.render()', {
+                reason,
+                stack: new Error().stack,
+            });
+
+            if (DEBUG_BINDING) {
+                console.warn('[SectionBinding] rerenderAllFromYjs (debug)', reason);
+            }
+
+            const yArr = yBlocks.toArray();
+            const blocksToRender = yArr.map((b: any) => {
+                const n = normalizeBlockData(b);
+                return { type: n.type, data: n.data };
+            });
+
+            internalStore.clear();
+            await editor.render({ blocks: blocksToRender } as any);
+
+            // Re-attach uuids in order.
+            for (let i = 0; i < editor.blocks.getBlocksCount(); i++) {
+                const blockApi: any = editor.blocks.getBlockByIndex(i);
+                const uuid = normalizeBlockData(yArr[i]).uuid;
+                if (blockApi?.holder && uuid) {
+                    blockApi.holder.setAttribute('data-y2-uuid', uuid);
+                    internalStore.set(uuid, true);
+                }
+            }
+        } catch (e) {
+            console.error('[SectionBinding] rerenderAllFromYjs failed', e);
+        }
+    }
+
+    let rerenderTimer: any = null;
+    function scheduleRerender(reason: string) {
+        if (rerenderTimer) return;
+        rerenderTimer = setTimeout(() => {
+            rerenderTimer = null;
+            void rerenderAllFromYjs(reason);
+        }, 50);
+    }
+
+    // Debounced, per-block deep update application to avoid hammering EditorJS during rapid typing.
+    // IMPORTANT: don't capture Yjs/Editor state too early; recompute inside the timer, otherwise
+    // EditorJS may have re-indexed blocks and `blocks.update` may throw "Incorrect index".
+    const deepUpdateTimers = new Map<string, any>();
+    function scheduleDeepBlockUpdate(index: number) {
+        const yBlockNow = yBlocks.get(index);
+        const uuid = normalizeBlockData(yBlockNow).uuid;
+        if (!uuid) {
+            scheduleRerender('deep change (missing uuid)');
+            return;
+        }
+
+        const prev = deepUpdateTimers.get(uuid);
+        if (prev) clearTimeout(prev);
+
+        deepUpdateTimers.set(uuid, setTimeout(() => {
+            deepUpdateTimers.delete(uuid);
+
+            // Re-read latest Yjs value.
+            const yBlock = yBlocks.get(index);
+            const normalized = normalizeBlockData(yBlock);
+
+            // Resolve EditorJS internal id by our uuid mapping (prefer uuid, fallback to index).
+            const blockApi: any = findEditorBlockApiByUuid(uuid) || editor.blocks.getBlockByIndex(index);
+            const editorId = blockApi?.id;
+            if (!editorId) {
+                scheduleRerender('deep change (missing editor block)');
+                return;
+            }
+
+            try {
+                const maybePromise = (editor as any).blocks.update(editorId, normalized.data);
+                if (maybePromise && typeof maybePromise.catch === 'function') {
+                    maybePromise.catch((e: any) => {
+                        console.error('startObserver: editor.blocks.update failed', e);
+                        scheduleRerender('blocks.update failed');
+                    });
+                }
+
+                // Best-effort: keep uuid marker + mapping attached even if EditorJS re-created holder.
+                setTimeout(() => {
+                    try {
+                        const byId = findEditorBlockApiById(editorId);
+                        if (byId?.holder && uuid) {
+                            byId.holder.setAttribute('data-y2-uuid', uuid);
+                            editorIdToUuid.set(editorId, uuid);
+                        }
+                    } catch {
+                        // ignore
+                    }
+                }, 0);
+            } catch (e) {
+                console.error('startObserver: editor.blocks.update threw', e);
+                scheduleRerender('blocks.update threw');
+            }
+        }, 0));
     }
 
     function onBlockEventEditorJS(api: any, event: any) {
         if (destroyed) return;
         if (!initialRenderDone) return;
+        if (suppressEditorEvents > 0) return;
 
         const events = Array.isArray(event) ? event : [event];
         
@@ -165,6 +543,12 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 
                 let uuid: string | null = getUuidFromEditorTarget(target, blockId);
 
+                // If this block was just updated/inserted due to a remote Yjs update, ignore the
+                // echo event so we don't write the same change back into Yjs.
+                if (wasRecentlyRemoteTouched(uuid)) {
+                    continue;
+                }
+
                 let savedData: any = null;
                 if (target && ev.type !== 'block-removed') {
                     try {
@@ -174,10 +558,21 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                     }
                 }
 
-                eventDataList.push({ type: ev.type, index, uuid, target, savedData });
+                const toolName = getToolNameForEvent(index, target, savedData);
+                eventDataList.push({ type: ev.type, index, uuid, target, toolName, savedData });
             }
 
             if (eventDataList.length === 0) return;
+
+            if (DEBUG_BINDING) {
+                console.log('[SectionBinding] applying EditorJS events to Yjs', eventDataList.map(e => ({
+                    type: e.type,
+                    index: e.index,
+                    uuid: e.uuid,
+                    toolName: e.toolName,
+                })));
+                console.log('[SectionBinding] stack', new Error().stack);
+            }
 
             doc.transact(() => {
                 mutex(() => {
@@ -209,12 +604,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                 // Ensure EditorJS block has a uuid for future events.
                                 setUuidOnEditorTarget(data.target, uuid);
 
-                                const newBlock = {
-                                    id: uuid,
-                                    uuid: uuid,
-                                    type: data.savedData.type,
-                                    data: data.savedData.data,
-                                };
+                                const newBlock = yBlockFromEditorSaved(uuid, data.toolName || null, data.savedData);
 
                                 const insertIndex = clampIndex(
                                     toFiniteIndex(data.index, yBlocks.length),
@@ -238,17 +628,19 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                 if (!data.savedData) break;
                                 setUuidOnEditorTarget(data.target, uuid);
 
-                                const editorBlock = {
-                                    id: uuid,
-                                    uuid: uuid,
-                                    type: data.savedData.type,
-                                    data: data.savedData.data,
-                                };
-
                                 const changeIndex = findYjsIndexByUuid(uuid);
                                 if (changeIndex !== -1) {
+                                    const existing = yBlocks.get(changeIndex);
+                                    const inPlaceOk = tryApplyInPlaceTextUpdate(existing, data.toolName || null, data.savedData);
+                                    if (inPlaceOk) {
+                                        internalStore.set(uuid, true);
+                                        break;
+                                    }
+
+                                    // Fallback: replace whole block (e.g. structural changes or legacy JSON blocks)
+                                    const replacement = yBlockFromEditorSaved(uuid, data.toolName || null, data.savedData);
                                     yBlocks.delete(changeIndex);
-                                    yBlocks.insert(changeIndex, [editorBlock]);
+                                    yBlocks.insert(changeIndex, [replacement]);
                                     internalStore.set(uuid, true);
                                 } else {
                                     // Fallback: insert at event index if we can't find it.
@@ -256,7 +648,8 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                         toFiniteIndex(data.index, yBlocks.length),
                                         yBlocks.length
                                     );
-                                    yBlocks.insert(insertIndex, [editorBlock]);
+                                    const replacement = yBlockFromEditorSaved(uuid, data.toolName || null, data.savedData);
+                                    yBlocks.insert(insertIndex, [replacement]);
                                     internalStore.set(uuid, true);
                                 }
                                 break;
@@ -285,7 +678,8 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                     }
                     const blocksToRender = yBlocks.toArray().map((b: any) => {
                         const n = normalizeBlockData(b);
-                        return { id: n.uuid, type: n.type, data: n.data };
+                        // Do not pass `id` to EditorJS; we track our uuid via holder attribute.
+                        return { type: n.type, data: n.data };
                     });
 
                     internalStore.clear();
@@ -299,12 +693,17 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                     resolve();
                                     return;
                                 }
+                                const yArr = yBlocks.toArray();
+                                editorIdToUuid.clear();
                                 for (let i = 0; i < editor.blocks.getBlocksCount(); i++) {
-                                    const blockApi = editor.blocks.getBlockByIndex(i);
-                                    const uuid = blocksToRender[i]?.id || blockApi?.id;
+                                    const blockApi: any = editor.blocks.getBlockByIndex(i);
+                                    const uuid = normalizeBlockData(yArr[i]).uuid;
                                     if (blockApi?.holder && uuid) {
                                         blockApi.holder.setAttribute("data-y2-uuid", uuid);
                                         internalStore.set(uuid, true);
+                                        if (typeof blockApi.id === 'string') {
+                                            editorIdToUuid.set(blockApi.id, uuid);
+                                        }
                                     }
                                 }
                                 initialRenderDone = true;
@@ -334,17 +733,56 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             if (!initialRenderDone) return;
             if (initialRenderPromise) return;
             
-            mutex(() => {
+            // Apply remote changes while suppressing EditorJS onChange echoes.
+            withSuppressedEditorEvents(() => mutex(() => {
                 if (destroyed) return;
                 for (const event of eventArray) {
+                    // IMPORTANT: observeDeep emits events from nested types as well.
+                    // Many nested types (especially Y.Text) also have `changes.delta`, but those deltas
+                    // are NOT array-of-blocks deltas. Only treat events targeting the top-level blocks
+                    // array as structural insert/delete/reorder.
+                    const isBlocksArrayEvent = event?.target === yBlocks;
+                    if (!isBlocksArrayEvent) {
+                        // Deep changes (e.g. Y.Text updates inside a block's data map)
+                        // Try to update the affected block in-place via `blocks.update` (by EditorJS
+                        // internal id resolved from our `data-y2-uuid`), with safe fallback to a full
+                        // rerender if EditorJS rejects the update.
+                        try {
+                            const path = event?.path as any[] | undefined;
+                            const topKey = Array.isArray(path) ? path[0] : null;
+                            if (typeof topKey === 'number') {
+                                const yBlock = yBlocks.get(topKey);
+                                const normalized = normalizeBlockData(yBlock);
+                                if (normalized?.uuid) {
+                                    markRemoteTouched(normalized.uuid);
+                                    scheduleDeepBlockUpdate(topKey);
+                                }
+                            }
+                        } catch (e) {
+                            console.error('startObserver: Failed to apply deep remote update', e);
+                        }
+                        continue;
+                    }
+
+                    // Array-level changes (insert/delete/reorder)
+                    if (!event?.changes?.delta) {
+                        continue;
+                    }
+
                     let index = 0;
                     for (const delta of event.changes.delta) {
                         if (delta.retain) {
                             index += delta.retain;
                         } else if (delta.insert) {
-                            for (const block of delta.insert) {
+                            for (const _block of delta.insert) {
                                 try {
-                                    renderBlockIntoEditor(block, index);
+                                    // Use the integrated element from `yBlocks` instead of the delta payload.
+                                    // The delta payload may contain non-integrated Yjs types, which will throw
+                                    // "Invalid access: Add Yjs type to a document before reading data."
+                                    const yBlock = yBlocks.get(index);
+                                    const normalized = normalizeBlockData(yBlock);
+                                    markRemoteTouched(normalized.uuid);
+                                    renderBlockIntoEditor(yBlock, index);
                                 } catch (e) {
                                     console.error("Error inserting remote block at index", index, e);
                                 }
@@ -356,6 +794,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                     const blockApi = editor.blocks.getBlockByIndex(index);
                                     if (blockApi) {
                                         const uuid = blockApi.holder.getAttribute("data-y2-uuid") || blockApi.id;
+                                        markRemoteTouched(uuid);
                                         if (uuid) internalStore.delete(uuid);
                                         editor.blocks.delete(index);
                                     } else {
@@ -368,7 +807,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                         }
                     }
                 }
-            });
+            }));
         };
         yBlocks.observeDeep(yObserver);
     }
@@ -386,63 +825,69 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 }
 
 function normalizeBlockData(block: any) {
-    const blockData = typeof block.toJSON === 'function' ? block.toJSON() : block;
+    function valueToJs(val: any): any {
+        if (val == null) return val;
+        if (val instanceof Y.Text) return val.toString();
+        if (val instanceof Y.Array) return val.toArray().map(valueToJs);
+        if (val instanceof Y.Map) {
+            const obj: any = {};
+            val.forEach((v: any, k: string) => {
+                obj[k] = valueToJs(v);
+            });
+            return obj;
+        }
+        return val;
+    }
+
+    // Prefer explicit Yjs handling over `toJSON()`. Some values coming from observer deltas can
+    // be non-integrated Yjs types; reading them via `toJSON()` triggers "Invalid access".
+    let blockData: any = block;
+    if (block instanceof Y.Map) {
+        try {
+            // Read directly from integrated Yjs types.
+            blockData = {
+                id: block.get('id'),
+                type: block.get('type'),
+                data: valueToJs(block.get('data')),
+                tunes: valueToJs(block.get('tunes')),
+            };
+        } catch (e) {
+            console.error('normalizeBlockData: Failed to read Yjs block map, falling back to plain access', e);
+            // Avoid calling `toJSON()` here: observer deltas can include non-integrated Yjs types
+            // and `toJSON()` can throw "Invalid access".
+            blockData = { id: undefined, type: undefined, data: {}, tunes: {} };
+        }
+    } else {
+        // Avoid `toJSON()` for the same reason as above.
+        blockData = block;
+    }
 
     // Normalize properties
-    let type = blockData.type || blockData.block_type || blockData.blockType || blockData.kind || blockData.tool;
-    let data = blockData.data;
-    let uuid = blockData.uuid || blockData.id;
+    let type = blockData?.type || blockData?.block_type || blockData?.blockType || blockData?.kind || blockData?.tool;
+    let data = blockData?.data;
+    const uuid = blockData?.uuid || blockData?.id;
 
-    // 1. Try to infer type from data if it's a tagged union (e.g., { Paragraph: { ... } })
-    if (data && typeof data === 'object' && !type) {
-        const keys = Object.keys(data);
-        if (keys.length === 1) {
-            const key = keys[0];
-            const possibleTypes = ["Paragraph", "Heading", "Header", "List", "Quote", "Image", "Raw", "Table"];
-            if (possibleTypes.includes(key)) {
-                type = key.toLowerCase();
-                data = data[key];
-            }
-        }
-    }
-
-    // 2. Try to infer type from blockData keys if missing (tagged union at top level)
-    if (!type) {
-        const possibleTypes = ["paragraph", "header", "heading", "list", "quote", "image", "raw", "table"];
-        for (const pt of possibleTypes) {
-            const capitalized = pt.charAt(0).toUpperCase() + pt.slice(1);
-            if (blockData[pt] || (blockData[capitalized] && typeof blockData[capitalized] === 'object')) {
-                type = pt;
-                if (!data) data = blockData[pt] || blockData[capitalized];
-                break;
-            }
-        }
-    }
-
-    // 3. Fallback: if data contains text/level/items etc directly, it might be a flat structure
-    if (!type && data && typeof data === 'object') {
-        if (data.text !== undefined && data.level !== undefined) type = "header";
-        else if (data.text !== undefined) type = "paragraph";
-        else if (data.items !== undefined) type = "list";
-        else if (data.html !== undefined) type = "raw";
-        else if (data.file !== undefined) type = "image";
-    }
-
-    // 4. Normalize specific type names
+    // Normalize specific type names
     if (typeof type === 'string') {
         type = type.toLowerCase();
-        if (type === "heading") type = "header";
+        if (type === 'heading') type = 'header';
     }
 
+    // Avoid over-aggressive inference: our canonical schema should always provide `type`.
     if (!type) {
-        console.warn("normalizeBlockData: Failed to find type for block, falling back to 'paragraph'. Raw data:", blockData);
-        type = "paragraph";
+        console.warn("normalizeBlockData: Missing 'type' for block, falling back to 'paragraph'. Raw data:", blockData);
+        type = 'paragraph';
+    }
+
+    // Ensure `data` is always a plain object for EditorJS.
+    if (data == null || typeof data !== 'object') {
+        data = {};
     }
 
     return {
         type,
-        data: data || {},
+        data,
         id: uuid,
-        uuid: uuid
+        uuid: uuid,
     };
 }
