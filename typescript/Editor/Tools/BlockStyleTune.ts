@@ -2,13 +2,16 @@ export class BlockStyleTune{
     private api: any;
     private data: any;
 
+    private block: any;
+
     static get isTune() {
         return true;
     }
 
     // @ts-ignore
-    constructor({api, data}){
+    constructor({api, data, block}){
         this.api = api;
+        this.block = block;
         this.data = {
             css_classes: undefined
         };
@@ -40,6 +43,12 @@ export class BlockStyleTune{
 
         wrapper_input.addEventListener('input', (event) => {
             this.css_classes = (<HTMLInputElement>event.target).value;
+            
+            if (this.block && typeof this.block.dispatchChange === 'function') {
+                this.block.dispatchChange();
+            } else {
+               console.error("Couldn't dispatch change event for block: " + this.block);
+            }
         });
         wrapper.appendChild(wrapper_input);
         return wrapper;

@@ -14,6 +14,12 @@ import Quote from "@editorjs/quote";
 import Raw from "@editorjs/raw";
 // @ts-ignore
 import ImageTool from "@editorjs/image";
+// @ts-ignore
+import Strikethrough from "@sotaproject/strikethrough";
+import {NoteTool} from "./Tools/NoteTool";
+import {CitationTool} from "./Tools/CitationTool";
+import {CustomStyleTool} from "./Tools/CustomStyleTool";
+import {BlockStyleTune} from "./Tools/BlockStyleTune";
 import {createMutex} from "./Mutex";
 
 let currentEditor: EditorJS | null = null;
@@ -76,11 +82,27 @@ export async function showSectionEditor(section_id: string){
             list: List,
             quote: Quote,
             raw: Raw,
-            image: ImageTool,
+            image: {
+                class: ImageTool,
+                config: {
+                    endpoints: {
+                        byFile: '/api/projects/'+state.project_id+'/uploads',
+                        byUrl: '/api/fetch_image', //TODO: implement endpoint
+                    }
+                }
+            },
+            strikethrough: Strikethrough,
+            note: NoteTool,
+            citation: CitationTool,
+            custom_style_tool: CustomStyleTool,
+            block_style_tune: BlockStyleTune
         },
+        tunes: ['block_style_tune'],
         data: { blocks: [] },
         onReady: () => {
             console.log('Editor.js is ready!');
+            NoteTool.add_all_show_note_settings_listeners();
+            CitationTool.add_all_show_note_settings_listeners();
         },
         onChange: (api, event) => {
             if (currentEditorBinding) {
@@ -321,12 +343,24 @@ function createEditorBinding(doc: any, editor: EditorJS) {
 
         const nextType = toolName || savedData?.type;
         const nextData = savedData?.data || {};
+        const nextTunes = savedData?.tunes;
 
         const currentType = existing.get('type');
         if (currentType && nextType && currentType !== nextType) return false;
         if (!currentType && nextType) {
             // If an earlier write inserted a block without type, fix it in-place.
             existing.set('type', nextType);
+        }
+
+        // Sync tunes if they changed
+        if (nextTunes !== undefined) {
+            // Use a simple JSON comparison for tunes as they are typically small
+            const currentTunes = existing.get('tunes');
+            if (JSON.stringify(currentTunes) !== JSON.stringify(nextTunes)) {
+                existing.set('tunes', nextTunes);
+            }
+        } else if (existing.has('tunes')) {
+            existing.delete('tunes');
         }
 
         const yData = existing.get('data');
@@ -541,6 +575,8 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                     internalStore.set(uuid, true);
                 }
             }
+            NoteTool.add_all_show_note_settings_listeners();
+            CitationTool.add_all_show_note_settings_listeners();
         } catch (e) {
             console.error('[SectionBinding] rerenderAllFromYjs failed', e);
         }
@@ -596,7 +632,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             }
 
             try {
-                const maybePromise = (editor as any).blocks.update(editorId, normalized.data);
+                const maybePromise = (editor as any).blocks.update(editorId, normalized.data, normalized.tunes);
                 if (maybePromise && typeof maybePromise.catch === 'function') {
                     maybePromise.catch((e: any) => {
                         console.error('startObserver: editor.blocks.update failed', e);
@@ -615,6 +651,8 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                     } catch {
                         // ignore
                     }
+                    NoteTool.add_all_show_note_settings_listeners();
+                    CitationTool.add_all_show_note_settings_listeners();
                 }, 0);
             } catch (e) {
                 console.error('startObserver: editor.blocks.update threw', e);
@@ -660,7 +698,9 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                 }
 
                 const index = ev.detail.index;
-                const blockId = ev.detail.blockId;
+                const fromIndex = ev.detail.fromIndex;
+                const toIndex = ev.detail.toIndex;
+                const blockId = ev.detail.blockId || ev.detail.target?.id;
                 const target = ev.detail.target;
 
                 let uuid: string | null = getUuidFromEditorTarget(target, blockId);
@@ -681,7 +721,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                 }
 
                 const toolName = getToolNameForEvent(index, target, savedData);
-                eventDataList.push({ type: ev.type, index, uuid, target, toolName, savedData });
+                eventDataList.push({ type: ev.type, index, fromIndex, toIndex, uuid, target, toolName, savedData });
             }
 
             if (eventDataList.length === 0) return;
@@ -775,6 +815,28 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                     internalStore.set(uuid, true);
                                 }
                                 break;
+                            case "block-moved":
+                                // block-moved detail contains 'fromIndex' and 'toIndex'.
+                                const moveFrom = findYjsIndexByUuid(uuid);
+                                const moveTo = data.toIndex !== undefined ? toFiniteIndex(data.toIndex, yBlocks.length) : toFiniteIndex(data.index, yBlocks.length);
+
+                                if (moveFrom !== -1 && moveFrom !== moveTo) {
+                                    const blockToMove = yBlocks.get(moveFrom).clone();
+                                    
+                                    // Use a single transaction for the move to ensure consistency
+                                    yBlocks.delete(moveFrom);
+                                    
+                                    // If we moved a block from a lower index to a higher index, 
+                                    // deleting it from its original position (moveFrom) shifts all 
+                                    // subsequent blocks down by 1 in the Y.Array.
+                                    // EditorJS's 'toIndex' (moveTo) represents the desired final position.
+                                    const finalMoveTo = clampIndex(moveTo, yBlocks.length);
+                                    console.log(`[SectionBinding] block-moved: uuid=${uuid}, moveFrom=${moveFrom}, moveTo=${moveTo}, finalMoveTo=${finalMoveTo}, yLen=${yBlocks.length}`);
+
+                                    yBlocks.insert(finalMoveTo, [blockToMove]);
+                                    internalStore.set(uuid, true);
+                                }
+                                break;
                         }
                     }
                 });
@@ -806,7 +868,7 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                     const blocksToRender = yBlocks.toArray().map((b: any) => {
                         const n = normalizeBlockData(b);
                         // Do not pass `id` to EditorJS; we track our uuid via holder attribute.
-                        return { type: n.type, data: n.data };
+                        return { type: n.type, data: n.data, tunes: n.tunes };
                     });
 
                     internalStore.clear();
@@ -834,6 +896,8 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                                     }
                                 }
                                 initialRenderDone = true;
+                                NoteTool.add_all_show_note_settings_listeners();
+                                CitationTool.add_all_show_note_settings_listeners();
                                 startObserver();
                             });
                             resolve();
@@ -1036,6 +1100,7 @@ function normalizeBlockData(block: any) {
     return {
         type,
         data,
+        tunes: blockData?.tunes,
         id: uuid,
         uuid: uuid,
     };

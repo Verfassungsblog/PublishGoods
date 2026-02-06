@@ -3,7 +3,7 @@ use crate::storage::project_storage::current::{
 };
 use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::sections::migration::{
-    SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionOrTocV5,
+    SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionOrTocV5, SectionV5,
 };
 use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
 use crate::storage::{BibEntryV2, BibEntryV3, MyPublisher, OldBibEntry};
@@ -757,7 +757,12 @@ impl From<ProjectMetadataV3> for ProjectMetadataV4 {
 
 impl From<ProjectDataV9> for ProjectDataV10 {
     fn from(mut value: ProjectDataV9) -> Self {
-        let bibliography = extract_bibliography(value.bibliography.into_values().collect());
+        let (bibliography, mapping) =
+            extract_bibliography(value.bibliography.into_iter().collect());
+
+        for section in &mut value.sections {
+            migrate_citations_in_section(section, &mapping);
+        }
 
         ProjectDataV10 {
             name: value.name,
@@ -772,10 +777,79 @@ impl From<ProjectDataV9> for ProjectDataV10 {
     }
 }
 
-fn extract_bibliography(old_entries: Vec<BibEntryV2>) -> Bibliography {
+fn migrate_citations_in_section(section: &mut SectionOrTocV5, mapping: &HashMap<String, String>) {
+    if let SectionOrTocV5::Section(section) = section {
+        migrate_citations_in_section_v5(section, mapping);
+    }
+}
+
+fn migrate_citations_in_section_v5(section: &mut SectionV5, mapping: &HashMap<String, String>) {
+    for block in &mut section.children {
+        migrate_citations_in_block(block, mapping);
+    }
+    for sub_section in &mut section.sub_sections {
+        migrate_citations_in_section_v5(sub_section, mapping);
+    }
+}
+
+fn migrate_citations_in_block(
+    block: &mut crate::storage::project_storage::sections::content::current::NewContentBlock,
+    mapping: &HashMap<String, String>,
+) {
+    use crate::storage::project_storage::sections::content::current::BlockData;
+    match &mut block.data {
+        BlockData::Paragraph { text } => {
+            *text = replace_citations(text, mapping);
+        }
+        BlockData::Heading { text, .. } => {
+            *text = replace_citations(text, mapping);
+        }
+        BlockData::Raw { html } => {
+            *html = replace_citations(html, mapping);
+        }
+        BlockData::List { items, .. } => {
+            for item in items {
+                *item = replace_citations(item, mapping);
+            }
+        }
+        BlockData::Quote { text, caption, .. } => {
+            *text = replace_citations(text, mapping);
+            *caption = replace_citations(caption, mapping);
+        }
+        BlockData::Image { caption, .. } => {
+            if let Some(c) = caption {
+                *c = replace_citations(c, mapping);
+            }
+        }
+    }
+}
+
+fn replace_citations(text: &str, mapping: &HashMap<String, String>) -> String {
+    let mut result = text.to_string();
+    for (old_key, new_uuid) in mapping {
+        // We look for <citation data-key="old_key">
+        let from = format!(r#"data-key="{}""#, old_key);
+        let to = format!(r#"data-key="{}""#, new_uuid);
+        result = result.replace(&from, &to);
+    }
+    result
+}
+
+fn extract_bibliography(
+    old_entries: Vec<(String, BibEntryV2)>,
+) -> (Bibliography, HashMap<String, String>) {
     let mut res = Bibliography::new();
-    for entry in old_entries {
-        let parents = extract_bibliography(entry.parents);
+    let mut mapping = HashMap::new();
+    for (old_key, entry) in old_entries {
+        let (parents, parent_mapping) = extract_bibliography(
+            entry
+                .parents
+                .into_iter()
+                .map(|e| (String::new(), e))
+                .collect(),
+        );
+        mapping.extend(parent_mapping);
+
         let parent_ids: Vec<uuid::Uuid> = parents.entries.keys().cloned().collect();
         for parent in parents.entries {
             res.entries.insert(parent.0, parent.1);
@@ -786,8 +860,11 @@ fn extract_bibliography(old_entries: Vec<BibEntryV2>) -> Bibliography {
             location: None,
         });
 
+        let new_uuid = uuid::Uuid::new_v4();
+        mapping.insert(old_key, new_uuid.to_string());
+
         let entry_v3 = BibEntryV3 {
-            key: uuid::Uuid::new_v4(),
+            key: new_uuid,
             entry_type: entry.entry_type,
             title: entry.title,
             authors: entry.authors,
@@ -818,5 +895,110 @@ fn extract_bibliography(old_entries: Vec<BibEntryV2>) -> Bibliography {
         };
         res.entries.insert(entry_v3.key, entry_v3);
     }
-    res
+    (res, mapping)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
+    use crate::storage::project_storage::sections::migration::{
+        SectionMetadataV5, SectionOrTocV5, SectionV5,
+    };
+    use std::collections::HashMap;
+    use vb_exchange::projects::BlockType;
+
+    #[test]
+    fn test_v9_to_v10_migration() {
+        let old_key = "citation_key_1".to_string();
+        let mut bibliography = HashMap::new();
+        let entry = BibEntryV2::new(old_key.clone(), hayagriva::types::EntryType::Article);
+        bibliography.insert(old_key.clone(), entry);
+
+        let section_v5 = SectionV5 {
+            id: Some(uuid::Uuid::new_v4()),
+            css_classes: vec![],
+            sub_sections: vec![],
+            children: vec![
+                NewContentBlock {
+                    id: "block1".to_string(),
+                    block_type: BlockType::Paragraph,
+                    data: BlockData::Paragraph {
+                        text: format!(
+                            r#"Some text with <citation data-key="{}">C</citation>."#,
+                            old_key
+                        ),
+                    },
+                    css_classes: vec![],
+                    revision_id: None,
+                },
+                NewContentBlock {
+                    id: "block2".to_string(),
+                    block_type: BlockType::Heading,
+                    data: BlockData::Heading {
+                        text: format!(
+                            r#"Heading with <citation data-key="{}">C</citation>"#,
+                            old_key
+                        ),
+                        level: 1,
+                    },
+                    css_classes: vec![],
+                    revision_id: None,
+                },
+            ],
+            visible_in_toc: true,
+            metadata: SectionMetadataV5 {
+                title: "Test Section".to_string(),
+                toc_title_subtitle_override: None,
+                subtitle: None,
+                authors: vec![],
+                editors: vec![],
+                web_url: None,
+                identifiers: vec![],
+                published: None,
+                last_changed: None,
+                lang: None,
+            },
+        };
+
+        let project_v9 = ProjectDataV9 {
+            name: "Test Project".to_string(),
+            description: None,
+            template_id: uuid::Uuid::new_v4(),
+            last_interaction: 0,
+            metadata: None,
+            settings: None,
+            sections: vec![SectionOrTocV5::Section(section_v5)],
+            bibliography,
+        };
+
+        let project_v10 = ProjectDataV10::from(project_v9);
+
+        // Check bibliography
+        assert_eq!(project_v10.bibliography.entries.len(), 1);
+        let (new_uuid, entry_v3) = project_v10.bibliography.entries.iter().next().unwrap();
+        let new_uuid_str = new_uuid.to_string();
+
+        // Check citations in blocks
+        // Note: ProjectDataV10 contains SectionV6 which encodes content as Yrs updates.
+        // We test replace_citations directly below to verify the logic.
+
+        // Test replace_citations directly to be sure
+        let mut mapping = HashMap::new();
+        mapping.insert(old_key.clone(), new_uuid_str.clone());
+        let input = format!(r#"<citation data-key="{}">C</citation>"#, old_key);
+        let expected = format!(r#"<citation data-key="{}">C</citation>"#, new_uuid_str);
+        assert_eq!(replace_citations(&input, &mapping), expected);
+
+        // Test with multiple citations and surrounding text
+        let input2 = format!(
+            r#"Text <citation data-key="{}">C</citation> and more <citation data-key="{}">C</citation>."#,
+            old_key, old_key
+        );
+        let expected2 = format!(
+            r#"Text <citation data-key="{}">C</citation> and more <citation data-key="{}">C</citation>."#,
+            new_uuid_str, new_uuid_str
+        );
+        assert_eq!(replace_citations(&input2, &mapping), expected2);
+    }
 }
