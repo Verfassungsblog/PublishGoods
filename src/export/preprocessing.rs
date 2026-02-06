@@ -567,10 +567,10 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
     };
     let data: String = match block.data{
         BlockData::Paragraph {text} => {
-            format!("<p id='{}' {}>{}</p>", block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens))
+            format!("<p id='{}' {}>{}</p>", block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false))
         }
         BlockData::Heading { text , level} => {
-            format!("<h{} id='{}' {}>{}</h{}>", level, block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens), level)
+            format!("<h{} id='{}' {}>{}</h{}>", level, block.id, css_classes, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false), level)
         }
         BlockData::Raw { html } => {
             html
@@ -578,7 +578,7 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
         BlockData::List { style, items} => {
             let mut res = String::new();
             for item in items{
-                res.push_str(&format!("<li id='{}'>{}</li>", block.id, render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens)));
+                res.push_str(&format!("<li id='{}'>{}</li>", block.id, render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens, false)));
             }
             if style == "ordered"{
                 format!("<ol id='{}' {}>{}</ol>", block.id, css_classes, res)
@@ -587,7 +587,7 @@ pub async fn render_content_block(block: NewContentBlock, endnote_storage: &mut 
             }
         },
         BlockData::Quote{text, caption, alignment} => {
-            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens))
+            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens, false))
         }
         BlockData::Image {file, caption, with_border: _, with_background: _, stretched: _} => {
             // Load image and convert to base64
@@ -663,145 +663,156 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
 /// * `dict` - Hyphenation dictionary used for soft hyphenation if `add_soft_hyphens` is true.
 /// * `citation_bib` - Bibliography mapping citation keys to citation strings, used for rendering citations found in the text.
 /// * `add_soft_hyphens` - Flag indicating if soft hyphens should be conditionally inserted for hyphenation in the output.
+/// * `citations_as_footnote` - Flag indicating if citations should be rendered as foot- or endnote
 ///
 /// # Returns
 /// A string containing the rendered HTML representation of the input text, with citations, footnotes, endnotes,
 /// and custom styles processed.
 ///
 /// # Panics
-/// This function panics if any of the regular expressions used for parsing (citations, endnotes/footnotes, custom styles)
-/// fail to compile.
-///
+/// Does not
 /// # Side Effects
 /// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
 /// - Prints warnings to stderr if a citation key is not found.
-pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool) -> String{
-    let dom = parse_document(RcDom::default(), Default::default()).from_utf8().read_from(&mut text.as_bytes()).unwrap();
-    let mut mutations: Vec<ReplacementType> = Vec::new();
+pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool, citations_as_footnote: bool) -> String{
+    if let Ok(dom) = parse_document(RcDom::default(), Default::default()).from_utf8().read_from(&mut text.as_bytes()) {
+        let mut mutations: Vec<ReplacementType> = Vec::new();
 
-    find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, false);
+        find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, citations_as_footnote);
 
-    for mutation in mutations {
-        match mutation {
-            ReplacementType::Footnote(footnote)=> {
-                let span_node = dom.create_element(
-                    QualName::new(None, ns!(html), local_name!("span")),
-                    vec![
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("class")),
-                            value: StrTendril::from("footnote"),
-                        },
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("id")),
-                            value: StrTendril::from(format!("footnote-{}", footnote.uuid)),
-                        }],
-                    Default::default()
-                );
-                let child_a_node = dom.create_element(
-                    QualName::new(None, ns!(html), local_name!("a")),
-                    vec![
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("class")),
-                            value: StrTendril::from("footnote-marker"),
-                        },
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("href")),
-                            value: StrTendril::from(format!("#footnote-call-{}", footnote.uuid)),
-                        }],
-                    Default::default()
-                );
-                let a_node = dom.create_element(
-                    QualName::new(None, ns!(html), local_name!("a")),
-                    vec![
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("class")),
-                            value: StrTendril::from("footnote-call"),
-                        },
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("href")),
-                            value: StrTendril::from(format!("#footnote-{}", footnote.uuid)),
-                        },
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("id")),
-                            value: StrTendril::from(format!("footnote-call-{}", footnote.uuid)),
-                        }],
-                    Default::default()
-                );
-                let text = StrTendril::from(footnote.note_content);
+        for mutation in mutations {
+            match mutation {
+                ReplacementType::Footnote(footnote) => {
+                    let span_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("span")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("footnote"),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("id")),
+                                value: StrTendril::from(format!("footnote-{}", footnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let child_a_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("a")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("footnote-marker"),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("href")),
+                                value: StrTendril::from(format!("#footnote-call-{}", footnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let a_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("a")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("footnote-call"),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("href")),
+                                value: StrTendril::from(format!("#footnote-{}", footnote.uuid)),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("id")),
+                                value: StrTendril::from(format!("footnote-call-{}", footnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let text = StrTendril::from(footnote.note_content);
 
-                dom.append_before_sibling(&footnote.node, NodeOrText::AppendNode(a_node.clone()));
-                dom.append_before_sibling(&a_node, NodeOrText::AppendNode(span_node.clone()));
-                dom.append(&span_node, NodeOrText::AppendNode(child_a_node.clone()));
-                dom.append(&span_node, NodeOrText::AppendText(text));
-                dom.remove_from_parent(&footnote.node)
+                    dom.append_before_sibling(&footnote.node, NodeOrText::AppendNode(a_node.clone()));
+                    dom.append_before_sibling(&a_node, NodeOrText::AppendNode(span_node.clone()));
+                    dom.append(&span_node, NodeOrText::AppendNode(child_a_node.clone()));
+                    dom.append(&span_node, NodeOrText::AppendText(text));
+                    dom.remove_from_parent(&footnote.node)
+                },
+                ReplacementType::Endnote(endnote) => {
+                    let sup_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("sup")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("endnote"),
+                            }],
+                        Default::default()
+                    );
+                    let child_a_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("a")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("href")),
+                                value: StrTendril::from(format!("#note-{}", endnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let endnote_number = StrTendril::from(format!("{}", endnote.endnote_key));
+                    dom.append_before_sibling(&endnote.node, NodeOrText::AppendNode(sup_node.clone()));
+                    dom.append(&sup_node, NodeOrText::AppendNode(child_a_node.clone()));
+                    dom.append(&child_a_node, NodeOrText::AppendText(endnote_number));
+                    dom.remove_from_parent(&endnote.node)
+                },
+                ReplacementType::CustomStyle(custom_style) => {
+                    let span_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("span")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from(format!("{}", custom_style.classes)),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("style")),
+                                value: StrTendril::from(format!("{}", custom_style.inline_style)),
+                            }],
+                        Default::default()
+                    );
+                    dom.append_before_sibling(&custom_style.node, NodeOrText::AppendNode(span_node.clone()));
+                    dom.reparent_children(&custom_style.node, &span_node);
+                    dom.remove_from_parent(&custom_style.node)
+                },
+            }
+        }
+
+        let html = serialize_dom(dom);
+        return match html {
+            Ok(html) => {
+                if add_soft_hyphens {
+                    hyphenate_text(html, dict)
+                } else {
+                    html
+                }
             },
-            ReplacementType::Endnote(endnote) => {
-                let sup_node = dom.create_element(
-                    QualName::new(None, ns!(html), local_name!("sup")),
-                    vec![
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("class")),
-                            value: StrTendril::from("endnote"),
-                        }],
-                    Default::default()
-                );
-                let child_a_node = dom.create_element(
-                    QualName::new(None, ns!(html), local_name!("a")),
-                    vec![
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("href")),
-                            value: StrTendril::from(format!("#note-{}", endnote.uuid)),
-                        }],
-                    Default::default()
-                );
-                let endnote_number = StrTendril::from(format!("{}",endnote.endnote_key));
-                dom.append_before_sibling(&endnote.node, NodeOrText::AppendNode(sup_node.clone()));
-                dom.append(&sup_node, NodeOrText::AppendNode(child_a_node.clone()));
-                dom.append(&child_a_node, NodeOrText::AppendText(endnote_number));
-                dom.remove_from_parent(&endnote.node)
-            },
-            ReplacementType::CustomStyle(custom_style) => {
-                let span_node = dom.create_element(
-                    QualName::new(None, ns!(html), local_name!("span")),
-                    vec![
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("class")),
-                            value: StrTendril::from(format!("{}", custom_style.classes)),
-                        },
-                        Attribute{
-                            name: QualName::new(None, ns!(), local_name!("style")),
-                            value: StrTendril::from(format!("{}", custom_style.inline_style)),
-                        }],
-                    Default::default()
-                );
-                dom.append_before_sibling(&custom_style.node, NodeOrText::AppendNode(span_node.clone()));
-                dom.reparent_children(&custom_style.node, &span_node);
-                dom.remove_from_parent(&custom_style.node)
-            },
+            Err(error) => "".to_string(),
         }
     }
-
-    let html = serialize_dom(dom);
-
-    if add_soft_hyphens {
-        hyphenate_text(html, dict)
-    }else{
-        html
-    }
+    "".to_string()
 }
+
+
 
 fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endnote_storage: &mut Vec<(uuid::Uuid, String)>, citation_bib: &HashMap<String, String>, citations_as_footnote: bool) {
     if let NodeData::Element { ref name, ref attrs, .. } = node.data {
         let node_name = name.local.to_string();
-        let attributes = attrs.borrow().iter().map(|x| {x.name.local.to_string()}).collect::<Vec<_>>();
-        let values = attrs.borrow().iter().map(|x| {x.value.to_string()}).collect::<Vec<_>>();
-        let default_string = String::from("failed to access attribute");
+        let mut attributes: HashMap<String, String> = HashMap::new();
+        for attribute in attrs.borrow().iter() {
+            attributes.insert(attribute.name.local.to_string(), attribute.value.to_string());
+        }
 
-        if node_name == "span" && *attributes.get(0).unwrap_or(&default_string) == "note-type"{
+        if node_name == "span" && attributes.contains_key(&"note-type".to_string()){
 
-            if *values.get(0).unwrap() == "footnote"{
+            if attributes.get("note-type") == Some(&"footnote".to_string()) {
                 let uuid = uuid::Uuid::new_v4();
-                let note_content = values.get(1).unwrap_or(&default_string);
+                let note_content = match attributes.get("note-content") {
+                    Some(value) => unescape_html(value),
+                    None => "Missing note content".to_string()
+                };
 
                 let replacement = ReplacementType::Footnote(Footnote{
                     node: node.clone(),
@@ -810,9 +821,12 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
                 });
                 mutations.push(replacement);
 
-            }else if *values.get(0).unwrap() == "endnote" {
+            }else if attributes.get("note-type") == Some(&"endnote".to_string()) {
                 let uuid = uuid::Uuid::new_v4();
-                let note_content = values.get(1).unwrap_or(&default_string).to_string();
+                let note_content = match attributes.get("note-content") {
+                    Some(value) => escape_html(value),
+                    None => "Missing note content".to_string()
+                };
                 endnote_storage.push((uuid, note_content));
                 let replacement = ReplacementType::Endnote(Endnote{
                     node: node.clone(),
@@ -824,10 +838,13 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
         }
 
         if node_name == "citation" {
-            let key = values.get(0).unwrap_or(&default_string);
+            let key =  match attributes.get("data-key") {
+                Some(value) => value.to_string(),
+                None => "".to_string()
+            };
             let uuid = uuid::Uuid::new_v4();
-            let citation = match citation_bib.get(key) {
-                Some(citation) => citation.to_string(),
+            let citation = match citation_bib.get(&key) {
+                Some(citation) => escape_html(citation),
                 None => {
                     eprintln!("Citation with key {} not found", key);
                     String::from("!!INVALID CITATION!!")
@@ -854,8 +871,14 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
         }
 
         if node_name == "customstyle" {
-            let inline_style = values.get(0).unwrap_or(&default_string);
-            let classes = values.get(1).unwrap_or(&default_string);
+            let inline_style = match attributes.get("inline-style") {
+                Some(value) => value.to_string(),
+                None => "".to_string()
+            };
+            let classes = match attributes.get("classes") {
+                Some(value) => value.to_string(),
+                None => "".to_string()
+            };
 
             let replacement = ReplacementType::CustomStyle(CustomStyle{
                 node: node.clone(),
@@ -872,11 +895,15 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
     }
 }
 
-fn serialize_dom(dom: RcDom) -> String {
+fn serialize_dom(dom: RcDom) -> Result<String, String> {
     let document: SerializableHandle = dom.document.clone().into();
     let mut buffer = Vec::new();
     serialize(& mut buffer, &document, Default::default()).expect("serialization failed");
-    String::from_utf8(buffer).unwrap().replace("<html><head></head><body>", "").replace("</body></html>", "")
+    let string_result = String::from_utf8(buffer);
+    match string_result {
+        Ok(result) => Ok(result.replace("<html><head></head><body>", "").replace("</body></html>", "")),
+        Err(_) => Err(String::from("could not serialize document")),
+    }
 }
 
 struct Footnote {
