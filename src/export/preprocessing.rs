@@ -1,11 +1,19 @@
 use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
+use crate::storage::project_storage::current::PersonUuidOrString;
+use crate::storage::project_storage::sections::content::current::{
+    decode_yjs_content, BlockData, NewContentBlock,
+};
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::ProjectData;
 use crate::utils::csl::CslData;
 use async_recursion::async_recursion;
 use base64::engine::general_purpose;
 use base64::Engine;
+use hayagriva::citationberg::LocaleCode;
+use hayagriva::BibliographyDriver;
+use hayagriva::BibliographyRequest;
+use hayagriva::CitationItem;
+use hayagriva::CitationRequest;
 use hyphenation::{Hyphenator, Load, Standard};
 use image::{DynamicImage, ImageOutputFormat};
 use language::Language;
@@ -15,7 +23,10 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vb_exchange::projects::PreparedProject;
-use vb_exchange::projects::{PersonOrString, PreparedContentBlock, PreparedSection};
+use vb_exchange::projects::{
+    PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedLicense, PreparedMetadata,
+    PreparedSection, PreparedSectionMetadata,
+};
 use vb_exchange::RenderingError;
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
@@ -50,8 +61,6 @@ pub async fn prepare_project(
     sections_to_include: Option<Vec<uuid::Uuid>>,
     project_id: &uuid::Uuid,
 ) -> Result<PreparedProject, RenderingError> {
-    unimplemented!();
-    /*
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata {
@@ -68,8 +77,8 @@ pub async fn prepare_project(
     for author in metadata.authors.unwrap_or_default() {
         match author {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person(&id) {
-                    Some(person) => person.read().unwrap().clone(),
+                let person = match data_storage.get_person_cloned(&id) {
+                    Some(person) => person,
                     None => {
                         eprintln!(
                             "Author with id {} not found while rendering section for export!",
@@ -90,8 +99,8 @@ pub async fn prepare_project(
     for editor in metadata.editors.unwrap_or_default() {
         match editor {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person(&id) {
-                    Some(person) => person.read().unwrap().clone(),
+                let person = match data_storage.get_person_cloned(&id) {
+                    Some(person) => person,
                     None => {
                         eprintln!(
                             "Editor with id {} not found while rendering section for export!",
@@ -116,36 +125,34 @@ pub async fn prepare_project(
 
     let mut data = vec![];
     for section in project_data.sections {
-        if let SectionOrTocV5::Section(section) = section {
-            if let Some(id) = section.id {
-                // Check if only specified sections should be included
-                match &sections_to_include {
-                    Some(sections_to_include) => {
-                        // Only prepare specified sections
-                        if sections_to_include.contains(&id) {
-                            data.push(
-                                render_section(
-                                    section,
-                                    data_storage.clone(),
-                                    &citation_bib,
-                                    project_id,
-                                    add_soft_hyphens,
-                                )
-                                .await,
+        if let Some(id) = section.id {
+            // Check if only specified sections should be included
+            match &sections_to_include {
+                Some(sections_to_include) => {
+                    // Only prepare specified sections
+                    if sections_to_include.contains(&id) {
+                        data.push(
+                            render_section(
+                                section,
+                                data_storage.clone(),
+                                &citation_bib,
+                                project_id,
+                                add_soft_hyphens,
                             )
-                        }
-                    }
-                    None => data.push(
-                        render_section(
-                            section,
-                            data_storage.clone(),
-                            &citation_bib,
-                            project_id,
-                            add_soft_hyphens,
+                            .await,
                         )
-                        .await,
-                    ), // Prepare all sections
+                    }
                 }
+                None => data.push(
+                    render_section(
+                        section,
+                        data_storage.clone(),
+                        &citation_bib,
+                        project_id,
+                        add_soft_hyphens,
+                    )
+                    .await,
+                ), // Prepare all sections
             }
         }
     }
@@ -163,7 +170,7 @@ pub async fn prepare_project(
         None => None,
     };
 
-    let metadata = PreparedMetadata {
+    let prepared_metadata = PreparedMetadata {
         title: metadata.title,
         subtitle: metadata.subtitle,
         authors,
@@ -186,12 +193,10 @@ pub async fn prepare_project(
     };
 
     Ok(PreparedProject {
-        metadata,
+        metadata: prepared_metadata,
         settings: project_data.settings,
         sections: data,
     })
-
-     */
 }
 
 /// Renders formatted citation strings for all bibliography entries in a project according to the current CSL style and language settings.
@@ -219,22 +224,22 @@ pub async fn prepare_project(
 /// # Panics
 /// - Panics if no CSL style is available in `csl_data`.
 pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMap<String, String> {
-    unimplemented!();
-    /*
     //TODO: remove unused citation entrys to avoid bibliography entries with no citations
     let mut driver: BibliographyDriver<hayagriva::Entry> = BibliographyDriver::new();
     let mut res = HashMap::new();
 
-    let mut bib = hayagriva::Library::new();
-    for (_, entry) in project.bibliography.iter() {
-        let entry: hayagriva::Entry = entry.clone().into();
-        bib.push(&entry);
+    let mut keys = Vec::new();
+    let mut library = hayagriva::Library::new();
+    for (key, _) in project.bibliography.entries.iter() {
+        if let Some(entry) = project.bibliography.get_entry_as_hayagriva(key) {
+            library.push(&entry);
+            keys.push(key.to_string());
+        }
     }
 
     let mut items = Vec::new();
-    for entry in bib.iter() {
-        let cit_entry = CitationItem::with_entry(entry);
-        items.push(cit_entry);
+    for entry in library.iter() {
+        items.push(CitationItem::with_entry(entry));
     }
 
     let style = match &project.settings {
@@ -281,7 +286,7 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
         ));
     }
 
-    let csl_locale = match &project.settings.clone() {
+    let csl_locale = match &project.settings {
         Some(settings) => match &settings.csl_language_code {
             Some(str) => LocaleCode(str.clone()),
             None => LocaleCode("en-us".to_string()),
@@ -292,29 +297,28 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
     let result = driver.finish(BibliographyRequest {
         style,
         locale: Some(csl_locale),
-        locale_files: &csl_data.locales.as_slice(),
+        locale_files: csl_data.locales.as_slice(),
     });
+
     for (i, citation) in result.citations.iter().enumerate() {
-        match project.bibliography.iter().nth(i) {
-            Some((key, _)) => {
-                let mut content = String::new();
-                citation
-                    .citation
-                    .write_buf(&mut content, BufWriteFormat::Html)
-                    .unwrap();
-                res.insert(key.to_string(), content);
+        if let Some(key) = keys.get(i) {
+            // Render citation explicitly as HTML using Hayagriva's writer
+            let mut content = String::new();
+            if let Err(e) = citation
+                .citation
+                .write_buf(&mut content, hayagriva::BufWriteFormat::Html)
+            {
+                eprintln!("Failed to render citation as HTML for key {}: {}", key, e);
             }
-            None => {
-                eprintln!(
-                    "Citation with index {} has no corresponding bibliography entry",
-                    i
-                );
-            }
+            res.insert(key.clone(), content);
+        } else {
+            eprintln!(
+                "Citation with index {} has no corresponding bibliography entry",
+                i
+            );
         }
     }
     res
-
-     */
 }
 
 /// Renders a `Section` into a `PreparedSection`, resolving metadata, author/editor references, and formatting content.
@@ -339,8 +343,6 @@ pub async fn render_section(
     project_id: &uuid::Uuid,
     add_soft_hyphens: bool,
 ) -> PreparedSection {
-    unimplemented!();
-    /*
     let published = match section.metadata.published {
         Some(date) => Some(date.into()),
         None => None,
@@ -349,8 +351,8 @@ pub async fn render_section(
     let mut authors = vec![];
     for author in section.metadata.authors {
         let person = match author {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person(&id) {
-                Some(person) => PersonOrString::Person(person.read().unwrap().clone()),
+            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id) {
+                Some(person) => PersonOrString::Person(person),
                 None => {
                     eprintln!(
                         "Author with id {} not found while rendering section for export!",
@@ -368,11 +370,11 @@ pub async fn render_section(
     let mut editors = vec![];
     for editor in section.metadata.editors {
         let person = match editor {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person(&id) {
-                Some(person) => PersonOrString::Person(person.read().unwrap().clone()),
+            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id) {
+                Some(person) => PersonOrString::Person(person),
                 None => {
                     eprintln!(
-                        "Author with id {} not found while rendering section for export!",
+                        "Editor with id {} not found while rendering section for export!",
                         id
                     );
                     continue;
@@ -425,7 +427,9 @@ pub async fn render_section(
     // Store all endnote contents for this section. They will be rendered at the end of the section based on their order in the storage
     let mut endnote_storage: Vec<(uuid::Uuid, String)> = vec![];
 
-    for content_block in section.children {
+    let blocks = decode_yjs_content(&section.content).unwrap_or_default();
+
+    for content_block in blocks {
         content.push(
             render_content_block(
                 content_block,
@@ -471,8 +475,6 @@ pub async fn render_section(
         visible_in_toc: section.visible_in_toc,
         endnotes,
     }
-
-     */
 }
 
 /// Returns the hyphenation dictionary for the given language, if available.
@@ -885,7 +887,9 @@ pub fn render_text(
 
         if note_type == "endnote" {
             let uuid = uuid::Uuid::new_v4();
-            endnote_storage.push((uuid, escape_html(note_content)));
+            // `note_content` is stored HTML-escaped in the attribute already. Store as-is
+            // and unescape later when creating the final PreparedEndnote to avoid double-escaping.
+            endnote_storage.push((uuid, note_content.to_string()));
             return format!("<sup class=\"endnote\"><a href=\"#note-{}\">{}</a></sup>", uuid, endnote_storage.len())
         }else if note_type == "footnote" {
             let uuid = uuid::Uuid::new_v4();
