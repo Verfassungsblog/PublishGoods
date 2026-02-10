@@ -1,9 +1,8 @@
 use crate::settings::Settings;
-use crate::storage::BibEntryV2;
 
 /// Module to generate a Citation from a Link.
 
-pub async fn get_translation(link: &str, settings: &Settings) -> Option<BibEntryV2> {
+pub async fn get_translation(link: &str, settings: &Settings) -> Option<Vec<hayagriva::Entry>> {
     let translation = send_translation_request(link, settings).await;
     match translation {
         Some(translation) => send_export_translation_request(translation, settings).await,
@@ -49,7 +48,7 @@ async fn send_translation_request(link: &str, settings: &Settings) -> Option<ser
 async fn send_export_translation_request(
     entry: serde_json::Value,
     settings: &Settings,
-) -> Option<BibEntryV2> {
+) -> Option<Vec<hayagriva::Entry>> {
     let target = format!(
         "{}/export?format=bibtex",
         settings.zotero_translation_server
@@ -87,17 +86,12 @@ async fn send_export_translation_request(
     };
 
     let bibliography = hayagriva::io::from_biblatex_str(&res);
-    let bibliography = match bibliography {
-        Ok(bib) => bib,
+    match bibliography {
+        Ok(bib) => Some(bib.into_iter().collect()),
         Err(e) => {
             error!("Error parsing bibliography: {:?}", e);
-            return None;
+            None
         }
-    };
-    let entry = bibliography.iter().next();
-    match entry {
-        Some(entry) => Some(entry.into()),
-        None => None,
     }
 }
 

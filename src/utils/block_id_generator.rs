@@ -1,25 +1,8 @@
 use crate::storage::project_storage::sections::Section;
+use uuid::Uuid;
 
-/// Generates a block id with 10 random characters which is unique for the section
+/// Generates a block id as a UUID v4 string
 pub fn generate_id(section: &Section) -> String {
-    unimplemented!();
-    /*
-    let existing_ids: Vec<String> = section
-        .children
-        .iter()
-        .map(|child| child.id.clone())
-        .collect();
-
-    loop {
-        let rand_id: String = thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .map(char::from)
-            .take(10)
-            .collect();
-        if !existing_ids.contains(&rand_id) {
-            return rand_id;
-        }
-    }
-
-     */
+    let _ = section;
+    Uuid::new_v4().to_string()
 }

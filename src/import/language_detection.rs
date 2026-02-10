@@ -1,5 +1,5 @@
 use crate::import::wordpress::Post;
-use crate::storage::project_storage::sections::content::current::BlockData;
+use crate::storage::project_storage::sections::content::current::{decode_yjs_content, BlockData};
 use crate::storage::project_storage::sections::Section;
 use lingua::{Language, LanguageDetectorBuilder};
 use std::time::SystemTime;
@@ -49,17 +49,42 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
 /// * `None` - If the language could not be detected or is not supported
 pub fn detect_language_for_section(section: &Section) -> Option<language::Language> {
     debug!("Trying to detect language for section");
-    unimplemented!();
-    /*
 
-    let content_to_analyze: String = section
-        .children
-        .iter()
-        .map(|block| match &block.data {
-            BlockData::Paragraph { text } => text.clone(),
-            _ => String::new(),
-        })
-        .collect();
+    let blocks = match decode_yjs_content(&section.content) {
+        Ok(blocks) => blocks,
+        Err(e) => {
+            error!(
+                "Could not decode yrs update during language detection: {}",
+                e
+            );
+            return None;
+        }
+    };
+
+    let mut content_to_analyze = String::new();
+
+    for block in blocks {
+        match block.data {
+            BlockData::Paragraph { text } => {
+                content_to_analyze.push_str(&text);
+                content_to_analyze.push(' ');
+            }
+            BlockData::Heading { text, .. } => {
+                content_to_analyze.push_str(&text);
+                content_to_analyze.push(' ');
+            }
+            BlockData::Quote { text, .. } => {
+                content_to_analyze.push_str(&text);
+                content_to_analyze.push(' ');
+            }
+            _ => {}
+        }
+    }
+
+    if content_to_analyze.trim().is_empty() {
+        return None;
+    }
+
     let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&content_to_analyze);
     match detected_lang {
@@ -69,8 +94,6 @@ pub fn detect_language_for_section(section: &Section) -> Option<language::Langua
         },
         None => None,
     }
-
-     */
 }
 /// Converts a [`Language`] to a BCP-47 compliant [`language::Language`].
 ///

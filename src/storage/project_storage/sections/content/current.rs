@@ -4,11 +4,52 @@ use rocket::serde::{Deserialize, Serialize};
 use vb_exchange::projects::BlockType;
 use yrs::types::array::Array;
 use yrs::types::map::Map;
-use yrs::{types::map::MapRef, GetString, MapPrelim, Transaction};
+use yrs::updates::decoder::Decode as _;
+use yrs::updates::encoder::Encode as _;
+use yrs::{types::map::MapRef, Doc, GetString, MapPrelim, ReadTxn, Transact, Transaction};
 
 pub struct MapRefWithTransaction<'a, 'b> {
     pub map_ref: MapRef,
     pub txn: &'a Transaction<'b>,
+}
+
+/// Decodes a yrs update into a Vec of NewContentBlock's
+pub fn decode_yjs_content(content: &[u8]) -> Result<Vec<NewContentBlock>, String> {
+    if content.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        if let Ok(update) = yrs::Update::decode_v1(content) {
+            if txn.apply_update(update).is_err() {
+                return Err("Could not apply update to yrs doc".to_string());
+            }
+        } else {
+            return Err("Could not decode yrs update".to_string());
+        }
+    }
+
+    let blocks_array = doc.get_or_insert_array("blocks");
+    let txn = doc.transact();
+
+    let mut blocks = Vec::new();
+
+    for block_val in blocks_array.iter(&txn) {
+        if let Ok(block_map) = block_val.cast::<MapRef>() {
+            let map_ref_with_txn = MapRefWithTransaction {
+                map_ref: block_map,
+                txn: &txn,
+            };
+
+            if let Ok(block) = NewContentBlock::try_from(map_ref_with_txn) {
+                blocks.push(block);
+            }
+        }
+    }
+
+    Ok(blocks)
 }
 
 impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
@@ -623,7 +664,7 @@ mod tests {
     #[test]
     fn test_paragraph_conversion() {
         let block = NewContentBlock {
-            id: "1".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Paragraph,
             data: BlockData::Paragraph {
                 text: "Hello world".to_string(),
@@ -633,10 +674,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
-        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), "1");
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         assert_eq!(
             map_ref.get(&txn, "type").unwrap().to_string(&txn),
             "paragraph"
@@ -656,7 +697,7 @@ mod tests {
     #[test]
     fn test_heading_conversion() {
         let block = NewContentBlock {
-            id: "2".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Heading,
             data: BlockData::Heading {
                 text: "Heading".to_string(),
@@ -667,9 +708,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         assert_eq!(map_ref.get(&txn, "type").unwrap().to_string(&txn), "header");
         let data = map_ref
             .get(&txn, "data")
@@ -683,7 +725,7 @@ mod tests {
     #[test]
     fn test_list_conversion() {
         let block = NewContentBlock {
-            id: "3".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Heading,
             data: BlockData::List {
                 style: "ordered".to_string(),
@@ -694,9 +736,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         assert_eq!(map_ref.get(&txn, "type").unwrap().to_string(&txn), "list");
         let data = map_ref
             .get(&txn, "data")
@@ -718,7 +761,7 @@ mod tests {
     #[test]
     fn test_quote_conversion() {
         let block = NewContentBlock {
-            id: "4".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Heading,
             data: BlockData::Quote {
                 text: "To be or not to be".to_string(),
@@ -730,9 +773,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         assert_eq!(map_ref.get(&txn, "type").unwrap().to_string(&txn), "quote");
         let data = map_ref
             .get(&txn, "data")
@@ -756,7 +800,7 @@ mod tests {
     #[test]
     fn test_image_conversion() {
         let block = NewContentBlock {
-            id: "5".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Heading,
             data: BlockData::Image {
                 file: UploadedImage {
@@ -773,9 +817,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         assert_eq!(map_ref.get(&txn, "type").unwrap().to_string(&txn), "image");
         let data = map_ref
             .get(&txn, "data")
@@ -812,7 +857,7 @@ mod tests {
     #[test]
     fn test_css_classes_tunes() {
         let block = NewContentBlock {
-            id: "6".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Paragraph,
             data: BlockData::Paragraph {
                 text: "Text".to_string(),
@@ -822,9 +867,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         let tunes = map_ref
             .get(&txn, "tunes")
             .unwrap()
@@ -847,7 +893,7 @@ mod tests {
     #[test]
     fn test_raw_conversion() {
         let block = NewContentBlock {
-            id: "7".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Paragraph,
             data: BlockData::Raw {
                 html: "<div>Raw</div>".to_string(),
@@ -857,9 +903,10 @@ mod tests {
         };
 
         let doc = Doc::new();
-        let map_ref = setup_y_map(&doc, block);
+        let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
+        assert_eq!(map_ref.get(&txn, "id").unwrap().to_string(&txn), block.id);
         assert_eq!(
             map_ref.get(&txn, "type").unwrap().to_string(&txn),
             "paragraph"
@@ -879,7 +926,7 @@ mod tests {
     fn test_map_ref_conversion() {
         use yrs::Doc;
         let block = NewContentBlock {
-            id: "8".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Heading,
             data: BlockData::Heading {
                 text: "Heading".to_string(),
@@ -906,7 +953,7 @@ mod tests {
     fn test_map_ref_conversion_paragraph() {
         use yrs::Doc;
         let block = NewContentBlock {
-            id: "9".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Paragraph,
             data: BlockData::Paragraph {
                 text: "Paragraph".to_string(),
@@ -932,7 +979,7 @@ mod tests {
     fn test_map_ref_conversion_list() {
         use yrs::Doc;
         let block = NewContentBlock {
-            id: "10".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::List,
             data: BlockData::List {
                 style: "ordered".to_string(),
@@ -959,7 +1006,7 @@ mod tests {
     fn test_map_ref_conversion_quote() {
         use yrs::Doc;
         let block = NewContentBlock {
-            id: "11".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Quote,
             data: BlockData::Quote {
                 text: "To be or not to be".to_string(),
@@ -981,7 +1028,7 @@ mod tests {
     fn test_map_ref_conversion_image() {
         use yrs::Doc;
         let block = NewContentBlock {
-            id: "12".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Image,
             data: BlockData::Image {
                 file: UploadedImage {
@@ -1008,7 +1055,7 @@ mod tests {
     fn test_map_ref_conversion_raw() {
         use yrs::Doc;
         let block = NewContentBlock {
-            id: "13".to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             block_type: BlockType::Raw,
             data: BlockData::Raw {
                 html: "<div>Raw HTML</div>".to_string(),
@@ -1022,6 +1069,48 @@ mod tests {
         let map_ref_with_txn = MapRefWithTransaction { map_ref, txn: &txn };
         let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
         assert_eq!(block, converted_block);
+    }
+
+    #[test]
+    fn test_decode_yjs_content() {
+        use yrs::{Doc, Transact};
+        let block1 = NewContentBlock {
+            id: uuid::Uuid::new_v4().to_string(),
+            block_type: BlockType::Paragraph,
+            data: BlockData::Paragraph {
+                text: "First block".to_string(),
+            },
+            css_classes: vec![],
+            revision_id: None,
+        };
+        let block2 = NewContentBlock {
+            id: uuid::Uuid::new_v4().to_string(),
+            block_type: BlockType::Heading,
+            data: BlockData::Heading {
+                text: "Second block".to_string(),
+                level: 1,
+            },
+            css_classes: vec![],
+            revision_id: None,
+        };
+
+        let doc = Doc::new();
+        let blocks_array = doc.get_or_insert_array("blocks");
+        {
+            let mut txn = doc.transact_mut();
+            blocks_array.push_back(&mut txn, yrs::MapPrelim::from(block1.clone()));
+            blocks_array.push_back(&mut txn, yrs::MapPrelim::from(block2.clone()));
+        }
+
+        let update = {
+            let txn = doc.transact();
+            txn.encode_diff_v1(&yrs::StateVector::default())
+        };
+        let decoded_blocks = decode_yjs_content(&update).unwrap();
+
+        assert_eq!(decoded_blocks.len(), 2);
+        assert_eq!(decoded_blocks[0], block1);
+        assert_eq!(decoded_blocks[1], block2);
     }
 }
 

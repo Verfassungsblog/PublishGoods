@@ -719,6 +719,99 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
     }
 }
 
+impl From<&hayagriva::Entry> for BibEntryV3 {
+    fn from(value: &hayagriva::Entry) -> Self {
+        let title = value.title().map(|t| t.clone().into());
+
+        let authors = match value.authors() {
+            Some(authors) => authors.iter().map(|x| x.clone().into()).collect(),
+            None => vec![],
+        };
+        let editors = match value.editors() {
+            Some(editors) => editors.iter().map(|x| x.clone().into()).collect(),
+            None => vec![],
+        };
+
+        let publisher = value.publisher().map(|p| p.clone().into());
+        let location = value.location().map(|l| l.clone().into());
+        let organization = value.organization().map(|o| o.clone().into());
+
+        let serial_numbers = value.serial_number().map(|sn| sn.0.clone());
+
+        let issue = value
+            .issue()
+            .map(|i| MyMaybeTyped::from_hayagriva(i.clone()));
+        let volume = value
+            .volume()
+            .map(|v| MyMaybeTyped::from_hayagriva(v.clone()));
+        let edition = value
+            .edition()
+            .map(|e| MyMaybeTyped::from_hayagriva(e.clone()));
+
+        let page_range = match value.page_range() {
+            Some(page_range) => match page_range {
+                MaybeTyped::Typed(t) => Some(MyMaybeTyped::Typed(t.clone().into())),
+                MaybeTyped::String(s) => Some(MyMaybeTyped::String(s.to_string())),
+            },
+            None => None,
+        };
+
+        let volume_total = value.volume_total().map(|v| v.clone().into());
+        let page_total = value.page_total().map(|v| v.clone().into());
+        let time_range = value
+            .time_range()
+            .map(|tr| MyMaybeTyped::from_hayagriva(tr.clone()));
+        let runtime = value
+            .runtime()
+            .map(|rt| MyMaybeTyped::from_hayagriva(rt.clone()));
+
+        let url = value.url().map(|u| u.clone().into());
+        let language = value.language().map(|l| l.to_string());
+        let archive = value.archive().map(|a| a.clone().into());
+        let archive_location = value.archive_location().map(|a| a.clone().into());
+        let call_number = value.call_number().map(|c| c.clone().into());
+        let note = value.note().map(|n| n.clone().into());
+        let abstractt = value.abstract_().map(|a| a.clone().into());
+        let genre = value.genre().map(|g| g.clone().into());
+
+        BibEntryV3 {
+            key: uuid::Uuid::new_v4(),
+            entry_type: *value.entry_type(),
+            title,
+            authors,
+            date: value.date().map(|d| d.clone().into()),
+            editors,
+            affiliated: value
+                .affiliated()
+                .map(|a| a.iter().map(|x| x.clone().into()).collect())
+                .unwrap_or_default(),
+            publisher,
+            location,
+            organization,
+            issue,
+            volume,
+            volume_total,
+            edition,
+            page_range,
+            page_total,
+            time_range,
+            runtime,
+            url,
+            serial_numbers,
+            language,
+            archive,
+            archive_location,
+            call_number,
+            note,
+            abstractt,
+            genre,
+            // NOTE: parents are resolved during bibliography import (we need stable UUID mapping
+            // from bib keys). This conversion only handles the direct field mapping.
+            parents: vec![],
+        }
+    }
+}
+
 impl From<BibEntryV2> for hayagriva::Entry {
     fn from(value: BibEntryV2) -> Self {
         let mut entry = hayagriva::Entry::new(&value.key, value.entry_type);

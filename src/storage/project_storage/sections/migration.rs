@@ -279,7 +279,7 @@ impl From<SectionMetadataV5> for SectionMetadataV6 {
     }
 }
 
-fn convert_contentblocks_to_yrs(blocks: Vec<NewContentBlock>) -> Doc {
+pub fn convert_contentblocks_to_yrs(blocks: Vec<NewContentBlock>) -> Doc {
     let doc = Doc::new();
     {
         let blocks_array = doc.get_or_insert_array("blocks");

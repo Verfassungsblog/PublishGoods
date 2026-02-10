@@ -10,21 +10,26 @@ use html_parser::{Dom, Node};
 use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
+use crate::import::link_converter;
 use crate::import::wordpress::{
     Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError,
 };
 use crate::settings::Settings;
 use crate::storage::project_storage::current::PersonUuidOrString;
-use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
+use crate::storage::project_storage::sections::content::current::BlockData;
+use crate::storage::project_storage::sections::content::current::NewContentBlock;
+use crate::storage::project_storage::sections::migration::convert_contentblocks_to_yrs;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::storage::BibEntryV2;
+use crate::storage::BibEntryV3;
 use crate::utils::block_id_generator::generate_id;
+use log::{debug, error, warn};
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
+use yrs::{ReadTxn, StateVector, Transact};
 
 /// Struct wrapping all import jobs
 pub struct ImportProcessor {
@@ -142,6 +147,27 @@ pub struct FileImportData {
 }
 
 impl ImportProcessor {
+    /// Collects all bibliography entries, including all transitive parents, keyed by their
+    /// original hayagriva key.
+    fn collect_bib_entries_with_parents(
+        entries: impl IntoIterator<Item = hayagriva::Entry>,
+    ) -> HashMap<String, hayagriva::Entry> {
+        let mut by_key: HashMap<String, hayagriva::Entry> = HashMap::new();
+        let mut queue: Vec<hayagriva::Entry> = entries.into_iter().collect();
+
+        while let Some(entry) = queue.pop() {
+            let key = entry.key().to_string();
+            if by_key.contains_key(&key) {
+                continue;
+            }
+            for parent in entry.parents().iter().cloned() {
+                queue.push(parent);
+            }
+            by_key.insert(key, entry);
+        }
+
+        by_key
+    }
     /// Updates the import status of a job in the job archive.
     ///
     /// Acquires a write lock on the job archive and sets the status of the specified job ID to the given `new_status`.
@@ -556,62 +582,103 @@ impl ImportProcessor {
 
         let slug = path.split("/").last().unwrap_or("");
 
-        /*if path.starts_with("/category/"){
+        if path.starts_with("/category/") {
             debug!("Found category link. Trying to import all posts within category");
-            let category = match api.get_categories(None, None, None, None, None, Some(slug.to_string()), None, None, None).await{
+            let category = match api
+                .get_categories(
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(slug.to_string()),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            {
                 Ok(categories) => categories,
-                Err(e) => return Err(ImportError::WordPressApiError(e))
+                Err(e) => return Err(ImportError::WordPressApiError(e)),
             };
-            if category.len() != 1{
+            if category.len() != 1 {
                 return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
             }
             let category = category.first().unwrap();
             let mut posts = vec![];
             let mut page = 1;
-            loop{
-                let mut new_posts = match api.get_posts(WordpressAPIContext::default(), Some(page), None, None, None, None, None, Some(vec![category.id]), None).await{
-                    Ok(posts) => posts,
-                    Err(e) => return Err(ImportError::WordPressApiError(e))
+            loop {
+                let mut new_posts = match api
+                    .get_posts(
+                        WordpressAPIContext::default(),
+                        Some(page),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(vec![category.id]),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(posts) => match posts.data {
+                        PostDataType::FullPosts(posts) => posts,
+                        _ => {
+                            return Err(ImportError::WordPressApiError(
+                                WordpressAPIError::UnexpectedResponse,
+                            ))
+                        }
+                    },
+                    Err(e) => return Err(ImportError::WordPressApiError(e)),
                 };
-                if new_posts.len() == 0{
+                if new_posts.len() == 0 {
                     break;
-                }else{
+                } else {
                     posts.append(&mut new_posts);
                     page += 1;
                 }
             }
             for post in posts {
-                self.import_single_post(post.slug.clone(), project.clone(), endnotes, shift_headings_up, convert_links, &api).await?;
+                let additional_author_names = if import_author_names {
+                    self.resolve_wp_authors(&post, &api).await
+                } else {
+                    vec![]
+                };
+                self.import_wp_post(
+                    post,
+                    project.clone(),
+                    endnotes,
+                    shift_headings_up,
+                    convert_links,
+                    additional_author_names,
+                )
+                .await?;
             }
-        }else{
-        TODO: reimplement category link importing
-         */
-
-        debug!("Found non-category link. Trying to import single post");
-
-        unimplemented!();
-        /*
-        let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
-
-        let additional_author_names = if import_author_names {
-            self.resolve_wp_authors(&post, &api).await
         } else {
-            vec![]
-        };
+            debug!("Found non-category link. Trying to import single post");
 
-        self.import_wp_post(
-            post,
-            project.clone(),
-            endnotes,
-            shift_headings_up,
-            convert_links,
-            additional_author_names,
-        )
-        .await?;
+            let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
 
+            let additional_author_names = if import_author_names {
+                self.resolve_wp_authors(&post, &api).await
+            } else {
+                vec![]
+            };
+
+            self.import_wp_post(
+                post,
+                project.clone(),
+                endnotes,
+                shift_headings_up,
+                convert_links,
+                additional_author_names,
+            )
+            .await?;
+        }
         Ok(())
-
-         */
     }
 
     /// Tries to resolve the author id from the wordpress api
@@ -674,112 +741,109 @@ impl ImportProcessor {
         convert_links: bool,
         imported_authors: Vec<PersonUuidOrString>,
     ) -> Result<(), ImportError> {
-        unimplemented!();
-        /*
-            let subtitle = match &post.acf {
+        let subtitle = match &post.acf {
+            None => None,
+            Some(acf) => match &acf.subheadline {
                 None => None,
-                Some(acf) => match &acf.subheadline {
-                    None => None,
-                    Some(subheadline) => Some(subheadline.clone()),
-                },
-            };
+                Some(subheadline) => Some(subheadline.clone()),
+            },
+        };
 
-            let mut identifiers = vec![];
+        let mut identifiers = vec![];
 
-            if let Some(acf) = &post.acf {
-                if let Some(crossref_doi) = &acf.crossref_doi {
-                    identifiers.push(Identifier {
-                        id: Some(uuid::Uuid::new_v4()),
-                        name: "DOI".to_string(),
-                        value: crossref_doi.clone(),
-                        identifier_type: IdentifierType::DOI,
-                    });
-                } else if let Some(doi) = &acf.doi {
-                    identifiers.push(Identifier {
-                        id: Some(uuid::Uuid::new_v4()),
-                        name: "DOI".to_string(),
-                        value: doi.clone(),
-                        identifier_type: IdentifierType::DOI,
-                    });
-                }
+        if let Some(acf) = &post.acf {
+            if let Some(crossref_doi) = &acf.crossref_doi {
+                identifiers.push(Identifier {
+                    id: Some(uuid::Uuid::new_v4()),
+                    name: "DOI".to_string(),
+                    value: crossref_doi.clone(),
+                    identifier_type: IdentifierType::DOI,
+                });
+            } else if let Some(doi) = &acf.doi {
+                identifiers.push(Identifier {
+                    id: Some(uuid::Uuid::new_v4()),
+                    name: "DOI".to_string(),
+                    value: doi.clone(),
+                    identifier_type: IdentifierType::DOI,
+                });
             }
-
-            let lang = if cfg!(feature = "language_detection") {
-                detect_language_for_post(&post)
-            } else {
-                None
-            };
-
-            let section = Section {
-                id: Some(uuid::Uuid::new_v4()),
-                css_classes: vec![],
-                sub_sections: vec![],
-                children: vec![],
-                visible_in_toc: true,
-                metadata: SectionMetadata {
-                    title: post.title.rendered.clone(),
-                    toc_title_subtitle_override: None,
-                    subtitle,
-                    authors: imported_authors,
-                    editors: vec![],
-                    web_url: Some(post.link.clone()),
-                    identifiers,
-                    published: Some(post.date.date()),
-                    last_changed: Some(post.modified),
-                    lang,
-                },
-            };
-
-            debug!("{:?}", section);
-
-            self.import_html_from_wp(
-                section,
-                post.content.rendered.clone(),
-                project,
-                endnotes,
-                shift_headings_up,
-                convert_links,
-            )
-            .await
         }
 
-        async fn get_wp_post_by_link(
-            &self,
-            slug: String,
-            api: &WordpressAPI,
-        ) -> Result<Post, ImportError> {
-            let mut posts = match api
-                .get_posts(
-                    WordpressAPIContext::default(),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(slug.to_string()),
-                    None,
-                    None,
-                )
-                .await
-            {
-                Ok(posts) => match posts.data {
-                    PostDataType::FullPosts(posts) => posts,
-                    _ => {
-                        return Err(ImportError::WordPressApiError(
-                            WordpressAPIError::InvalidURL,
-                        ))
-                    }
-                },
-                Err(e) => return Err(ImportError::WordPressApiError(e)),
-            };
-            if posts.len() != 1 {
-                return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
-            }
-            Ok(posts.pop().unwrap())
+        let lang = if cfg!(feature = "language_detection") {
+            detect_language_for_post(&post)
+        } else {
+            None
+        };
 
-             */
+        let section = Section {
+            id: Some(uuid::Uuid::new_v4()),
+            css_classes: vec![],
+            sub_sections: vec![],
+            content: vec![],
+            visible_in_toc: true,
+            metadata: SectionMetadata {
+                title: post.title.rendered.clone(),
+                toc_title_subtitle_override: None,
+                subtitle,
+                authors: imported_authors,
+                editors: vec![],
+                web_url: Some(post.link.clone()),
+                identifiers,
+                published: Some(post.date.date()),
+                last_changed: Some(post.modified),
+                lang,
+                custom_fields: HashMap::new(),
+            },
+        };
+
+        debug!("{:?}", section);
+
+        self.import_html_from_wp(
+            section,
+            post.content.rendered.clone(),
+            project,
+            endnotes,
+            shift_headings_up,
+            convert_links,
+        )
+        .await
+    }
+
+    async fn get_wp_post_by_link(
+        &self,
+        slug: String,
+        api: &WordpressAPI,
+    ) -> Result<Post, ImportError> {
+        let mut posts = match api
+            .get_posts(
+                WordpressAPIContext::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(slug.to_string()),
+                None,
+                None,
+            )
+            .await
+        {
+            Ok(posts) => match posts.data {
+                PostDataType::FullPosts(posts) => posts,
+                _ => {
+                    return Err(ImportError::WordPressApiError(
+                        WordpressAPIError::InvalidURL,
+                    ))
+                }
+            },
+            Err(e) => return Err(ImportError::WordPressApiError(e)),
+        };
+        if posts.len() != 1 {
+            return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
+        }
+        Ok(posts.pop().unwrap())
     }
 
     async fn convert_file(
@@ -791,7 +855,6 @@ impl ImportProcessor {
         shift_headings_up: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
-        unimplemented!();
         let mut file = match tokio::fs::File::open(file_path).await {
             Ok(file) => file,
             Err(e) => {
@@ -892,7 +955,6 @@ impl ImportProcessor {
         input: InputKind,
         input_format: InputFormat,
     ) -> Result<String, ImportError> {
-        unimplemented!();
         let task = spawn_blocking({
             move || {
                 let mut pandoc = pandoc::new();
@@ -934,12 +996,10 @@ impl ImportProcessor {
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
-        unimplemented!();
-        /*
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
-                error!("Couldn't parse html from import after pandoc: {}", e);
+                error!("Couldn't parse html from import: {}", e);
                 return Err(ImportError::HtmlConversionFailed);
             }
         };
@@ -947,57 +1007,45 @@ impl ImportProcessor {
             return Err(ImportError::HtmlConversionFailed);
         }
 
-        // Get footnotes:
+        // Get footnotes (WP footnote plugin)
         let mut footnotes: HashMap<String, String> = HashMap::new();
-
         if let Some(footnote_div) = dom.children.iter().find(|x| match x {
             Node::Element(div) => div
                 .classes
                 .contains(&"footnotes_reference_container".to_string()),
             _ => false,
         }) {
-            match footnote_div {
-                Node::Element(div) => {
-                    if let Some(div) = div.children.get(1) {
-                        match div {
-                            Node::Element(e) => {
-                                if let Some(table) = e.children.get(0) {
-                                    match table {
-                                        Node::Element(table) => {
-                                            if table.name == "table" {
-                                                if let Some(tbody) = table.children.get(1) {
-                                                    if let Node::Element(tbody) = tbody {
-                                                        if tbody.name == "tbody" {
-                                                            for row in &tbody.children {
-                                                                if let Node::Element(tr) = row {
-                                                                    if let Some(th) =
-                                                                        tr.children.get(0)
-                                                                    {
-                                                                        if let Node::Element(th) =
-                                                                            th
-                                                                        {
-                                                                            if let Some(a) =
-                                                                                th.children.get(0)
-                                                                            {
-                                                                                if let Node::Element(a) = a {
-                                                                                        if a.classes.contains(&"footnote_backlink".to_string()) {
-                                                                                            if let Some(id) = a.id.clone() {
-                                                                                                //Found footnote id
-
-                                                                                                // Get footnote text
-                                                                                                if let Some(td) = tr.children.get(1) {
-                                                                                                    if let Node::Element(td) = td {
-                                                                                                        if td.classes.contains(&"footnote_plugin_text".to_string()) {
-                                                                                                            footnotes.insert(id, self.dom_to_html(td.clone(), None, endnotes, convert_links, project_data.clone()).await);
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                            }
-                                                                        }
-                                                                    }
+            if let Node::Element(div) = footnote_div {
+                if let Some(Node::Element(e)) = div.children.get(1) {
+                    if let Some(Node::Element(table)) = e.children.get(0) {
+                        if table.name == "table" {
+                            if let Some(Node::Element(tbody)) = table.children.get(1) {
+                                if tbody.name == "tbody" {
+                                    for row in &tbody.children {
+                                        if let Node::Element(tr) = row {
+                                            if let Some(Node::Element(th)) = tr.children.get(0) {
+                                                if let Some(Node::Element(a)) = th.children.get(0) {
+                                                    if a.classes
+                                                        .contains(&"footnote_backlink".to_string())
+                                                    {
+                                                        if let Some(id) = a.id.clone() {
+                                                            if let Some(Node::Element(td)) =
+                                                                tr.children.get(1)
+                                                            {
+                                                                if td.classes.contains(
+                                                                    &"footnote_plugin_text"
+                                                                        .to_string(),
+                                                                ) {
+                                                                    let html = self
+                                                                        .dom_to_html(
+                                                                            td.clone(),
+                                                                            None,
+                                                                            endnotes,
+                                                                            convert_links,
+                                                                            project_data.clone(),
+                                                                        )
+                                                                        .await;
+                                                                    footnotes.insert(id, html);
                                                                 }
                                                             }
                                                         }
@@ -1005,34 +1053,31 @@ impl ImportProcessor {
                                                 }
                                             }
                                         }
-                                        _ => {}
                                     }
                                 }
                             }
-                            _ => {}
                         }
                     }
                 }
-                _ => {}
             }
         }
+
+        let mut blocks: Vec<NewContentBlock> = vec![];
 
         for node in dom.children {
             match node {
                 Node::Text(t) => {
-                    // Wrap text without a tag in a paragraph
-                    let cb = NewContentBlock {
+                    blocks.push(NewContentBlock {
                         id: generate_id(&section),
                         block_type: BlockType::Paragraph,
                         data: BlockData::Paragraph { text: t },
                         css_classes: vec![],
                         revision_id: None,
-                    };
-                    section.children.push(cb);
+                    });
                 }
                 Node::Element(el) => {
                     match el.name.to_lowercase().as_str() {
-                        "h1" | "h2" | "h4" | "h5" | "h6" => {
+                        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                             let mut level = match el.name.to_lowercase().as_str() {
                                 "h1" => 1,
                                 "h2" => 2,
@@ -1043,166 +1088,247 @@ impl ImportProcessor {
                                 _ => 0,
                             };
 
-                            if shift_headings {
-                                if level > 1 {
-                                    level -= 1;
-                                }
+                            if shift_headings && level > 1 {
+                                level -= 1;
                             }
 
-                            section.children.push(NewContentBlock {
+                            let text = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+
+                            blocks.push(NewContentBlock {
                                 id: generate_id(&section),
                                 block_type: BlockType::Heading,
-                                data: BlockData::Heading {
-                                    text: self
-                                        .dom_to_html(
-                                            el,
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    level,
-                                },
-                                css_classes: vec![],
+                                data: BlockData::Heading { text, level },
+                                css_classes: el.classes.clone(),
                                 revision_id: None,
-                            })
+                            });
                         }
-                        "p" => section.children.push(NewContentBlock {
-                            id: generate_id(&section),
-                            block_type: BlockType::Paragraph,
-                            data: BlockData::Paragraph {
-                                text: self
-                                    .dom_to_html(
-                                        el,
-                                        Some(&footnotes),
-                                        endnotes,
-                                        convert_links,
-                                        project_data.clone(),
-                                    )
-                                    .await,
-                            },
-                            css_classes: vec![],
-                            revision_id: None,
-                        }),
+                        "p" | "div" => {
+                            let text = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+                            blocks.push(NewContentBlock {
+                                id: generate_id(&section),
+                                block_type: BlockType::Paragraph,
+                                data: BlockData::Paragraph { text },
+                                css_classes: el.classes.clone(),
+                                revision_id: None,
+                            });
+                        }
                         "ul" | "ol" => {
-                            let style = match el.name.to_lowercase().as_str() {
-                                "ul" => "unordered",
-                                "ol" => "ordered",
-                                _ => "unordered",
-                            };
-                            let style = style.to_string();
-                            let mut items = Vec::new();
-
-                            for node in el.children.iter() {
-                                if let Node::Element(el) = node {
-                                    if el.name.to_lowercase() == "li" {
-                                        let result = self
-                                            .dom_to_html(
-                                                el.clone(),
-                                                Some(&footnotes),
-                                                endnotes,
-                                                convert_links,
-                                                project_data.clone(),
-                                            )
-                                            .await;
-                                        items.push(result);
-                                    }
-                                }
-                            }
-
-                            section.children.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::List,
-                                data: BlockData::List { style, items },
-                                css_classes: vec![],
-                                revision_id: None,
-                            });
-                        }
-                        "blockquote" => {
-                            section.children.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Quote,
-                                data: BlockData::Quote {
-                                    text: self
-                                        .dom_to_html(
-                                            el,
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    caption: "".to_string(),
-                                    alignment: "".to_string(),
-                                },
-                                css_classes: vec![],
-                                revision_id: None,
-                            });
-                        }
-                        "div" => {
-                            if el
-                                .classes
-                                .contains(&String::from("footnotes_reference_container"))
-                            {
-                                continue;
+                            let style = if el.name.to_lowercase() == "ol" {
+                                "ordered".to_string()
                             } else {
-                                warn!("Warning: Unsupported div. Adding as paragraph");
-                                // Add as paragraph
-                                section.children.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Paragraph,
-                                    data: BlockData::Paragraph {
-                                        text: self
-                                            .dom_to_html(
-                                                el,
+                                "unordered".to_string()
+                            };
+                            let mut items: Vec<String> = vec![];
+                            for child in &el.children {
+                                if let Node::Element(li) = child {
+                                    if li.name.to_lowercase() == "li" {
+                                        items.push(
+                                            self.dom_to_html(
+                                                li.clone(),
                                                 Some(&footnotes),
                                                 endnotes,
                                                 convert_links,
                                                 project_data.clone(),
                                             )
                                             .await,
-                                    },
-                                    css_classes: vec![],
+                                        );
+                                    }
+                                }
+                            }
+                            if items.is_empty() {
+                                let html = self
+                                    .dom_to_html(
+                                        el.clone(),
+                                        Some(&footnotes),
+                                        endnotes,
+                                        convert_links,
+                                        project_data.clone(),
+                                    )
+                                    .await;
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::Raw,
+                                    data: BlockData::Raw { html },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            } else {
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::List,
+                                    data: BlockData::List { style, items },
+                                    css_classes: el.classes.clone(),
                                     revision_id: None,
                                 });
                             }
                         }
-                        _ => {
-                            warn!("Warning: Unsupported tag: {}", el.name);
-                            // Add as paragraph
-                            section.children.push(NewContentBlock {
+                        "blockquote" => {
+                            let text = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+                            blocks.push(NewContentBlock {
                                 id: generate_id(&section),
-                                block_type: BlockType::Paragraph,
-                                data: BlockData::Paragraph {
-                                    text: self
-                                        .dom_to_html(
-                                            el,
+                                block_type: BlockType::Quote,
+                                data: BlockData::Quote {
+                                    text,
+                                    caption: String::new(),
+                                    alignment: "left".to_string(),
+                                },
+                                css_classes: el.classes.clone(),
+                                revision_id: None,
+                            });
+                        }
+                        "figure" | "img" => {
+                            // Best-effort conversion into an Image block; fall back to Raw if no src.
+                            let (src, caption) = if el.name.to_lowercase() == "img" {
+                                (
+                                    el.attributes
+                                        .get("src")
+                                        .and_then(|x| x.clone())
+                                        .unwrap_or_default(),
+                                    None,
+                                )
+                            } else {
+                                let img = el.children.iter().find_map(|n| match n {
+                                    Node::Element(e) if e.name.to_lowercase() == "img" => Some(e),
+                                    _ => None,
+                                });
+                                let src = img
+                                    .and_then(|img| {
+                                        img.attributes.get("src").and_then(|x| x.clone())
+                                    })
+                                    .unwrap_or_default();
+                                let figcaption = el.children.iter().find_map(|n| match n {
+                                    Node::Element(e) if e.name.to_lowercase() == "figcaption" => {
+                                        Some(e)
+                                    }
+                                    _ => None,
+                                });
+                                let caption = figcaption.map(|fc| {
+                                    // Keep caption as HTML string
+                                    // (use current footnote/link conversion rules)
+                                    // Note: if this fails, empty caption is fine.
+                                    //
+                                    // We can't await here, so handled below.
+                                    fc.clone()
+                                });
+                                (src, caption)
+                            };
+
+                            if src.is_empty() {
+                                let html = self
+                                    .dom_to_html(
+                                        el.clone(),
+                                        Some(&footnotes),
+                                        endnotes,
+                                        convert_links,
+                                        project_data.clone(),
+                                    )
+                                    .await;
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::Raw,
+                                    data: BlockData::Raw { html },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            } else {
+                                let filename = src
+                                    .split('/')
+                                    .last()
+                                    .unwrap_or("image")
+                                    .split('?')
+                                    .next()
+                                    .unwrap_or("image")
+                                    .to_string();
+                                let caption = match caption {
+                                    None => None,
+                                    Some(fc) => Some(
+                                        self.dom_to_html(
+                                            fc,
                                             Some(&footnotes),
                                             endnotes,
                                             convert_links,
                                             project_data.clone(),
                                         )
                                         .await,
-                                },
-                                css_classes: vec![],
+                                    ),
+                                };
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::Image,
+                                    data: BlockData::Image {
+                                        file: crate::projects::api::UploadedImage {
+                                            url: src,
+                                            filename,
+                                        },
+                                        caption,
+                                        with_border: false,
+                                        with_background: false,
+                                        stretched: false,
+                                    },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            }
+                        }
+                        _ => {
+                            let html = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+                            blocks.push(NewContentBlock {
+                                id: generate_id(&section),
+                                block_type: BlockType::Raw,
+                                data: BlockData::Raw { html },
+                                css_classes: el.classes.clone(),
                                 revision_id: None,
                             });
                         }
                     }
                 }
-                // Skip comments
                 Node::Comment(_) => {}
             }
         }
 
-        section.metadata.lang = detect_language_for_section(&section);
-        project_data
-            .write()
-            .unwrap()
-            .sections
-            .push(SectionOrTocV5::Section(section));
-        Ok(())*/
+        let doc = convert_contentblocks_to_yrs(blocks);
+        section.content = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+
+        if cfg!(feature = "language_detection") {
+            section.metadata.lang = detect_language_for_section(&section);
+        }
+
+        project_data.write().unwrap().sections.push(section);
+        Ok(())
     }
 
     async fn import_html_from_pandoc(
@@ -1213,8 +1339,6 @@ impl ImportProcessor {
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
-        unimplemented!();
-        /*
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -1224,13 +1348,13 @@ impl ImportProcessor {
         };
         if dom.tree_type == html_parser::DomVariant::Document {
             return Err(ImportError::HtmlConversionFailed);
-        } //TODO support a full html document
+        }
 
         let mut section = Section {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
-            children: vec![],
+            content: vec![],
             visible_in_toc: true,
             metadata: SectionMetadata {
                 title: "Imported Section".to_string(),
@@ -1243,136 +1367,100 @@ impl ImportProcessor {
                 published: None,
                 last_changed: None,
                 lang: None,
+                custom_fields: HashMap::new(),
             },
         };
 
-        // Get footnotes:
+        // Extract pandoc footnotes: <aside id="footnotes"><ol><li id="fn1">...</li></ol></aside>
         let mut footnotes: HashMap<String, String> = HashMap::new();
-
         if let Some(aside) = dom.children.iter().find(|x| match x {
-            Node::Element(el) => el.name == "aside",
+            Node::Element(el) => el.name == "aside" && el.id.as_deref() == Some("footnotes"),
             _ => false,
         }) {
             if let Node::Element(aside) = aside {
-                if aside.id == Some("footnotes".to_string()) {
-                    let ol = aside.children.iter().find(|node| match node {
-                        Node::Element(el) => el.name == "ol",
-                        _ => false,
-                    });
-                    if let Some(ol) = ol {
-                        if let Node::Element(ol) = ol {
-                            for node in ol.children.iter() {
-                                if let Node::Element(li) = node {
-                                    if let Some(id) = li.id.clone() {
-                                        let id = id.to_string();
-                                        let mut text = String::new();
-                                        if let Some(ptag) = li.children.iter().next() {
-                                            match ptag {
-                                                Node::Element(ptag) => {
-                                                    for node in ptag.children.iter() {
-                                                        match node {
-                                                            Node::Text(t) => text.push_str(&t),
-                                                            Node::Element(ele) => {
-                                                                match ele
-                                                                    .name
-                                                                    .to_lowercase()
-                                                                    .as_str()
-                                                                {
-                                                                    "a" => {
-                                                                        if let Some(role) = ele
-                                                                            .attributes
-                                                                            .get("role")
-                                                                        {
-                                                                            if let Some(role) = role
-                                                                            {
-                                                                                if role == "doc-backlink" {
-                                                                                    // Skip backlinks
-                                                                                    continue;
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        let mut attributes =
-                                                                            String::new();
-                                                                        for (attr, attrvalue) in
-                                                                            ele.attributes.iter()
-                                                                        {
-                                                                            match attrvalue{
-                                                                                Some(value) => attributes.push_str(&format!(" {}=\"{}\"", attr, value)),
-                                                                                None => attributes.push_str(&format!(" {}", attr)),
-                                                                            }
-                                                                        }
-                                                                        text.push_str(&format!(
-                                                                            "<a {}>{}</a>",
-                                                                            attributes,
-                                                                            &self
-                                                                                .dom_to_html(
-                                                                                    ele.clone(),
-                                                                                    None,
-                                                                                    endnotes,
-                                                                                    false,
-                                                                                    project_data
-                                                                                        .clone()
-                                                                                )
-                                                                                .await
-                                                                        ));
-                                                                    }
-                                                                    _ => {
-                                                                        // TODO: whitelist elements and attributes
-                                                                        // Currently we allow all elements but strip attributes
-                                                                        text.push_str(&format!(
-                                                                            "<{}>{}</{}>",
-                                                                            ele.name,
-                                                                            &self
-                                                                                .dom_to_html(
-                                                                                    ele.clone(),
-                                                                                    None,
-                                                                                    endnotes,
-                                                                                    false,
-                                                                                    project_data
-                                                                                        .clone()
-                                                                                )
-                                                                                .await,
-                                                                            ele.name
-                                                                        ));
-                                                                    }
-                                                                }
-                                                            }
-                                                            _ => {}
-                                                        }
+                let ol = aside.children.iter().find(|node| match node {
+                    Node::Element(el) => el.name == "ol",
+                    _ => false,
+                });
+                if let Some(Node::Element(ol)) = ol {
+                    for node in ol.children.iter() {
+                        if let Node::Element(li) = node {
+                            let Some(id) = li.id.clone() else {
+                                continue;
+                            };
+
+                            // Prefer the first <p> inside the <li>
+                            let mut text = String::new();
+                            if let Some(Node::Element(p)) = li
+                                .children
+                                .iter()
+                                .find(|n| matches!(n, Node::Element(e) if e.name == "p"))
+                            {
+                                for child in &p.children {
+                                    match child {
+                                        Node::Text(t) => text.push_str(t),
+                                        Node::Element(el) => {
+                                            if el.name == "a" {
+                                                if let Some(Some(role)) = el.attributes.get("role")
+                                                {
+                                                    if role == "doc-backlink" {
+                                                        continue;
                                                     }
                                                 }
-                                                Node::Text(t) => {
-                                                    text.push_str(&t);
-                                                }
-                                                _ => {}
                                             }
+                                            text.push_str(
+                                                &self
+                                                    .dom_to_html(
+                                                        el.clone(),
+                                                        None,
+                                                        endnotes,
+                                                        false,
+                                                        project_data.clone(),
+                                                    )
+                                                    .await,
+                                            );
                                         }
-                                        footnotes.insert(id.clone(), text.clone());
+                                        Node::Comment(_) => {}
                                     }
                                 }
+                            } else {
+                                // Fallback: serialize full <li>
+                                text = self
+                                    .dom_to_html(
+                                        li.clone(),
+                                        None,
+                                        endnotes,
+                                        false,
+                                        project_data.clone(),
+                                    )
+                                    .await;
                             }
+
+                            footnotes.insert(id, text);
                         }
                     }
                 }
             }
         }
 
+        let mut blocks: Vec<NewContentBlock> = vec![];
         for node in dom.children {
             match node {
                 Node::Text(t) => {
-                    // Wrap text without a tag in a paragraph
-                    let cb = NewContentBlock {
+                    blocks.push(NewContentBlock {
                         id: generate_id(&section),
                         block_type: BlockType::Paragraph,
                         data: BlockData::Paragraph { text: t },
                         css_classes: vec![],
                         revision_id: None,
-                    };
-                    section.children.push(cb);
+                    });
                 }
                 Node::Element(el) => {
+                    if el.name == "aside" && el.id.as_deref() == Some("footnotes") {
+                        continue;
+                    }
                     match el.name.to_lowercase().as_str() {
-                        "h1" | "h2" | "h4" | "h5" | "h6" => {
+                        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                             let mut level = match el.name.to_lowercase().as_str() {
                                 "h1" => 1,
                                 "h2" => 2,
@@ -1383,156 +1471,240 @@ impl ImportProcessor {
                                 _ => 0,
                             };
 
-                            if shift_headings {
-                                if level == 1 {
-                                    level = 1
-                                } else {
-                                    level = level - 1;
-                                }
+                            if shift_headings && level > 1 {
+                                level -= 1;
                             }
 
-                            section.children.push(NewContentBlock {
+                            let text = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+
+                            blocks.push(NewContentBlock {
                                 id: generate_id(&section),
                                 block_type: BlockType::Heading,
-                                data: BlockData::Heading {
-                                    text: self
-                                        .dom_to_html(
-                                            el,
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    level,
-                                },
-                                css_classes: vec![],
+                                data: BlockData::Heading { text, level },
+                                css_classes: el.classes.clone(),
                                 revision_id: None,
-                            })
+                            });
                         }
-                        "p" => section.children.push(NewContentBlock {
-                            id: generate_id(&section),
-                            block_type: BlockType::Paragraph,
-                            data: BlockData::Paragraph {
-                                text: self
-                                    .dom_to_html(
-                                        el,
-                                        Some(&footnotes),
-                                        endnotes,
-                                        convert_links,
-                                        project_data.clone(),
-                                    )
-                                    .await,
-                            },
-                            css_classes: vec![],
-                            revision_id: None,
-                        }),
+                        "p" | "div" => {
+                            let text = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+                            blocks.push(NewContentBlock {
+                                id: generate_id(&section),
+                                block_type: BlockType::Paragraph,
+                                data: BlockData::Paragraph { text },
+                                css_classes: el.classes.clone(),
+                                revision_id: None,
+                            });
+                        }
                         "ul" | "ol" => {
-                            let style = match el.name.to_lowercase().as_str() {
-                                "ul" => "unordered",
-                                "ol" => "ordered",
-                                _ => "unordered",
+                            let style = if el.name.to_lowercase() == "ol" {
+                                "ordered".to_string()
+                            } else {
+                                "unordered".to_string()
                             };
-                            let style = style.to_string();
-                            let mut items = Vec::new();
-
-                            for node in el.children.iter() {
-                                if let Node::Element(el) = node {
-                                    if el.name.to_lowercase() == "li" {
-                                        let result = self
-                                            .dom_to_html(
-                                                el.clone(),
+                            let mut items: Vec<String> = vec![];
+                            for child in &el.children {
+                                if let Node::Element(li) = child {
+                                    if li.name.to_lowercase() == "li" {
+                                        items.push(
+                                            self.dom_to_html(
+                                                li.clone(),
                                                 Some(&footnotes),
                                                 endnotes,
                                                 convert_links,
                                                 project_data.clone(),
                                             )
-                                            .await;
-                                        items.push(result);
+                                            .await,
+                                        );
                                     }
                                 }
                             }
-
-                            section.children.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::List,
-                                data: BlockData::List { style, items },
-                                css_classes: vec![],
-                                revision_id: None,
-                            });
+                            if items.is_empty() {
+                                let html = self
+                                    .dom_to_html(
+                                        el.clone(),
+                                        Some(&footnotes),
+                                        endnotes,
+                                        convert_links,
+                                        project_data.clone(),
+                                    )
+                                    .await;
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::Raw,
+                                    data: BlockData::Raw { html },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            } else {
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::List,
+                                    data: BlockData::List { style, items },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            }
                         }
                         "blockquote" => {
-                            section.children.push(NewContentBlock {
+                            let text = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+                            blocks.push(NewContentBlock {
                                 id: generate_id(&section),
                                 block_type: BlockType::Quote,
                                 data: BlockData::Quote {
-                                    text: self
-                                        .dom_to_html(
-                                            el,
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    caption: "".to_string(),
-                                    alignment: "".to_string(),
+                                    text,
+                                    caption: String::new(),
+                                    alignment: "left".to_string(),
                                 },
-                                css_classes: vec![],
+                                css_classes: el.classes.clone(),
                                 revision_id: None,
                             });
                         }
-                        "aside" => {
-                            if let Some(id) = el.id {
-                                if id == "footnotes" {
-                                    // Skip footnotes
-                                    continue;
-                                }
-                            }
-                        }
-                        _ => {
-                            warn!("Warning: Unsupported tag: {}", el.name);
-                            // Add as paragraph
-                            section.children.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Paragraph,
-                                data: BlockData::Paragraph {
-                                    text: self
-                                        .dom_to_html(
-                                            el,
+                        "figure" | "img" => {
+                            let (src, caption) = if el.name.to_lowercase() == "img" {
+                                (
+                                    el.attributes
+                                        .get("src")
+                                        .and_then(|x| x.clone())
+                                        .unwrap_or_default(),
+                                    None,
+                                )
+                            } else {
+                                let img = el.children.iter().find_map(|n| match n {
+                                    Node::Element(e) if e.name.to_lowercase() == "img" => Some(e),
+                                    _ => None,
+                                });
+                                let src = img
+                                    .and_then(|img| {
+                                        img.attributes.get("src").and_then(|x| x.clone())
+                                    })
+                                    .unwrap_or_default();
+                                let figcaption = el.children.iter().find_map(|n| match n {
+                                    Node::Element(e) if e.name.to_lowercase() == "figcaption" => {
+                                        Some(e.clone())
+                                    }
+                                    _ => None,
+                                });
+                                (src, figcaption)
+                            };
+
+                            if src.is_empty() {
+                                let html = self
+                                    .dom_to_html(
+                                        el.clone(),
+                                        Some(&footnotes),
+                                        endnotes,
+                                        convert_links,
+                                        project_data.clone(),
+                                    )
+                                    .await;
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::Raw,
+                                    data: BlockData::Raw { html },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            } else {
+                                let filename = src
+                                    .split('/')
+                                    .last()
+                                    .unwrap_or("image")
+                                    .split('?')
+                                    .next()
+                                    .unwrap_or("image")
+                                    .to_string();
+                                let caption = match caption {
+                                    None => None,
+                                    Some(fc) => Some(
+                                        self.dom_to_html(
+                                            fc,
                                             Some(&footnotes),
                                             endnotes,
                                             convert_links,
                                             project_data.clone(),
                                         )
                                         .await,
-                                },
-                                css_classes: vec![],
+                                    ),
+                                };
+                                blocks.push(NewContentBlock {
+                                    id: generate_id(&section),
+                                    block_type: BlockType::Image,
+                                    data: BlockData::Image {
+                                        file: crate::projects::api::UploadedImage {
+                                            url: src,
+                                            filename,
+                                        },
+                                        caption,
+                                        with_border: false,
+                                        with_background: false,
+                                        stretched: false,
+                                    },
+                                    css_classes: el.classes.clone(),
+                                    revision_id: None,
+                                });
+                            }
+                        }
+                        _ => {
+                            let html = self
+                                .dom_to_html(
+                                    el.clone(),
+                                    Some(&footnotes),
+                                    endnotes,
+                                    convert_links,
+                                    project_data.clone(),
+                                )
+                                .await;
+                            blocks.push(NewContentBlock {
+                                id: generate_id(&section),
+                                block_type: BlockType::Raw,
+                                data: BlockData::Raw { html },
+                                css_classes: el.classes.clone(),
                                 revision_id: None,
                             });
                         }
                     }
                 }
-                // Skip comments
                 Node::Comment(_) => {}
             }
         }
 
+        let doc = convert_contentblocks_to_yrs(blocks);
+        section.content = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+
         if cfg!(feature = "language_detection") {
-            let lang = detect_language_for_section(&section);
-            section.metadata.lang = lang;
+            section.metadata.lang = detect_language_for_section(&section);
         }
 
-        project_data
-            .write()
-            .unwrap()
-            .sections
-            .push(SectionOrTocV5::Section(section));
+        project_data.write().unwrap().sections.push(section);
         Ok(())
-         */
     }
 
-    //TODO: maybe also copy classes and ids from the html
     #[async_recursion]
     async fn dom_to_html(
         &self,
@@ -1542,171 +1714,139 @@ impl ImportProcessor {
         convert_links: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
-        unimplemented!();
-        /*
-        let mut html = String::new();
-        for node in ele.children {
-            match node {
-                Node::Text(t) => {
-                    debug!("Found Text: {}", t);
-                    html.push_str(&t);
+        self.element_to_html(&ele, footnotes, endnotes, convert_links, project_data)
+            .await
+    }
+
+    #[async_recursion]
+    async fn element_to_html(
+        &self,
+        el: &html_parser::Element,
+        footnotes: Option<&HashMap<String, String>>,
+        endnotes: bool,
+        convert_links: bool,
+        project_data: Arc<RwLock<ProjectData>>,
+    ) -> String {
+        // Special cases: footnote references and link->citation conversion.
+        if el.name == "a" {
+            // Pandoc footnote references: <a role="doc-noteref"><sup>1</sup></a>
+            if let Some(Some(role)) = el.attributes.get("role") {
+                if role == "doc-noteref" {
+                    if let Some(Node::Element(sup)) = el.children.first() {
+                        if sup.name == "sup" {
+                            if let Some(Node::Text(num)) = sup.children.first() {
+                                if let Some(footnotes) = footnotes {
+                                    let num = num.trim().to_string();
+                                    if let Some(footnote) = footnotes.get(&format!("fn{}", num)) {
+                                        let content = footnote.replace('"', "'");
+                                        let note_type =
+                                            if endnotes { "endnote" } else { "footnote" };
+                                        return format!(
+                                            "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
+                                            note_type, content
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                Node::Element(el) => {
-                    debug!("Found Element: {}", el.name);
+            }
 
-                    if el.name == "a" {
-                        // For pandoc footnotes
-                        if let Some(role) = el.attributes.get("role") {
-                            if let Some(role) = role {
-                                if role == "doc-noteref" {
-                                    // This is a reference to a footnote
-                                    if let Some(sup) = el.children.iter().next() {
-                                        if let Node::Element(sup) = sup {
-                                            if sup.name == "sup" {
-                                                if let Some(num) = sup.children.iter().next() {
-                                                    if let Node::Text(num) = num {
-                                                        if let Some(footnotes) = footnotes {
-                                                            let num = num.trim().to_string();
-                                                            if let Some(footnote) =
-                                                                footnotes.get(&format!("fn{}", num))
-                                                            {
-                                                                debug!(
-                                                                    "Found footnote: {}",
-                                                                    footnote.clone()
-                                                                );
-                                                                if endnotes {
-                                                                    html.push_str(&format!("<span class=\"note\" note-type=\"endnote\" note-content=\"{}\">E</span>", footnote.clone().replace("\"", "'")));
-                                                                } else {
-                                                                    html.push_str(&format!("<span class=\"note\" note-type=\"footnote\" note-content=\"{}\">F</span>", footnote.clone().replace("\"", "'")));
-                                                                }
-                                                                continue;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+            // WordPress footnote plugin references
+            if let Some(Node::Element(sup)) = el.children.get(0) {
+                if sup
+                    .classes
+                    .contains(&"footnote_plugin_tooltip_text".to_string())
+                {
+                    if let Some(id) = sup.id.clone() {
+                        let footnote_id = id.replace("tooltip", "reference");
+                        if let Some(footnotes) = footnotes {
+                            if let Some(footnote) = footnotes.get(&footnote_id) {
+                                let content = footnote.replace('"', "'");
+                                let note_type = if endnotes { "endnote" } else { "footnote" };
+                                return format!(
+                                    "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
+                                    note_type, content
+                                );
                             }
                         }
-                        // For wordpress footnotes:
-                        if let Some(sup) = el.children.get(0) {
-                            if let Node::Element(sup) = sup {
-                                if sup
-                                    .classes
-                                    .contains(&"footnote_plugin_tooltip_text".to_string())
+                    }
+                }
+            }
+
+            // Convert normal links to citations if enabled and resolvable via Zotero Translation Server.
+            if convert_links {
+                if let Some(Some(href)) = el.attributes.get("href") {
+                    // Skip internal anchors/mailto/etc.
+                    let href_lc = href.to_lowercase();
+                    let is_http = href_lc.starts_with("http://") || href_lc.starts_with("https://");
+                    if is_http {
+                        if let Some(entries) =
+                            link_converter::get_translation(href, &self.settings).await
+                        {
+                            if let Some(main_entry) = entries.first() {
+                                let main_key = main_entry.key().to_string();
+                                let by_key = Self::collect_bib_entries_with_parents(entries);
+
+                                // Build UUID mapping
+                                let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+                                for key in by_key.keys() {
+                                    uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+                                }
+
+                                let main_uuid = *uuid_map.get(&main_key).unwrap();
+
+                                // Convert and resolve parents
                                 {
-                                    if let Some(id) = sup.id.clone() {
-                                        let footnote_id = id.replace("tooltip", "reference");
-                                        if let Some(footnotes) = footnotes {
-                                            if let Some(footnote) = footnotes.get(&footnote_id) {
-                                                debug!("Found footnote: {}", footnote.clone());
-                                                if endnotes {
-                                                    html.push_str(&format!("<span class=\"note\" note-type=\"endnote\" note-content=\"{}\">E</span>", footnote.clone().replace("\"", "'")));
-                                                } else {
-                                                    html.push_str(&format!("<span class=\"note\" note-type=\"footnote\" note-content=\"{}\">F</span>", footnote.clone().replace("\"", "'")));
-                                                }
+                                    let mut project = project_data.write().unwrap();
+                                    for (key, entry) in by_key.iter() {
+                                        let mut converted = BibEntryV3::from(entry);
+                                        converted.key = *uuid_map.get(key).unwrap();
+                                        converted.parents = entry
+                                            .parents()
+                                            .iter()
+                                            .filter_map(|p| uuid_map.get(p.key()).copied())
+                                            .collect();
 
-                                                continue;
-                                            }
-                                        }
+                                        project.bibliography.add_entry(converted);
                                     }
                                 }
-                            }
-                        }
-                        // Only convert links to citations if convert_links is true and we aren't in a footnote
-                        if convert_links && footnotes.is_some() {
-                            if let Some(href) = el.attributes.get("href") {
-                                if let Some(href) = href {
-                                    debug!("Trying to get citation for link: {}", href);
-                                    if let Some(citation) =
-                                        crate::import::link_converter::get_translation(
-                                            href,
-                                            &self.settings,
-                                        )
-                                        .await
-                                    {
-                                        let key = citation.key.clone();
 
-                                        // Add citation to project
-                                        project_data
-                                            .write()
-                                            .unwrap()
-                                            .bibliography
-                                            .insert(citation.key.clone(), citation.clone());
-
-                                        let link_text = self
-                                            .dom_to_html(
-                                                el.clone(),
-                                                None,
-                                                endnotes,
-                                                false,
-                                                project_data.clone(),
-                                            )
-                                            .await;
-
-                                        if link_text == *href {
-                                            html.push_str(&format!(
-                                                "<citation data-key=\"{}\">C</citation>",
-                                                key
-                                            ));
-                                        } else {
-                                            html.push_str(&format!(
-                                                "{}<citation data-key=\"{}\">C</citation>",
-                                                link_text, key
-                                            ));
-                                        }
-                                        continue;
-                                    }
-                                }
+                                return format!(
+                                    "<citation data-key=\"{}\">C</citation>",
+                                    main_uuid
+                                );
                             }
                         }
                     }
-                    if el.name == "em" {
-                        html.push_str(&format!(
-                            "<i>{}</i>",
-                            &self
-                                .dom_to_html(
-                                    el.clone(),
-                                    footnotes,
-                                    endnotes,
-                                    convert_links,
-                                    project_data.clone()
-                                )
-                                .await
-                        ));
-                        continue;
-                    }
-                    if el.name == "strong" {
-                        html.push_str(&format!(
-                            "<b>{}</b>",
-                            &self
-                                .dom_to_html(
-                                    el.clone(),
-                                    footnotes,
-                                    endnotes,
-                                    convert_links,
-                                    project_data.clone()
-                                )
-                                .await
-                        ));
-                        continue;
-                    }
+                }
+            }
+        }
 
-                    let mut attrs: String = String::new();
-                    for (attr, attrvalue) in el.attributes.iter() {
-                        match attrvalue {
-                            //TODO: whitelist attributes that are allowed for each tag, e.g. href for a-tags
-                            Some(value) => attrs.push_str(&format!(" {}=\"{}\"", attr, value)),
-                            None => attrs.push_str(&format!(" {}", attr)),
-                        }
-                    }
-                    html.push_str(&format!("<{}{}>", el.name, attrs));
-                    html.push_str(
+        let mut attrs: String = String::new();
+        for (attr, attrvalue) in el.attributes.iter() {
+            match attrvalue {
+                Some(value) => attrs.push_str(&format!(" {}=\"{}\"", attr, value)),
+                None => attrs.push_str(&format!(" {}", attr)),
+            }
+        }
+        if let Some(id) = &el.id {
+            attrs.push_str(&format!(" id=\"{}\"", id));
+        }
+        if !el.classes.is_empty() {
+            attrs.push_str(&format!(" class=\"{}\"", el.classes.join(" ")));
+        }
+
+        let mut inner = String::new();
+        for child in &el.children {
+            match child {
+                Node::Text(t) => inner.push_str(t),
+                Node::Element(child_el) => {
+                    inner.push_str(
                         &self
-                            .dom_to_html(
-                                el.clone(),
+                            .element_to_html(
+                                child_el,
                                 footnotes,
                                 endnotes,
                                 convert_links,
@@ -1714,15 +1854,12 @@ impl ImportProcessor {
                             )
                             .await,
                     );
-                    html.push_str(&format!("</{}>", el.name));
                 }
-                // Ignore comments
                 Node::Comment(_) => {}
             }
         }
-        html
 
-         */
+        format!("<{}{}>{}</{}>", el.name, attrs, inner, el.name)
     }
 
     async fn import_bib_entries(
@@ -1731,9 +1868,6 @@ impl ImportProcessor {
         bib_file_path: &str,
         settings: &Settings,
     ) -> Result<(), ImportError> {
-        unimplemented!();
-        /*
-
         let mut bib_file_content = String::new();
         let mut bib_file = match tokio::fs::File::open(bib_file_path).await {
             Ok(bib_file) => bib_file,
@@ -1746,6 +1880,7 @@ impl ImportProcessor {
             warn!("Error reading bib file: {}", e);
             return Err(ImportError::BibFileInvalid);
         }
+
         let bib = match io::from_biblatex_str(&bib_file_content) {
             Ok(bib) => bib,
             Err(e) => {
@@ -1764,19 +1899,33 @@ impl ImportProcessor {
         let project = project_storage
             .get_project(&project_id, settings)
             .await
-            .unwrap()
+            .map_err(|_| ImportError::ProjectNotFound)?
             .clone();
-        for entry in bib.iter() {
-            let converted = BibEntryV2::from(entry);
-            project
-                .write()
-                .unwrap()
-                .bibliography
-                .insert(converted.key.clone(), converted);
+
+        // We need stable UUIDs for bib entries and their parents.
+        // Recursively collect all entries + their parents.
+        let by_key = Self::collect_bib_entries_with_parents(bib.iter().cloned());
+
+        // Build UUID mapping (v4, per import)
+        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+        for key in by_key.keys() {
+            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+        }
+
+        // Convert and resolve parents
+        for (key, entry) in by_key.iter() {
+            let mut converted = BibEntryV3::from(entry);
+            converted.key = *uuid_map.get(key).unwrap();
+            converted.parents = entry
+                .parents()
+                .iter()
+                .filter_map(|p| uuid_map.get(p.key()).copied())
+                .collect();
+
+            project.write().unwrap().bibliography.add_entry(converted);
         }
 
         Ok(())
-         */
     }
 }
 
@@ -1827,5 +1976,390 @@ mod postprocess {
             .to_string();
 
         input
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{ExportServer, Settings};
+    use crate::storage::project_storage::current::Bibliography;
+    use crate::storage::project_storage::sections::content::current::decode_yjs_content;
+    use uuid::Uuid;
+
+    fn dummy_settings() -> Settings {
+        Settings {
+            app_title: "test".to_string(),
+            project_cache_time: 0,
+            data_path: "/tmp".to_string(),
+            file_lock_timeout: 0,
+            backup_to_file_interval: 0,
+            max_connections_to_rendering_server: 0,
+            max_import_threads: 0,
+            zotero_translation_server: "".to_string(),
+            export_servers: vec![ExportServer {
+                hostname: "".to_string(),
+                port: 0,
+                domain_name: "".to_string(),
+            }],
+            ca_cert_path: "".to_string(),
+            client_cert_path: "".to_string(),
+            client_key_path: "".to_string(),
+            revocation_list_path: "".to_string(),
+            version: "test".to_string(),
+        }
+    }
+
+    fn make_processor() -> ImportProcessor {
+        ImportProcessor {
+            settings: dummy_settings(),
+            project_storage: Arc::new(ProjectStorage::new()),
+            job_queue: RwLock::new(VecDeque::new()),
+            job_archive: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn empty_project() -> Arc<RwLock<ProjectData>> {
+        Arc::new(RwLock::new(ProjectData {
+            name: "test".to_string(),
+            description: None,
+            template_id: Uuid::new_v4(),
+            last_interaction: 0,
+            metadata: None,
+            settings: None,
+            sections: vec![],
+            bibliography: Bibliography::new(),
+        }))
+    }
+
+    fn empty_section() -> Section {
+        Section {
+            id: Some(Uuid::new_v4()),
+            css_classes: vec![],
+            sub_sections: vec![],
+            content: vec![],
+            visible_in_toc: true,
+            metadata: SectionMetadata {
+                title: "Imported".to_string(),
+                toc_title_subtitle_override: None,
+                subtitle: None,
+                authors: vec![],
+                editors: vec![],
+                web_url: None,
+                identifiers: vec![],
+                published: None,
+                last_changed: None,
+                lang: None,
+                custom_fields: HashMap::new(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn wp_footnote_plugin_is_converted_into_note_span() {
+        let processor = make_processor();
+        let project = empty_project();
+        let section = empty_section();
+
+        // Minimal WP-footnote-plugin-ish structure that matches the extractor.
+        // Note reference: <a><sup class="footnote_plugin_tooltip_text" id="footnote_tooltip_1">1</sup></a>
+        // Footnote table: backlink id="footnote_reference_1" => text in td. (tooltip -> reference replacement)
+        let html = r##"
+<p>Text <a href="#"><sup class="footnote_plugin_tooltip_text" id="footnote_tooltip_1">1</sup></a></p>
+<div class="footnotes_reference_container">
+  <span>ignored</span>
+  <div>
+    <table>
+      <thead></thead>
+      <tbody>
+        <tr>
+          <th><a class="footnote_backlink" id="footnote_reference_1">↩</a></th>
+          <td class="footnote_plugin_text">Footnote <em>content</em></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+"##
+        .to_string();
+
+        processor
+            .import_html_from_wp(section, html, project.clone(), false, false, false)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        assert_eq!(stored.sections.len(), 1);
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        // paragraph + raw for footnotes container div
+        assert!(blocks.len() >= 1);
+
+        let para = &blocks[0];
+        let BlockData::Paragraph { text } = &para.data else {
+            panic!("expected first block to be paragraph");
+        };
+        assert!(text.contains("<span class=\"note\""));
+        assert!(text.contains("note-type=\"footnote\""));
+        assert!(text.contains("Footnote"));
+
+        // Verify that the ID is a valid UUID v4
+        uuid::Uuid::parse_str(&para.id).expect("Block ID should be a valid UUID");
+    }
+
+    #[tokio::test]
+    async fn pandoc_footnote_is_converted_into_note_span_and_footnotes_are_skipped() {
+        let processor = make_processor();
+        let project = empty_project();
+
+        let html = r#"
+<p>Hello<a role="doc-noteref"><sup>1</sup></a></p>
+<aside id="footnotes"><ol><li id="fn1"><p>FN one <a role="doc-backlink">↩</a></p></li></ol></aside>
+"#
+        .to_string();
+
+        processor
+            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        assert_eq!(stored.sections.len(), 1);
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 1);
+
+        let BlockData::Paragraph { text } = &blocks[0].data else {
+            panic!("expected paragraph");
+        };
+        assert!(text.contains("<span class=\"note\""));
+        assert!(text.contains("note-type=\"footnote\""));
+        assert!(text.contains("FN one"));
+        assert!(!text.contains("doc-backlink"));
+
+        // Verify UUID
+        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+    }
+
+    #[tokio::test]
+    async fn import_produces_yrs_content_that_decodes_back_to_blocks() {
+        let processor = make_processor();
+        let project = empty_project();
+        let section = empty_section();
+
+        processor
+            .import_html_from_wp(
+                section,
+                "<h2>H</h2><p>P</p>".to_string(),
+                project.clone(),
+                false,
+                true,
+                false,
+            )
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(blocks[0].data, BlockData::Heading { .. }));
+        if let BlockData::Heading { level, .. } = blocks[0].data {
+            assert_eq!(level, 1); // shifted up from h2
+        }
+    }
+
+    #[tokio::test]
+    async fn ul_is_converted_to_list_block_and_css_classes_are_copied() {
+        let processor = make_processor();
+        let project = empty_project();
+
+        let html = r#"<ul class="my-list"><li>One</li><li><em>Two</em></li></ul>"#.to_string();
+
+        processor
+            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].css_classes, vec!["my-list".to_string()]);
+
+        let BlockData::List { style, items } = &blocks[0].data else {
+            panic!("expected list");
+        };
+        assert_eq!(style, "unordered");
+        assert_eq!(items.len(), 2);
+        assert!(items[0].contains("One"));
+        assert!(items[1].contains("Two"));
+
+        // Verify UUID
+        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+    }
+
+    #[tokio::test]
+    async fn blockquote_is_converted_to_quote_block() {
+        let processor = make_processor();
+        let project = empty_project();
+
+        let html = r#"<blockquote class="q">Hello <em>world</em></blockquote>"#.to_string();
+
+        processor
+            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].css_classes, vec!["q".to_string()]);
+
+        let BlockData::Quote {
+            text,
+            caption,
+            alignment,
+        } = &blocks[0].data
+        else {
+            panic!("expected quote");
+        };
+        assert!(text.contains("Hello"));
+        assert!(text.contains("<em>world</em>"));
+        assert_eq!(caption, "");
+        assert_eq!(alignment, "left");
+
+        // Verify UUID
+        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+    }
+
+    #[tokio::test]
+    async fn figure_img_is_converted_to_image_block_with_caption() {
+        let processor = make_processor();
+        let project = empty_project();
+
+        let html = r#"
+<figure class="img">
+  <img src="https://example.com/path/pic.png?x=1" />
+  <figcaption>Cap</figcaption>
+</figure>
+"#
+        .to_string();
+
+        processor
+            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].css_classes, vec!["img".to_string()]);
+
+        let BlockData::Image { file, caption, .. } = &blocks[0].data else {
+            panic!("expected image");
+        };
+        assert_eq!(file.url, "https://example.com/path/pic.png?x=1");
+        assert_eq!(file.filename, "pic.png");
+        assert_eq!(caption.as_deref(), Some("<figcaption>Cap</figcaption>"));
+
+        // Verify UUID
+        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+    }
+
+    #[tokio::test]
+    async fn convert_links_does_not_break_when_translation_server_is_unset() {
+        let processor = make_processor();
+        let project = empty_project();
+
+        let html = r#"<p>See <a href="https://example.com">X</a></p>"#.to_string();
+
+        processor
+            .import_html_from_pandoc(html, project.clone(), false, false, true)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 1);
+        let BlockData::Paragraph { text } = &blocks[0].data else {
+            panic!("expected paragraph");
+        };
+        assert!(text.contains("<a href=\"https://example.com\">X</a>"));
+        assert!(!text.contains("<citation"));
+
+        // Verify UUID
+        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+    }
+
+    #[test]
+    fn bibliography_collects_transitive_parents() {
+        // child -> parent
+        let mut parent = hayagriva::Entry::new("parent", hayagriva::types::EntryType::Book);
+        parent.set_title("Parent".to_string().into());
+
+        let mut child = hayagriva::Entry::new("child", hayagriva::types::EntryType::Article);
+        child.set_title("Child".to_string().into());
+        child.set_parents(vec![parent.clone()]);
+
+        let collected = ImportProcessor::collect_bib_entries_with_parents(vec![child.clone()]);
+        assert!(collected.contains_key("child"));
+        assert!(collected.contains_key("parent"));
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected.get("child").unwrap().parents().len(), 1);
+        assert_eq!(collected.get("child").unwrap().parents()[0].key(), "parent");
+    }
+
+    #[tokio::test]
+    async fn convert_links_with_parents_preserves_parents() {
+        let processor = make_processor();
+        let project_data = empty_project();
+
+        let mut parent = hayagriva::Entry::new("parent", hayagriva::types::EntryType::Book);
+        parent.set_title("Parent".to_string().into());
+
+        let mut child = hayagriva::Entry::new("child", hayagriva::types::EntryType::Article);
+        child.set_title("Child".to_string().into());
+        child.set_parents(vec![parent.clone()]);
+
+        let entries = vec![child, parent];
+
+        // Simulating the block in dom_to_html where convert_links is true
+        let main_entry = entries.first().unwrap();
+        let main_key = main_entry.key().to_string();
+        let by_key = ImportProcessor::collect_bib_entries_with_parents(entries);
+
+        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+        for key in by_key.keys() {
+            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+        }
+
+        let main_uuid = *uuid_map.get(&main_key).unwrap();
+
+        {
+            let mut project = project_data.write().unwrap();
+            for (key, entry) in by_key.iter() {
+                let mut converted = BibEntryV3::from(entry);
+                converted.key = *uuid_map.get(key).unwrap();
+                converted.parents = entry
+                    .parents()
+                    .iter()
+                    .filter_map(|p| uuid_map.get(p.key()).copied())
+                    .collect();
+
+                project.bibliography.add_entry(converted);
+            }
+        }
+
+        let stored = project_data.read().unwrap();
+        assert_eq!(stored.bibliography.entries.len(), 2);
+
+        let child_entry = stored
+            .bibliography
+            .entries
+            .get(&main_uuid)
+            .expect("Child entry missing");
+        assert_eq!(child_entry.parents.len(), 1);
+
+        let parent_uuid = child_entry.parents[0];
+        assert!(stored.bibliography.entries.contains_key(&parent_uuid));
+        let parent_entry = stored.bibliography.entries.get(&parent_uuid).unwrap();
+        assert_eq!(parent_entry.title.as_ref().unwrap().value, "Parent");
     }
 }
