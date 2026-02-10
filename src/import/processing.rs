@@ -2350,16 +2350,24 @@ mod tests {
         let stored = project_data.read().unwrap();
         assert_eq!(stored.bibliography.entries.len(), 2);
 
-        let child_entry = stored
+        let child_entry_v3 = match stored
             .bibliography
             .entries
             .get(&main_uuid)
-            .expect("Child entry missing");
-        assert_eq!(child_entry.parents.len(), 1);
+            .expect("Child entry missing")
+        {
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(ref be) => be,
+            _ => panic!("Expected BibEntry, found folder"),
+        };
 
-        let parent_uuid = child_entry.parents[0];
+        assert_eq!(child_entry_v3.parents.len(), 1);
+
+        let parent_uuid = child_entry_v3.parents[0];
         assert!(stored.bibliography.entries.contains_key(&parent_uuid));
-        let parent_entry = stored.bibliography.entries.get(&parent_uuid).unwrap();
-        assert_eq!(parent_entry.title.as_ref().unwrap().value, "Parent");
+        let parent_entry_v3 = match stored.bibliography.entries.get(&parent_uuid).unwrap() {
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(ref be) => be,
+            _ => panic!("Expected BibEntry, found folder"),
+        };
+        assert_eq!(parent_entry_v3.title.as_ref().unwrap().value, "Parent");
     }
 }

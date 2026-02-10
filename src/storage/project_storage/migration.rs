@@ -893,7 +893,10 @@ fn extract_bibliography(
             genre: entry.genre,
             parents: parent_ids,
         };
-        res.entries.insert(entry_v3.key, entry_v3);
+        res.entries.insert(
+            entry_v3.key,
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(entry_v3),
+        );
     }
     (res, mapping)
 }

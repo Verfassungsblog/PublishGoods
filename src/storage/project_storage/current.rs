@@ -446,7 +446,6 @@ impl ProjectStorage {
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct ProjectDataV10 {
-    //todo: migration logic from v9 to v10. Important: We need to replace bib entry usages to use the new uuid instead of the key
     pub name: String,
     pub description: Option<String>,
     #[bincode(with_serde)]
@@ -462,7 +461,20 @@ pub struct ProjectDataV10 {
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct Bibliography {
     #[bincode(with_serde)]
-    pub entries: HashMap<Uuid, BibEntryV3>,
+    pub entries: HashMap<Uuid, BibEntryOrFolder>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub enum BibEntryOrFolder {
+    BibEntry(BibEntryV3),
+    BibFolder(BibFolder),
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct BibFolder {
+    pub name: String,
+    #[bincode(with_serde)]
+    pub parent: Option<Uuid>,
 }
 
 impl Bibliography {
@@ -472,20 +484,28 @@ impl Bibliography {
         }
     }
     pub fn add_entry(&mut self, entry: BibEntryV3) {
-        self.entries.insert(entry.key, entry);
+        self.entries
+            .insert(entry.key, BibEntryOrFolder::BibEntry(entry));
     }
-    pub fn get_entry(&self, key: &Uuid) -> Option<&BibEntryV3> {
+    pub fn get_entry(&self, key: &Uuid) -> Option<&BibEntryOrFolder> {
         self.entries.get(key)
     }
 
     pub fn get_entry_as_hayagriva(&self, key: &Uuid) -> Option<hayagriva::Entry> {
-        let value = self.get_entry(key)?.clone();
+        let value = match self.get_entry(key)?.clone() {
+            BibEntryOrFolder::BibEntry(e) => e,
+            BibEntryOrFolder::BibFolder(_) => {
+                return None;
+            }
+        };
 
         let mut parents: Vec<hayagriva::Entry> = vec![];
         for parent in &value.parents {
-            if let Some(parent) = self.get_entry_as_hayagriva(parent) {
-                // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
-                parents.push(parent);
+            if let BibEntryOrFolder::BibEntry(parent_entry) = self.get_entry(parent)?.clone() {
+                if let Some(parent) = self.get_entry_as_hayagriva(parent) {
+                    // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
+                    parents.push(parent);
+                }
             }
         }
 

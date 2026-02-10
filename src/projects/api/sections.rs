@@ -334,7 +334,7 @@ pub async fn update_section(
 }
 
 /// Struct for patching a section
-/// Does NOT allow to patch the content of a section, use the content_block endpoints or move endpoints for that
+/// Does NOT allow to patch the content of a section, use websockets or move endpoints for that
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
 pub struct PatchSection {
     #[serde(

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use vb_exchange::projects::ProjectSettingsV5;
 use vb_exchange::projects::{Identifier, Keyword};
 
+pub mod bibliography;
 pub mod get;
 pub mod patch;
 pub mod sections;
@@ -172,7 +173,7 @@ pub async fn get_project_contents(
 }
 
 /// POST /api/projects/<project_id>/contents
-/// Add a new section or toc placeholder to the project
+/// Add a new section to the project
 #[post("/api/projects/<project_id>/contents", data = "<content>")]
 pub async fn add_content(
     project_id: String,
@@ -220,7 +221,6 @@ pub async fn add_content(
 
 /// PUT /api/projects/<project_id>/contents/<content_id>/move/after/<after_id>
 /// Move a section or toc after another section or toc
-// TODO: implement for toc
 #[put("/api/projects/<project_id>/contents/<content_id>/move/after/<after_id>")]
 pub async fn move_content_after(
     project_id: String,
@@ -292,7 +292,6 @@ pub async fn move_content_after(
 
 /// PUT /api/projects/<project_id>/contents/<content_id>/move/child_of/<parent_id>
 /// Move a section or toc to be a child of another section or toc. It will be the first child.
-//TODO: Implement for toc
 #[put("/api/projects/<project_id>/contents/<content_id>/move/child_of/<parent_id>")]
 pub async fn move_content_child_of(
     project_id: String,
