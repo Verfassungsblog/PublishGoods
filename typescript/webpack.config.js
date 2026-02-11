@@ -3,14 +3,13 @@ const path = require('path');
 module.exports = {
     mode: 'production',
     entry: {
-        editor: './Editor/Main.ts',
-        settings: './Settings.ts',
-        import: './Import.ts',
-        /*bibliography_editor: './BibliographyEditor.ts',*/
-        user_tools: './UserTools.ts',
-        template_editor: './TemplateEditor.ts',
-        export: './Export.ts',
-        /*section_editor: './SectionEditor.ts'*/
+        editor: { import: './Editor/Main.ts', dependOn: 'vendor' },
+        settings: { import: './Settings.ts', dependOn: 'vendor' },
+        import: { import: './Import.ts', dependOn: 'vendor' },
+        user_tools: { import: './UserTools.ts', dependOn: 'vendor' },
+        template_editor: { import: './TemplateEditor.ts', dependOn: 'vendor' },
+        export: { import: './Export.ts', dependOn: 'vendor' },
+        vendor: ['yjs', 'pdfjs-dist', 'handlebars', '@editorjs/editorjs'],
     },
     devtool: false,
     module: {
@@ -31,5 +30,15 @@ module.exports = {
     },
     optimization: {
         usedExports: true,
+        splitChunks: {
+            cacheGroups: {
+                vendor: {
+                    test: /[\\/]node_modules[\\/]/,
+                    name: 'vendor',
+                    chunks: 'all',
+                },
+            },
+        },
+        runtimeChunk: 'single',
     },
 };

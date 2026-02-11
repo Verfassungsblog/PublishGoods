@@ -1,14 +1,16 @@
 import {
-    ProjectAPI,
-    send_get_template_id_for_project,
-    TemplateAPI,
+    ExportAPI,
     NewLocalRenderingRequest,
+    ProjectAPI,
     ProjectTemplateV2,
     SectionOrToc,
-    ExportAPI
+    send_get_template_id_for_project,
+    TemplateAPI
 } from "./api_requests";
+import {show_preview_column} from "./Editor/Editor";
 import * as Tools from "./tools";
 import * as pdfjs from 'pdfjs-dist';
+
 pdfjs.GlobalWorkerOptions.workerSrc =
     '/js/pdf.worker.mjs';
 
@@ -102,7 +104,12 @@ async function preview_project_listener(){
 
 async function show_pdf(uri: string) {
     let scale = 1;
-    let viewer = document.getElementById("test");
+    let viewer = document.getElementById("preview-col");
+
+    if (!viewer || viewer.classList.contains("hide")) {
+        show_preview_column();
+        viewer = document.getElementById("preview-col");
+    }
 
     if (!viewer) {
         console.error("Viewer element not found.");
@@ -188,7 +195,7 @@ async function show_pdf(uri: string) {
 }
 
 function show_rendering_col(){
-    document.getElementById("editor-render-preview").classList.remove("hide");
+    show_preview_column();
 }
 
 export async function export_project_listener(){

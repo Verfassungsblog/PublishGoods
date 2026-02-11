@@ -1,10 +1,10 @@
 :root {
-    --dark-blue: #1b1b30;
+    --blue: var(--blue);
     --red: #d62839ff;
     --light-blue: #caf0ff;
     --green: #81f495ff;
     --silver: #bfafa6ff;
-    --light-gray: #f5f5f5ff;
+    --light-gray: #F9F9F9;
     --grey: #808080ff;
     --white: #ffffffff;
 }
@@ -117,7 +117,7 @@ body{
 .sidebar-full-bibliography-editor-switcher > span.active{
     cursor: default;
     background-color: #F9F9F9;
-    color: #4357AD;
+    color: var(--blue);
 }
 .sidebar-full-bibliography-editor-switcher > span:hover{
     background-color: #F9F9F9;
@@ -217,7 +217,7 @@ body{
     min-height: 0; /* override to hidden; will expand with .dz-visible */
 }
 [data-dropzone].drop-target{
-    outline: 2px dashed #4357AD;
+    outline: 2px dashed var(--blue);
     background-color: rgba(67,87,173,0.08);
 }
 .sidebar-contents-section-as-child{
@@ -240,8 +240,19 @@ body{
     width: 5px;
 }
 .preview-col{
-    background-color: white;
+    background-color: #525659;
     flex-grow: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+}
+
+.pdf-page {
+    margin-bottom: 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    max-width: 100%;
 }
 
 .hide{
@@ -271,7 +282,7 @@ body{
 }
 label{
     font-size: 14px;
-    color: #4357AD;
+    color: var(--blue);
     font-variant: small-caps;
 }
 select{
@@ -379,12 +390,12 @@ textarea{
     padding: 4px;
 }
 .btn-primary{
-    border: 1px solid #4357AD;
-    color: #4357AD;
+    border: 1px solid var(--blue);
+    color: var(--blue);
 }
 
 .btn-primary:hover{
-    background-color: #4357AD;
+    background-color: var(--blue);
     color: white;
 }
 .btn-danger{
@@ -489,7 +500,7 @@ h1{
 .section_metadata_person_div_after.dragover{
     width: 40px;
     /* Match sidebar's strong drop target highlight (see [data-dropzone].drop-target) */
-    outline: 2px dashed #4357AD;
+    outline: 2px dashed var(--blue);
     background-color: rgba(67,87,173,0.08);
 }
 #metadata_editors_first_dropzone{
@@ -499,7 +510,7 @@ h1{
 #metadata_editors_first_dropzone.dragover{
     width: 40px;
     /* Match sidebar's strong drop target highlight */
-    outline: 2px dashed #4357AD;
+    outline: 2px dashed var(--blue);
     background-color: rgba(67,87,173,0.08);
 }
 
@@ -513,7 +524,7 @@ h1{
 #section_metadata_editors_first_dropzone.dragover{
     width: 40px;
     /* Match sidebar's strong drop target highlight */
-    outline: 2px dashed #4357AD;
+    outline: 2px dashed var(--blue);
     background-color: rgba(67,87,173,0.08);
 }
 .img-btn{
@@ -587,8 +598,11 @@ h1{
     opacity: 0.9;
     right: 6px;
 }
+.alert-success{
+    background-color: var(--green);
+}
 .alert-danger{
-
+    background-color: var(--red);
 }
 .alert-warning{
     background-color: #ffc107;

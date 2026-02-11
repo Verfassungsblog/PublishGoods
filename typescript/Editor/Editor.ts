@@ -21,6 +21,17 @@ export async function init() {
         // @ts-ignore
         contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
 
+        // Export wizard button (mounted in sidebar template)
+        try{
+            // @ts-ignore
+            if(typeof window.add_export_listeners === 'function'){
+                // @ts-ignore
+                window.add_export_listeners();
+            }
+        }catch(e){
+            console.error(e);
+        }
+
         // Import wizard button (mounted in sidebar template)
         try{
             // @ts-ignore

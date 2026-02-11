@@ -11,7 +11,6 @@ build = "build.rs"
 
 [dependencies]
 vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", tag="2025.11"}
-#vb-exchange = { path = "../Verfassungsbooks-Exchange-Lib" } <-- use this if testing locally
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.15"
