@@ -1036,15 +1036,31 @@ impl ImportProcessor {
                                                                     &"footnote_plugin_text"
                                                                         .to_string(),
                                                                 ) {
-                                                                    let html = self
-                                                                        .dom_to_html(
-                                                                            td.clone(),
-                                                                            None,
-                                                                            endnotes,
-                                                                            convert_links,
-                                                                            project_data.clone(),
-                                                                        )
-                                                                        .await;
+                                                                    // The WP footnote plugin wraps the actual content in a
+                                                                    // `<td class="footnote_plugin_text">...</td>`.
+                                                                    // We only want to preserve the inner HTML, not the `td` tag.
+                                                                    let mut html = String::new();
+                                                                    for child in &td.children {
+                                                                        match child {
+                                                                            Node::Element(el) => {
+                                                                                html.push_str(
+                                                                                    &self
+                                                                                        .dom_to_html(
+                                                                                            el.clone(),
+                                                                                            None,
+                                                                                            endnotes,
+                                                                                            convert_links,
+                                                                                            project_data.clone(),
+                                                                                        )
+                                                                                        .await,
+                                                                                );
+                                                                            }
+                                                                            Node::Text(t) => {
+                                                                                html.push_str(t)
+                                                                            }
+                                                                            Node::Comment(_) => {}
+                                                                        }
+                                                                    }
                                                                     footnotes.insert(id, html);
                                                                 }
                                                             }
@@ -1076,6 +1092,15 @@ impl ImportProcessor {
                     });
                 }
                 Node::Element(el) => {
+                    // WP footnote plugin appends a trailing footnotes container block.
+                    // We extract its content into `footnotes` above; the container itself must not
+                    // be persisted as a separate block.
+                    if el
+                        .classes
+                        .contains(&"footnotes_reference_container".to_string())
+                    {
+                        continue;
+                    }
                     match el.name.to_lowercase().as_str() {
                         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                             let mut level = match el.name.to_lowercase().as_str() {
@@ -2091,8 +2116,8 @@ mod tests {
         let stored = project.read().unwrap();
         assert_eq!(stored.sections.len(), 1);
         let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
-        // paragraph + raw for footnotes container div
-        assert!(blocks.len() >= 1);
+        // The trailing footnotes container must be skipped; only the paragraph remains.
+        assert_eq!(blocks.len(), 1);
 
         let para = &blocks[0];
         let BlockData::Paragraph { text } = &para.data else {
@@ -2101,6 +2126,8 @@ mod tests {
         assert!(text.contains("<span class=\"note\""));
         assert!(text.contains("note-type=\"footnote\""));
         assert!(text.contains("Footnote"));
+        // Ensure the plugin table cell wrapper is stripped and only inner HTML is preserved.
+        assert!(!text.contains("<td"));
 
         // Verify that the ID is a valid UUID v4
         uuid::Uuid::parse_str(&para.id).expect("Block ID should be a valid UUID");
