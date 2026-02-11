@@ -81,7 +81,7 @@ export async function init() {
 
         // Attach drag and drop listeners after render
         add_dnd_listeners();
-        for (let section of Array.from(document.getElementsByClassName("sidebar-contents-section"))){
+        for (let section of Array.from(document.querySelectorAll(".sidebar-full-contents-panel-contents > .sidebar-contents-section, .sidebar-contents-section-children > .sidebar-contents-section"))){
             let navigateToSection = function(e: Event){
                 // Avoid duplicate invocations when clicking nested sections: use currentTarget
                 // (the element whose handler is running) rather than event.target which bubbles.

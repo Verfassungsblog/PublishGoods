@@ -1,0 +1,217 @@
+<div class="editor_bibliography_entry_editor">
+    <div class="editor_section_view_collapsed_metadata">
+        <div class="editor_section_view_collapsed_metadata_inner">
+            <h1>{{#if entry.BibEntry.title.value}}{{entry.BibEntry.title.value}}{{else}}{{entry.BibEntry.key}}{{/if}}</h1>
+            <h2>{{entry.BibEntry.entry_type}}</h2>
+        </div>
+    </div>
+
+    <div class="editor_section_view_metadata">
+        <div class="form-group">
+            <label>Entry Type</label>
+            <select class="form-select form-select-sm bib-quickchange" data-path="BibEntry.entry_type">
+                {{#each entry_types}}
+                    <option value="{{this}}" {{#is ../entry.BibEntry.entry_type this}}selected{{/is}}>{{this}}</option>
+                {{/each}}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Title</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.title.value" value="{{entry.BibEntry.title.value}}">
+        </div>
+
+        <div class="form-group">
+            <label>Title Short</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.title.short" value="{{entry.BibEntry.title.short}}">
+        </div>
+
+        <div class="form-group">
+            <label>Authors</label>
+            <div class="persons_list" id="bib_authors_list">
+                {{#each entry.BibEntry.authors}}
+                    <div class="person_row" data-index="{{@index}}">
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-6">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="authors" data-field="name" value="{{name}}" placeholder="Name / Surname">
+                            </div>
+                            <div class="col-md-6">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="authors" data-field="given_name" value="{{given_name}}" placeholder="Given Name">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="authors" data-field="prefix" value="{{prefix}}" placeholder="Prefix (e.g. van)">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="authors" data-field="suffix" value="{{suffix}}" placeholder="Suffix (e.g. Jr.)">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="authors" data-field="alias" value="{{alias}}" placeholder="Alias">
+                            </div>
+                            <div class="col-12 mt-1">
+                                <button class="btn btn-xs btn-danger bib-person-remove" data-type="authors" data-index="{{@index}}">Remove Author</button>
+                            </div>
+                        </div>
+                    </div>
+                {{/each}}
+                <button class="btn btn-sm btn-primary bib-person-add" data-type="authors">Add Author</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Editors</label>
+            <div class="persons_list" id="bib_editors_list">
+                {{#each entry.BibEntry.editors}}
+                    <div class="person_row" data-index="{{@index}}">
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-6">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="editors" data-field="name" value="{{name}}" placeholder="Name / Surname">
+                            </div>
+                            <div class="col-md-6">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="editors" data-field="given_name" value="{{given_name}}" placeholder="Given Name">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="editors" data-field="prefix" value="{{prefix}}" placeholder="Prefix">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="editors" data-field="suffix" value="{{suffix}}" placeholder="Suffix">
+                            </div>
+                            <div class="col-md-4">
+                                <input type="text" class="form-control form-control-sm bib-person-change" data-type="editors" data-field="alias" value="{{alias}}" placeholder="Alias">
+                            </div>
+                            <div class="col-12 mt-1">
+                                <button class="btn btn-xs btn-danger bib-person-remove" data-type="editors" data-index="{{@index}}">Remove Editor</button>
+                            </div>
+                        </div>
+                    </div>
+                {{/each}}
+                <button class="btn btn-sm btn-primary bib-person-add" data-type="editors">Add Editor</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Date</label>
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <input type="number" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.date.year" value="{{entry.BibEntry.date.year}}" placeholder="Year">
+                </div>
+                <div class="col-md-3">
+                    <input type="number" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.date.month" value="{{entry.BibEntry.date.month}}" placeholder="Month">
+                </div>
+                <div class="col-md-3">
+                    <input type="number" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.date.day" value="{{entry.BibEntry.date.day}}" placeholder="Day">
+                </div>
+                <div class="col-md-2 d-flex align-items-center">
+                    <div class="form-check">
+                        <input class="form-check-input bib-quickchange-bool" type="checkbox" data-path="BibEntry.date.approximate" {{#if entry.BibEntry.date.approximate}}checked{{/if}}>
+                        <label class="form-check-label">Approx.</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Publisher Name</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.publisher.name.value" value="{{entry.BibEntry.publisher.name.value}}">
+        </div>
+
+        <div class="form-group">
+            <label>Publisher Location</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.publisher.location.value" value="{{entry.BibEntry.publisher.location.value}}">
+        </div>
+
+        <div class="form-group">
+            <label>Location (General)</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.location.value" value="{{entry.BibEntry.location.value}}">
+        </div>
+
+        <div class="form-group">
+            <label>Organization</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.organization.value" value="{{entry.BibEntry.organization.value}}">
+        </div>
+
+        <div class="form-group">
+            <label>Volume / Issue / Edition</label>
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.volume" value="{{entry.BibEntry.volume}}" placeholder="Volume">
+                </div>
+                <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.issue" value="{{entry.BibEntry.issue}}" placeholder="Issue">
+                </div>
+                <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.edition" value="{{entry.BibEntry.edition}}" placeholder="Edition">
+                </div>
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.volume_total" value="{{entry.BibEntry.volume_total}}" placeholder="Volume Total">
+                </div>
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.page_total" value="{{entry.BibEntry.page_total}}" placeholder="Page Total">
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Page Range</label>
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.page_range" value="{{entry.BibEntry.page_range}}">
+        </div>
+
+        <div class="form-group">
+            <label>URL & Visit Date</label>
+            <div class="row g-2">
+                <div class="col-md-8">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.url.value" value="{{entry.BibEntry.url.value}}" placeholder="URL">
+                </div>
+                <div class="col-md-4">
+                    <input type="number" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.url.visit_date.year" value="{{entry.BibEntry.url.visit_date.year}}" placeholder="Visit Year">
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Archive & Call Number</label>
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.archive.value" value="{{entry.BibEntry.archive.value}}" placeholder="Archive">
+                </div>
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.archive_location.value" value="{{entry.BibEntry.archive_location.value}}" placeholder="Archive Location">
+                </div>
+                <div class="col-md-12">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.call_number.value" value="{{entry.BibEntry.call_number.value}}" placeholder="Call Number">
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Language & Genre</label>
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.language" value="{{entry.BibEntry.language}}" placeholder="Language">
+                </div>
+                <div class="col-md-6">
+                    <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibEntry.genre.value" value="{{entry.BibEntry.genre.value}}" placeholder="Genre">
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Abstract</label>
+            <textarea class="form-control form-control-sm bib-quickchange" data-path="BibEntry.abstractt.value">{{entry.BibEntry.abstractt.value}}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Parents (UUIDs, comma separated)</label>
+            <input type="text" class="form-control form-control-sm" id="bib_parents_input" value="{{#each entry.BibEntry.parents}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}">
+        </div>
+
+        <div class="form-group">
+            <label>Note</label>
+            <textarea class="form-control form-control-sm bib-quickchange" data-path="BibEntry.note.value">{{entry.BibEntry.note.value}}</textarea>
+        </div>
+
+        <div class="form-group mt-4">
+            <label>Danger Zone</label><br>
+            <button class="btn btn-sm btn-danger" id="bib_entry_delete">Delete Entry</button>
+        </div>
+    </div>
+</div>

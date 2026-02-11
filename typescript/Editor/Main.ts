@@ -57,6 +57,9 @@ window.addEventListener('load', async () => {
         if (typeof arg1 === "object" && arg1 !== null && typeof arg2 === "string") {
             if (arg1.hasOwnProperty(arg2)) return options.fn(this);
         }
+        if (typeof arg1 === "string" && typeof arg2 === "string") {
+            return (arg1.toLowerCase() == arg2.toLowerCase()) ? options.fn(this) : options.inverse(this);
+        }
         return (arg1 == arg2) ? options.fn(this) : options.inverse(this);
     });
 

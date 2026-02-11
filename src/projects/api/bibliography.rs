@@ -73,14 +73,14 @@ fn build_tree_node(
 ) -> BibTreeEntry {
     let entry = bib.entries.get(&id).unwrap();
     let (is_folder, bib_entry_type, name) = match entry {
-        BibEntryOrFolder::BibEntry(e) => (
-            false,
-            Some(e.entry_type),
-            e.title
-                .as_ref()
-                .map(|t| t.value.clone())
-                .unwrap_or_else(|| e.key.to_string()),
-        ),
+        BibEntryOrFolder::BibEntry(e) => {
+            let name = if let Some(title) = &e.title {
+                title.value.clone()
+            } else {
+                e.key.to_string()
+            };
+            (false, Some(e.entry_type), name)
+        }
         BibEntryOrFolder::BibFolder(f) => (true, None, f.name.clone()),
     };
 
