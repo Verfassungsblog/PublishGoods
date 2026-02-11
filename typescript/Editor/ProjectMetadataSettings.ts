@@ -44,6 +44,10 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     // @ts-ignore
     main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(data);
 
+    // Clear active section highlight when project settings are shown
+    state.active_section_id = null;
+    document.querySelectorAll('.sidebar-contents-section-body.active').forEach(el => el.classList.remove('active'));
+
     init_autopatch();
     // Add cover / backcover upload listeners
     add_cover_listeners();

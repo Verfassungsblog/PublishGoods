@@ -5,6 +5,7 @@ import * as Bibliography from "./Bibliography";
 export type EditorState = {
     project_id: string;
     preferred_main_row_width: number | null;
+    active_section_id: string | null;
 }
 
 export let state: EditorState;
@@ -20,6 +21,7 @@ async function main() {
     state = {
         project_id: project_id,
         preferred_main_row_width: null,
+        active_section_id: null,
     };
 
     Tools.add_event_listeners(".sidebar-full-bibliography-editor-switcher > span", "click", editor_bibliography_switch_listener);

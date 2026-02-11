@@ -195,6 +195,13 @@ body{
     align-items: center;
     gap: 6px;
 }
+.sidebar-contents-section-body:hover{
+    background-color: #f0f0f0;
+}
+.sidebar-contents-section-body.active{
+    background-color: #e0e0e0;
+    font-weight: bold;
+}
 
 /* Drag and drop styles */
 .drag-handle{

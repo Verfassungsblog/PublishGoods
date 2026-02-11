@@ -48,6 +48,7 @@ export async function showSectionEditor(content_path: string){
     console.log("Loading section editor for section path: " + content_path);
     const pathParts = (content_path || '').split(':').filter(Boolean);
     const section_id = pathParts[pathParts.length - 1]; // leaf id for Yjs binding
+    state.active_section_id = section_id;
 
     if (!section_id) {
         console.error('showSectionEditor: No leaf section_id could be derived from content_path:', content_path);
@@ -99,6 +100,19 @@ export async function showSectionEditor(content_path: string){
     // Render template with metadata if available
     // @ts-ignore
     main_col.innerHTML = Handlebars.templates.editor_section_view({data: sectionData?.data || sectionData || {}});
+
+    // Update active section in sidebar
+    const sidebarSections = document.querySelectorAll('.sidebar-contents-section');
+    sidebarSections.forEach(section => {
+        const body = section.querySelector('.sidebar-contents-section-body');
+        if (body) {
+            if (section.getAttribute('data-section-id') === section_id) {
+                body.classList.add('active');
+            } else {
+                body.classList.remove('active');
+            }
+        }
+    });
 
     // Wire up metadata show/hide and change handlers
     const actualData = sectionData?.data || sectionData;

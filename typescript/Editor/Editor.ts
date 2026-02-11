@@ -20,6 +20,17 @@ export async function init() {
         // @ts-ignore
         contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
 
+        // Re-apply active class if a section is currently active
+        if (state.active_section_id) {
+            const sidebarSections = contents_panel.querySelectorAll('.sidebar-contents-section');
+            sidebarSections.forEach(section => {
+                const body = section.querySelector('.sidebar-contents-section-body');
+                if (body && section.getAttribute('data-section-id') === state.active_section_id) {
+                    body.classList.add('active');
+                }
+            });
+        }
+
         // Export wizard button (mounted in sidebar template)
         try{
             // @ts-ignore
