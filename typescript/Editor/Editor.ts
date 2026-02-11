@@ -24,8 +24,26 @@ export async function init() {
         add_dnd_listeners();
         for (let section of Array.from(document.getElementsByClassName("sidebar-contents-section"))){
             let navigateToSection = function(e: Event){
-                let target = (e.target as HTMLElement).closest('.sidebar-contents-section') as HTMLElement;
-                showSectionEditor(target.getAttribute("data-section-id"));
+                // Avoid duplicate invocations when clicking nested sections: use currentTarget
+                // (the element whose handler is running) rather than event.target which bubbles.
+                e.preventDefault();
+                e.stopPropagation();
+                const target = e.currentTarget as HTMLElement | null;
+                if(!target) return;
+                // Build full content_path as colon-separated ids from root to this section
+                const ids: string[] = [];
+                let cur: HTMLElement | null = target;
+                while(cur){
+                    const id = cur.getAttribute('data-section-id');
+                    if(id){ ids.push(id); }
+                    // move to the nearest ancestor section (skip current)
+                    const parent = cur.parentElement;
+                    cur = parent ? (parent.closest('.sidebar-contents-section') as HTMLElement | null) : null;
+                }
+                ids.reverse();
+                const content_path = ids.join(':');
+                // @ts-ignore - showSectionEditor now accepts content_path string
+                showSectionEditor(content_path);
             }
             section.addEventListener("click", navigateToSection);
         }

@@ -1,4 +1,4 @@
-import {main_col} from "./Editor";
+import {init, main_col} from "./Editor";
 import {YjsBinding} from "./YjsBinding";
 import {state} from "./Main";
 import EditorJS from "@editorjs/editorjs";
@@ -21,6 +21,12 @@ import {CitationTool} from "./Tools/CitationTool";
 import {CustomStyleTool} from "./Tools/CustomStyleTool";
 import {BlockStyleTune} from "./Tools/BlockStyleTune";
 import {createMutex} from "./Mutex";
+import {FixedLinkTool} from "./Tools/FixedLinkTool";
+import {PersonsAPI, PersonUuidOrString, SectionAPI} from "../api_requests";
+import {add_search, show_alert} from "../tools";
+
+const personsApi = new (PersonsAPI as any)();
+const sectionApi = new (SectionAPI as any)();
 
 let currentEditor: EditorJS | null = null;
 let currentYjsBinding: any = null;
@@ -36,10 +42,17 @@ let currentEditorBinding: any = null;
  * - Creating the EditorJS instance.
  * - Wiring EditorJS `onChange` into the binding.
  *
- * @param section_id Section/document id.
+ * @param content_path Colon-separated path from top-level section to leaf (ids joined by ':').
  */
-export async function showSectionEditor(section_id: string){
-    console.log("Loading section editor for section: " + section_id);
+export async function showSectionEditor(content_path: string){
+    console.log("Loading section editor for section path: " + content_path);
+    const pathParts = (content_path || '').split(':').filter(Boolean);
+    const section_id = pathParts[pathParts.length - 1]; // leaf id for Yjs binding
+
+    if (!section_id) {
+        console.error('showSectionEditor: No leaf section_id could be derived from content_path:', content_path);
+        return;
+    }
 
     // Cleanup previous instances
     if (currentEditor) {
@@ -68,9 +81,37 @@ export async function showSectionEditor(section_id: string){
         currentEditorBinding = null;
     }
 
-    // @ts-ignore
-    main_col.innerHTML = Handlebars.templates.editor_section_view({});
+    // Fetch section metadata (expand authors/editors for UI) using full content_path
+    let sectionData: any = null;
+    try{
+        const resp = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, {
+            credentials: 'include'
+        });
+        if(!resp.ok){
+            console.error('Failed to fetch section metadata', resp.status, await resp.text());
+        }else{
+            sectionData = await resp.json();
+        }
+    }catch(e){
+        console.error('Error fetching section metadata', e);
+    }
 
+    // Render template with metadata if available
+    // @ts-ignore
+    main_col.innerHTML = Handlebars.templates.editor_section_view({data: sectionData?.data || sectionData || {}});
+
+    // Wire up metadata show/hide and change handlers
+    const actualData = sectionData?.data || sectionData;
+    if (actualData && actualData.metadata) {
+        try {
+            setupSectionMetadataUI(content_path, actualData);
+        } catch(e) {
+            console.warn('setupSectionMetadataUI failed', e);
+        }
+    }
+
+    // Use the full content_path as the Yjs document id to match the backend route used for metadata
+    console.log('Initializing YjsBinding for documentId (content_path):', content_path);
     const yjsBinding = YjsBinding(state.project_id, section_id);
     currentYjsBinding = yjsBinding;
     const doc = yjsBinding.getDoc();
@@ -87,11 +128,13 @@ export async function showSectionEditor(section_id: string){
                 config: {
                     endpoints: {
                         byFile: '/api/projects/'+state.project_id+'/uploads',
-                        byUrl: '/api/fetch_image', //TODO: implement endpoint
+                        byUrl: '/api/fetch_image',
                     }
                 }
             },
             strikethrough: Strikethrough,
+            /** Override EditorJS built-in inline `link` tool with our custom implementation */
+            link: FixedLinkTool,
             note: NoteTool,
             citation: CitationTool,
             custom_style_tool: CustomStyleTool,
@@ -115,6 +158,7 @@ export async function showSectionEditor(section_id: string){
     currentEditorBinding = createEditorBinding(doc, editor);
 
     yjsBinding.on('update', () => {
+        console.log('Yjs update received, triggering initialRender');
         currentEditorBinding.initialRender();
     });
 }
@@ -859,13 +903,19 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             if (destroyed) return;
             if (initialRenderDone) return;
 
+            const blocksToRenderRaw = yBlocks.toArray();
+            if (blocksToRenderRaw.length === 0) {
+                console.log('initialRender: yBlocks is empty, postponing until content arrives');
+                return;
+            }
+
             await new Promise<void>((resolve, reject) => {
                 mutex(() => {
                     if (destroyed) {
                         reject(new Error('initialRender aborted: binding destroyed'));
                         return;
                     }
-                    const blocksToRender = yBlocks.toArray().map((b: any) => {
+                    const blocksToRender = blocksToRenderRaw.map((b: any) => {
                         const n = normalizeBlockData(b);
                         // Do not pass `id` to EditorJS; we track our uuid via holder attribute.
                         return { type: n.type, data: n.data, tunes: n.tunes };
@@ -1027,6 +1077,367 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             }
         }
     };
+}
+
+// ===== Section Metadata UI logic =====
+
+function debounce<F extends (...args: any[]) => void>(fn: F, delay = 400) {
+    let t: any;
+    return (...args: any[]) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), delay);
+    };
+}
+
+async function patchSectionMeta(content_path: string, metadataPatch: any) {
+    try {
+        const resp = await fetch(`/api/projects/${state.project_id}/sections/${content_path}`, {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ metadata: metadataPatch })
+        });
+        if (!resp.ok) {
+            console.error('PATCH section metadata failed', resp.status, await resp.text());
+        }
+    } catch (e) {
+        console.error('PATCH section metadata error', e);
+    }
+}
+
+function setupSectionMetadataUI(content_path: string, sectionData: any) {
+    if (!sectionData || !sectionData.metadata) {
+        return;
+    }
+    const collapsed = document.getElementsByClassName('editor_section_view_collapsed_metadata')[0] as HTMLElement | undefined;
+    const panel = document.getElementsByClassName('editor_section_view_metadata')[0] as HTMLElement | undefined;
+    const showBtn = document.getElementById('section_show_metadata');
+    const hideBtn = document.getElementById('section_hide_metadata');
+
+    if (showBtn && panel && collapsed) {
+        showBtn.addEventListener('click', () => {
+            panel.classList.remove('hide');
+            collapsed.classList.add('hide');
+        });
+    }
+    if (hideBtn && panel && collapsed) {
+        hideBtn.addEventListener('click', () => {
+            panel.classList.add('hide');
+            collapsed.classList.remove('hide');
+        });
+    }
+
+    // Helpers to reflect title/subtitle in collapsed header live
+    const collapsedTitle = collapsed?.querySelector('h1');
+    const collapsedSubtitle = collapsed?.querySelector('h2');
+
+    const onTitleChange = debounce((text: string) => {
+        if (collapsedTitle) collapsedTitle.textContent = text;
+        patchSectionMeta(content_path, { title: text });
+    });
+    const onSubtitleChange = debounce((text: string) => {
+        if (collapsedSubtitle) collapsedSubtitle.textContent = text || '';
+        patchSectionMeta(content_path, { subtitle: text && text.trim().length ? text : null });
+    });
+
+    const titleEl = document.getElementById('section_metadata_title');
+    if (titleEl) {
+        titleEl.addEventListener('input', () => onTitleChange((titleEl as HTMLElement).textContent || ''));
+        titleEl.addEventListener('blur', () => onTitleChange((titleEl as HTMLElement).textContent || ''));
+    }
+    const subtitleEl = document.getElementById('section_metadata_subtitle');
+    if (subtitleEl) {
+        subtitleEl.addEventListener('input', () => onSubtitleChange((subtitleEl as HTMLElement).textContent || ''));
+        subtitleEl.addEventListener('blur', () => onSubtitleChange((subtitleEl as HTMLElement).textContent || ''));
+    }
+
+    const tocOverride = document.getElementById('section_metadata_toc_title_subtitle_override') as HTMLInputElement | null;
+    if (tocOverride) {
+        tocOverride.addEventListener('input', debounce(() => {
+            const v = tocOverride.value?.trim();
+            patchSectionMeta(content_path, { toc_title_subtitle_override: v ? v : null });
+        }));
+    }
+
+    const webUrl = document.getElementById('section_metadata_web_url') as HTMLInputElement | null;
+    if (webUrl) {
+        webUrl.addEventListener('input', debounce(() => {
+            const v = webUrl.value?.trim();
+            patchSectionMeta(content_path, { web_url: v ? v : null });
+        }));
+    }
+
+    const langSel = document.getElementById('section_metadata_lang') as HTMLSelectElement | null;
+    if (langSel) {
+        langSel.addEventListener('change', () => {
+            const v = langSel.value;
+            patchSectionMeta(content_path, { lang: v === 'none' ? null : v });
+        });
+    }
+
+    const published = document.getElementById('section_metadata_published') as HTMLInputElement | null;
+    if (published) {
+        const handler = debounce(() => {
+            const v = published.value?.trim();
+            patchSectionMeta(content_path, { published: v ? v : null });
+        });
+        published.addEventListener('input', handler);
+        published.addEventListener('change', handler);
+    }
+
+    const delBtn = document.getElementById('section_delete');
+    if (delBtn) {
+        delBtn.addEventListener('click', async () => {
+            if (!confirm("Are you sure you want to delete this section and ALL its contents? This cannot be undone.")) return;
+            try {
+                await sectionApi.delete_section(state.project_id, content_path);
+                // Redirect to project root or reload project
+                init();
+            } catch (e) {
+                console.error("Failed to delete section", e);
+                show_alert("Failed to delete section.", "error");
+            }
+        });
+    }
+
+    // Authors and Editors
+    function renderAuthorsEditors(type: 'authors' | 'editors') {
+        const div = document.getElementById(`section_metadata_${type}_div`);
+        if (!div) return;
+        // Keep the first_dropzone
+        const dropzone = div.querySelector('.first_dropzone');
+        div.innerHTML = '';
+        if (dropzone) div.appendChild(dropzone);
+
+        const list = type === 'authors' ? (sectionData.metadata.authors_expanded || []) : (sectionData.metadata.editors_expanded || []);
+
+        list.forEach((person: any) => {
+            // @ts-ignore
+            div.insertAdjacentHTML('beforeend', Handlebars.templates[`editor_section_${type}_li`](person));
+        });
+        
+        // Add remove listeners (template uses `.section_metadata_authors_remove` / `.section_metadata_editors_remove`)
+        const removeBtnClass = type === 'authors' ? '.section_metadata_authors_remove' : '.section_metadata_editors_remove';
+        div.querySelectorAll(removeBtnClass).forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const entry = (e.currentTarget as HTMLElement).closest('.section_metadata_persons_div') as HTMLElement | null;
+                if (!entry) return;
+
+                const entryType = entry.getAttribute('data-entry-type');
+                const id = entry.getAttribute('data-id');
+                const name = entry.getAttribute('data-name');
+
+                let currentList: PersonUuidOrString[] = (type === 'authors' ? sectionData.metadata.authors : sectionData.metadata.editors) || [];
+
+                if (entryType === 'Person' && id) {
+                    currentList = currentList.filter(p => !('PersonUuid' in p) || p.PersonUuid !== id);
+                } else if (entryType === 'NameString' && name) {
+                    currentList = currentList.filter(p => !('NameString' in p) || p.NameString !== name);
+                } else {
+                    return;
+                }
+
+                const patch: any = {};
+                patch[type] = currentList;
+                await patchSectionMeta(content_path, patch);
+
+                // Update local data and rerender
+                sectionData.metadata[type] = currentList;
+                // We need expanded data for rendering, so refetching is easiest
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                if (r.ok) {
+                    const resp = await r.json();
+                    const data = resp?.data || resp;
+                    sectionData.metadata.authors = data?.metadata?.authors || [];
+                    sectionData.metadata.editors = data?.metadata?.editors || [];
+                    sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
+                    sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
+                }
+                renderAuthorsEditors(type);
+            });
+        });
+    }
+
+    const setupPersonSearch = (type: 'authors' | 'editors') => {
+        const searchbar = document.getElementById(`section_metadata_search_${type}`) as HTMLInputElement | null;
+        const results = document.getElementById(`section_metadata_search_${type}_results`) as HTMLElement | null;
+        if (searchbar && results) {
+            add_search(
+                searchbar,
+                results,
+                personsApi.send_search_person_request.bind(personsApi),
+                // @ts-ignore
+                Handlebars.templates.search_person_li,
+                async (selected: HTMLElement) => {
+                    const person_id = selected.getAttribute("data-person-id");
+                    if (!person_id) return;
+                    
+                    let currentList: PersonUuidOrString[] = (type === 'authors' ? sectionData.metadata.authors : sectionData.metadata.editors) || [];
+                    if (currentList.some(p => 'PersonUuid' in p && p.PersonUuid === person_id)) {
+                        show_alert("Already added.", "warning");
+                        return;
+                    }
+
+                    currentList.push({ PersonUuid: person_id });
+                    const patch: any = {};
+                    patch[type] = currentList;
+                    await patchSectionMeta(content_path, patch);
+
+                    // Update and rerender
+                    const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                    if (r.ok) {
+                        const resp = await r.json();
+                        const data = resp?.data || resp;
+                        sectionData.metadata.authors = data?.metadata?.authors || [];
+                        sectionData.metadata.editors = data?.metadata?.editors || [];
+                        sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
+                        sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
+                    }
+                    renderAuthorsEditors(type);
+                }
+            );
+
+            searchbar.addEventListener("keydown", async (e: KeyboardEvent) => {
+                if (e.key !== "Enter") return;
+                const value = searchbar.value.trim();
+                if (!value) return;
+                searchbar.value = "";
+
+                let currentList: PersonUuidOrString[] = (type === 'authors' ? sectionData.metadata.authors : sectionData.metadata.editors) || [];
+                currentList.push({ NameString: value });
+                const patch: any = {};
+                patch[type] = currentList;
+                await patchSectionMeta(content_path, patch);
+
+                // Update and rerender
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                if (r.ok) {
+                    const resp = await r.json();
+                    const data = resp?.data || resp;
+                    sectionData.metadata.authors = data?.metadata?.authors || [];
+                    sectionData.metadata.editors = data?.metadata?.editors || [];
+                    sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
+                    sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
+                }
+                renderAuthorsEditors(type);
+            });
+        }
+    };
+
+    renderAuthorsEditors('authors');
+    renderAuthorsEditors('editors');
+    setupPersonSearch('authors');
+    setupPersonSearch('editors');
+
+    // Identifiers add/remove/update
+    let identifiers: any[] = (sectionData && sectionData.metadata && sectionData.metadata.identifiers) ? [...sectionData.metadata.identifiers] : [];
+
+    function renderIdentifiersList(list: any[]) {
+        const listEl = document.getElementById('section_metadata_identifiers_list');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+        // @ts-ignore
+        const tpl = (Handlebars.templates && (Handlebars.templates as any).editor_section_identifier_row) || (Handlebars.partials as any)?.editor_section_identifier_row;
+        if (!tpl) return;
+        list.forEach(item => {
+            // Some backends may use `identifier_type` or `identifierType` casing; normalize
+            const ctx = {
+                id: item.id || null,
+                name: item.name || '',
+                value: item.value || '',
+                identifier_type: item.identifier_type || item.identifierType || ''
+            };
+            // @ts-ignore
+            listEl.insertAdjacentHTML('beforeend', Handlebars.templates.editor_section_identifier_row(ctx));
+        });
+
+        // Attach remove + change listeners
+        listEl.querySelectorAll('.section_metadata_identifier_remove_btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const row = (e.currentTarget as HTMLElement).closest('.section_metadata_identifier_row') as HTMLElement | null;
+                if (!row) return;
+                const id = row.getAttribute('data-identifier-id');
+                const type = row.getAttribute('data-identifier-type') || '';
+                const nameEl = row.querySelector('.section_metadata_identifier_name') as HTMLInputElement | null;
+                const valueEl = row.querySelector('.section_metadata_identifier_value') as HTMLInputElement | null;
+                const nameVal = nameEl?.value || '';
+                const valueVal = valueEl?.value || '';
+
+                identifiers = identifiers.filter(it => {
+                    if (id && it.id) return it.id !== id;
+                    // fallback compare
+                    return !(it.identifier_type === type && it.name === nameVal && it.value === valueVal);
+                });
+                await patchSectionMeta(content_path, { identifiers });
+                // Refetch for fresh IDs
+                try {
+                    const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                    if (r.ok) {
+                        const resp = await r.json();
+                        const data = resp?.data || resp;
+                        identifiers = data?.metadata?.identifiers || [];
+                    }
+                } catch {}
+                renderIdentifiersList(identifiers);
+            });
+        });
+
+        // Handle inline changes to identifier name/value
+        listEl.querySelectorAll('.section_metadata_identifier_row').forEach(row => {
+            const id = (row as HTMLElement).getAttribute('data-identifier-id');
+            const type = (row as HTMLElement).getAttribute('data-identifier-type') || '';
+            const nameEl = row.querySelector('.section_metadata_identifier_name') as HTMLInputElement | null;
+            const valueEl = row.querySelector('.section_metadata_identifier_value') as HTMLInputElement | null;
+            const applyChange = debounce(async () => {
+                const nameVal = nameEl?.value || '';
+                const valueVal = valueEl?.value || '';
+                identifiers = identifiers.map(it => {
+                    const match = id ? (it.id === id) : (it.identifier_type === type && it.name === (row as any)._origName && it.value === (row as any)._origValue);
+                    if (match) return { ...it, name: nameVal, value: valueVal };
+                    return it;
+                });
+                await patchSectionMeta(content_path, { identifiers });
+            }, 400);
+            if (nameEl) nameEl.addEventListener('input', applyChange);
+            if (valueEl) valueEl.addEventListener('input', applyChange);
+            // store original for non-id rows
+            (row as any)._origName = nameEl?.value || '';
+            (row as any)._origValue = valueEl?.value || '';
+        });
+    }
+
+    renderIdentifiersList(identifiers);
+
+    const addBtn = document.getElementById('section_metadata_identifiers_add');
+    if (addBtn) {
+        addBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const typeEl = document.getElementById('section_metadata_identifiers_type') as HTMLSelectElement | null;
+            const nameEl = document.getElementById('section_metadata_identifiers_name') as HTMLInputElement | null;
+            const valueEl = document.getElementById('section_metadata_identifiers_value') as HTMLInputElement | null;
+            const type = typeEl?.value || 'DOI';
+            const name = nameEl?.value?.trim() || type;
+            const value = valueEl?.value?.trim() || '';
+            if (!value) return;
+            identifiers = [...identifiers, { id: null, name, value, identifier_type: type }];
+            await patchSectionMeta(content_path, { identifiers });
+            // Clear inputs
+            if (nameEl) nameEl.value = '';
+            if (valueEl) valueEl.value = '';
+            // Refetch to get server-assigned ids
+            try {
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                if (r.ok) {
+                    const resp = await r.json();
+                    const data = resp?.data || resp;
+                    identifiers = data?.metadata?.identifiers || [];
+                }
+            } catch {}
+            renderIdentifiersList(identifiers);
+        });
+    }
 }
 
 /**

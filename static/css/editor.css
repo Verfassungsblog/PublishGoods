@@ -283,18 +283,71 @@ textarea{
     resize: vertical;
     width: 100%;
 }
+
+.col-1{
+    width: 8.33333333% !important;
+    float: left;
+}
+.col-2{
+    width: 16.66666667% !important;
+    float: left;
+}
+.col-3{
+    width: 25% !important;
+    float: left;
+}
+.col-4{
+    width: 33.33333333% !important;
+    float: left;
+}
+.col-5{
+    width: 41.66666667% !important;
+    float: left;
+}
 .col-6{
     width: 50% !important;
     float: left;
 }
+.col-7{
+    width: 58.33333333% !important;
+    float: left;
+}
+.col-8{
+    width: 66.66666667% !important;
+    float: left;
+}
+.col-9{
+    width: 75% !important;
+    float: left;
+}
+.col-10{
+    width: 83.33333333% !important;
+    float: left;
+}
+.col-11{
+    width: 91.66666667% !important;
+    float: left;
+}
+.col-12{
+    width: 100% !important;
+    float: left;
+}
 .col-fit{
     float: left;
-    width: fit-content;
+    width: fit-content !important;
 }
 @container main-col (max-width: 400px) {
-    .col-6{
+    .col-6,.col-1,.col-2,.col-3,.col-4,.col-5,.col-7,.col-8,.col-9,.col-10,.col-11,.col-12{
         float: none;
     }
+}
+.d-flex{
+    display: flex !important;
+}
+.row{
+    display: flex;
+    width: 100%;
+    align-items: baseline;
 }
 .cover-preview{
     width: 100px;
@@ -341,6 +394,17 @@ textarea{
     background-color: #ffc107;
     color: white;
 }
+
+.btn-secondary{
+    border: 1px solid lightgray;
+    color: lightgray;
+}
+
+.btn-secondary:hover{
+    background-color: lightgray;
+    color: white;
+}
+
 h1{
     clear: both;
 }
@@ -427,6 +491,10 @@ h1{
     background-color: unset;
     border: none;
     cursor: pointer;
+    align-self: end;
+}
+.align-self-end{
+    align-self: end;
 }
 .img-btn > svg{
     display: flex;
@@ -614,4 +682,59 @@ customstyle{
     right: 5px;
     top: 5px;
     color: gray;
+}
+
+.section_metadata_panel_ctl{
+    text-align: center;
+}
+#section_hide_metadata{
+    background-color: var(--light-gray);
+    border-radius: 5rem 5rem 0 0 ;
+    margin-bottom: -20px;
+    padding-bottom: 10px;
+    cursor: pointer;
+}
+.editor_section_view_collapsed_metadata_inner{
+    background-color: white;
+    padding: 10px 10px 0px 10px;
+}
+.editor_section_view_collapsed_metadata{
+    margin-bottom: 50px;
+}
+#section_show_metadata{
+    background-color: white;
+    border-radius: 0 0 5rem 5rem;
+    margin-top: -10px;
+    cursor: pointer;
+}
+.section_metadata_panel_ctl{
+    margin-top: -3px;
+}
+.me-1{
+    margin-right: 3px;
+}
+.me-2{
+    margin-right: 6px;
+}
+.me-3{
+    margin-right: 9px;
+}
+.me-4{
+    margin-right: 12px;
+}
+.mb-1{
+    margin-bottom: 3px;
+}
+.mb-2{
+    margin-bottom: 6px;
+}
+.mb-3{
+    margin-bottom: 9px;
+}
+.mb-4{
+    margin-bottom: 12px;
+}
+.fullwidth-select{
+    max-width: 100% !important;
+    width: 100% !important;
 }

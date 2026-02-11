@@ -1,0 +1,10 @@
+<div class="row mb-1 section_metadata_identifier_row" data-identifier-id="{{id}}" data-identifier-type="{{identifier_type}}">
+    <div class="row col-11 d-flex section_metadata_identifiers">
+            <span style="line-height: 31px; width: 60px;" class="me-4">{{identifier_type}}</span>
+            <input type="text" class="col-2 me-1 form-control quickchange form-control-sm section_metadata_identifier_name" placeholder="Name (e.g. DOI)" value="{{name}}">
+            <input type="text" class="form-control quickchange form-control-sm section_metadata_identifier_value" placeholder="Value (e.g. 10.123456/...)" value="{{value}}">
+    </div>
+    <div class="col col-1 ps-0 align-self-end">
+        <button class="img-btn section_metadata_identifier_remove_btn"><svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="red"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg></button>
+    </div>
+</div>
