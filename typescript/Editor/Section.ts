@@ -1201,6 +1201,168 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
     }
 
     // Authors and Editors
+    let dragged_section_metadata_element: HTMLElement | null = null;
+
+    const patchPersonsOrder = async (type: 'authors' | 'editors') => {
+        const container = document.getElementById(`section_metadata_${type}_div`) as HTMLElement | null;
+        if (!container) return;
+
+        const elems = Array.from(container.querySelectorAll<HTMLElement>(`.section_metadata_persons_div[data-group='${type}']`));
+        const next: PersonUuidOrString[] = [];
+
+        for (const el of elems) {
+            const entry_type = el.getAttribute('data-entry-type');
+            if (entry_type === 'Person') {
+                const id = el.getAttribute('data-id');
+                if (id !== null) next.push({ PersonUuid: id });
+            } else if (entry_type === 'NameString') {
+                const name = el.getAttribute('data-name');
+                if (name !== null) next.push({ NameString: name });
+            }
+        }
+
+        const patch: any = {};
+        patch[type] = next;
+        await patchSectionMeta(content_path, patch);
+
+        // Keep local copy in sync
+        sectionData.metadata[type] = next;
+
+        // Refresh expanded data for stable rendering
+        const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+        if (r.ok) {
+            const resp = await r.json();
+            const data = resp?.data || resp;
+            sectionData.metadata.authors = data?.metadata?.authors || [];
+            sectionData.metadata.editors = data?.metadata?.editors || [];
+            sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
+            sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
+        }
+    };
+
+    const addDragAndDropListeners = (type: 'authors' | 'editors') => {
+        const container = document.getElementById(`section_metadata_${type}_div`) as HTMLElement | null;
+        if (!container) return;
+
+        const dragElements = Array.from(container.querySelectorAll<HTMLElement>(`.section_metadata_persons_div[data-group='${type}']`));
+        const dropZones: HTMLElement[] = [];
+
+        const firstDropzone = container.querySelector<HTMLElement>('.first_dropzone');
+        if (firstDropzone) dropZones.push(firstDropzone);
+        dropZones.push(...Array.from(container.querySelectorAll<HTMLElement>('.section_metadata_person_div_after')));
+
+        for (const element of dragElements) {
+            element.addEventListener('dragstart', (e) => {
+                dragged_section_metadata_element = e.currentTarget as HTMLElement;
+
+                const draggedId = dragged_section_metadata_element.getAttribute('data-id');
+                const parent = dragged_section_metadata_element.parentElement;
+
+                for (const dz of dropZones) {
+                    if (!draggedId) {
+                        dz.classList.add('dragactive');
+                        continue;
+                    }
+
+                    // Don't highlight the first dropzone when dragging the first element
+                    if (dz.classList.contains('first_dropzone') && parent && parent.children.length > 1) {
+                        const firstElement = parent.children[1] as HTMLElement;
+                        if (firstElement.getAttribute('data-id') === draggedId) {
+                            continue;
+                        }
+                    }
+
+                    const afterId = dz.getAttribute('data-dropzone-after');
+                    if (afterId && afterId === draggedId) {
+                        continue;
+                    }
+
+                    dz.classList.add('dragactive');
+                }
+            });
+
+            element.addEventListener('dragend', () => {
+                dragged_section_metadata_element = null;
+                for (const dz of dropZones) {
+                    dz.classList.remove('dragactive');
+                    dz.classList.remove('dragover');
+                }
+            });
+        }
+
+        for (const dropzone of dropZones) {
+            dropzone.addEventListener('dragenter', (e) => {
+                const zone = e.currentTarget as HTMLElement;
+
+                if (!dragged_section_metadata_element) return;
+
+                // Don't show drop opportunity for first dropzone for first element
+                if (zone.classList.contains('first_dropzone')) {
+                    const parent = dragged_section_metadata_element.parentElement;
+                    if (parent && parent.children.length > 1) {
+                        const firstElement = parent.children[1] as HTMLElement;
+                        if (firstElement.getAttribute('data-id') === dragged_section_metadata_element.getAttribute('data-id')) {
+                            return;
+                        }
+                    }
+                }
+
+                if (
+                    dragged_section_metadata_element.getAttribute('data-group') === type &&
+                    dragged_section_metadata_element.getAttribute('data-id') !== zone.getAttribute('data-dropzone-after')
+                ) {
+                    zone.classList.add('dragover');
+                }
+            });
+
+            dropzone.addEventListener('dragleave', (e) => {
+                const zone = e.currentTarget as HTMLElement;
+                zone.classList.remove('dragover');
+            });
+
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                const zone = e.currentTarget as HTMLElement;
+
+                if (!dragged_section_metadata_element || dragged_section_metadata_element.getAttribute('data-group') !== type) {
+                    return;
+                }
+
+                const draggedId = dragged_section_metadata_element.getAttribute('data-id');
+                const dropzoneId = zone.getAttribute('data-dropzone-after');
+
+                if (draggedId === dropzoneId) {
+                    return;
+                }
+
+                if (zone.classList.contains('first_dropzone')) {
+                    const parent = dragged_section_metadata_element.parentElement;
+                    if (parent && parent.children.length > 1) {
+                        const firstElement = parent.children[1] as HTMLElement;
+                        if (firstElement.getAttribute('data-id') === draggedId) {
+                            return;
+                        }
+                    }
+
+                    zone.classList.remove('dragover');
+                    dragged_section_metadata_element.parentNode?.removeChild(dragged_section_metadata_element);
+                    zone.insertAdjacentElement('afterend', dragged_section_metadata_element);
+                } else {
+                    zone.classList.remove('dragover');
+                    dragged_section_metadata_element.parentNode?.removeChild(dragged_section_metadata_element);
+                    zone.parentElement?.insertAdjacentElement('afterend', dragged_section_metadata_element);
+                }
+
+                patchPersonsOrder(type).then(() => {
+                    renderAuthorsEditors(type);
+                });
+            });
+        }
+    };
+
     function renderAuthorsEditors(type: 'authors' | 'editors') {
         const div = document.getElementById(`section_metadata_${type}_div`);
         if (!div) return;
@@ -1257,6 +1419,8 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
                 renderAuthorsEditors(type);
             });
         });
+
+        addDragAndDropListeners(type);
     }
 
     const setupPersonSearch = (type: 'authors' | 'editors') => {

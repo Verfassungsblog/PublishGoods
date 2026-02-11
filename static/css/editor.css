@@ -443,7 +443,8 @@ h1{
     align-items: center;
     cursor: pointer;
 }
-.metadata_person_div_name{
+.metadata_person_div_name,
+.section_metadata_person_div_name{
     border: 1px solid lightgray;
     padding: 5px;
     margin-right: 2px;
@@ -455,21 +456,25 @@ h1{
 .metadata_person_div_name > svg{
     margin-right: 5px;
 }
-.metadata_persons_div{
+.metadata_persons_div,
+.section_metadata_persons_div{
     margin: 0 5px 5px 0;
     display: flex;
     align-items: center;
     justify-content: center;
 }
-.metadata_person_div_after{
+.metadata_person_div_after,
+.section_metadata_person_div_after{
     width: 10px;
     align-self: stretch;
 }
-.metadata_person_div_after.dragactive{
+.metadata_person_div_after.dragactive,
+.section_metadata_person_div_after.dragactive{
     /* Match sidebar's subtle dropzone highlighting (similar to [data-dropzone].dz-visible) */
     background-color: rgba(67,87,173,0.08);
 }
-.metadata_person_div_after.dragover{
+.metadata_person_div_after.dragover,
+.section_metadata_person_div_after.dragover{
     width: 40px;
     /* Match sidebar's strong drop target highlight (see [data-dropzone].drop-target) */
     outline: 2px dashed #4357AD;
@@ -480,6 +485,20 @@ h1{
     margin-left: -10px;
 }
 #metadata_editors_first_dropzone.dragover{
+    width: 40px;
+    /* Match sidebar's strong drop target highlight */
+    outline: 2px dashed #4357AD;
+    background-color: rgba(67,87,173,0.08);
+}
+
+#section_metadata_authors_first_dropzone,
+#section_metadata_editors_first_dropzone{
+    width: 10px;
+    margin-left: -10px;
+}
+
+#section_metadata_authors_first_dropzone.dragover,
+#section_metadata_editors_first_dropzone.dragover{
     width: 40px;
     /* Match sidebar's strong drop target highlight */
     outline: 2px dashed #4357AD;
