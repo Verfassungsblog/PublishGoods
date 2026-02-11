@@ -12,6 +12,11 @@ export let state: EditorState;
 async function main() {
     let project_id = window.location.href.split('/').pop();
 
+    // Keep compatibility with legacy modules that expect a global `project_id`
+    // (e.g. `Import.ts`, `Export.ts`).
+    // @ts-ignore
+    globalThis.project_id = project_id;
+
     state = {
         project_id: project_id,
         preferred_main_row_width: null,

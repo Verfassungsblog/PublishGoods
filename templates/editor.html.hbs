@@ -11,6 +11,14 @@
     <title>Verfassungsbooks - Editor</title>
 </head>
 <body>
+<div class="faded-out-background hide" id="overlay-wrapper">
+    <div class="overlay" id="overlay">
+        <button class="btn img-btn" id="overlay_close_btn">
+            <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
+        </button>
+        <div id="inner_overlay"></div>
+    </div>
+</div>
 <div class="main_wrapper">
     <div class="sidebar-full">
         <button class="sidebar-full-header-collapse">
@@ -68,5 +76,6 @@
 <script src="/js/precompiled_partials.js"></script>
 <script src="/js/precompiled_templates.js"></script>
 <script src="/js/editor.js"></script>
+<script src="/js/import.js"></script>
 </body>
 </html>

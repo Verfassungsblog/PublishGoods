@@ -21,6 +21,17 @@ export async function init() {
         // @ts-ignore
         contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
 
+        // Import wizard button (mounted in sidebar template)
+        try{
+            // @ts-ignore
+            if(typeof window.add_import_listeners === 'function'){
+                // @ts-ignore
+                window.add_import_listeners();
+            }
+        }catch(e){
+            console.error(e);
+        }
+
         // New section button
         const newSectionBtn = document.getElementById('sidebar-new-section') as HTMLButtonElement | null;
         if(newSectionBtn){
