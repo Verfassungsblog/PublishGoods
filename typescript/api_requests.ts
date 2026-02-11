@@ -357,6 +357,37 @@ export interface Section {
     metadata: SectionMetadata;
 }
 
+// NOTE: `/api/projects/<project_id>/contents` (deprecated endpoints) uses the backend `Section` type
+// which currently is `SectionV6` (see `src/storage/project_storage/sections/current.rs`).
+// That JSON shape differs from the editor's section shape (it has `content: Vec<u8>` instead of
+// `children`, and `metadata.custom_fields`). Keep this separate to avoid breaking the editor APIs.
+export interface ProjectContentsSection {
+    id?: string; // UUID represented as a string in JavaScript/TypeScript
+    css_classes: string[];
+    sub_sections: ProjectContentsSection[];
+    // Backend expects `Vec<u8>`; JSON representation is a number array.
+    content: number[];
+    visible_in_toc: boolean;
+    metadata: ProjectContentsSectionMetadata;
+}
+
+export type ProjectContentsSectionMetadata = {
+    title: string,
+    toc_title_subtitle_override: string | null,
+    subtitle: string | null,
+    // Backend uses `PersonUuidOrString` here.
+    authors: PersonUuidOrString[],
+    editors: PersonUuidOrString[],
+    web_url: string | null,
+    identifiers: Identifier[],
+    // Backend uses chrono types; we send `null` for new sections.
+    published: Date | null,
+    last_changed: Date | null,
+    // Backend uses `language::Language`; we send `null` for new sections.
+    lang: string | null,
+    custom_fields: Record<string, string>,
+};
+
 export interface APISectionResult {
     id: string; // UUID represented as a string in JavaScript/TypeScript
     css_classes: string[];
@@ -514,8 +545,66 @@ export function ProjectAPI() {
         return response_data.data;
     }
 
+    async function create_section(project_id: string, section: ProjectContentsSection) {
+        const response = await fetch(`/api/projects/${project_id}/contents`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            // Backend expects a `Section` JSON body (not `{Section: ...}`)
+            body: JSON.stringify(section)
+        });
+
+        if (!response.ok) {
+            let details = '';
+            try{
+                details = await response.text();
+            }catch(_e){
+                details = '';
+            }
+            throw new Error(`Failed to create section: ${response.status}${details ? ` (${details})` : ''}`);
+        }
+
+        const response_data: ApiResult<ProjectContentsSection> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to create section: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function create_default_section(project_id: string, title: string = 'New Section') {
+        const section: ProjectContentsSection = {
+            css_classes: [],
+            sub_sections: [],
+            content: [],
+            visible_in_toc: true,
+            metadata: {
+                title,
+                toc_title_subtitle_override: null,
+                subtitle: null,
+                authors: [],
+                editors: [],
+                web_url: null,
+                identifiers: [],
+                published: null,
+                last_changed: null,
+                lang: null,
+                custom_fields: {}
+            }
+        };
+
+        return create_section(project_id, section);
+    }
+
     return {
-        read_project_contents
+        read_project_contents,
+        create_section,
+        create_default_section
     }
 }
 

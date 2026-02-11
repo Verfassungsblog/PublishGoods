@@ -1,5 +1,5 @@
 import {state} from './Main';
-import {EditorAPI, SectionAPI} from '../api_requests';
+import {EditorAPI, ProjectAPI, SectionAPI} from '../api_requests';
 import {show_alert} from "../tools";
 import {show_project_metadata_settings} from "./ProjectMetadataSettings";
 import {showSectionEditor} from "./Section";
@@ -20,6 +20,33 @@ export async function init() {
 
         // @ts-ignore
         contents_panel.innerHTML = Handlebars.templates.editor_sidebar_content_editor(data);
+
+        // New section button
+        const newSectionBtn = document.getElementById('sidebar-new-section') as HTMLButtonElement | null;
+        if(newSectionBtn){
+            newSectionBtn.addEventListener('click', async (e: Event) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const projectAPI = ProjectAPI();
+                newSectionBtn.disabled = true;
+                try{
+                    const newSection = await projectAPI.create_default_section(state.project_id);
+                    // re-render sidebar, then open the new section
+                    await init();
+                    if(newSection.id){
+                        // @ts-ignore
+                        await showSectionEditor(newSection.id);
+                    }
+                }catch(err){
+                    show_alert("Couldn't create new section. Reload page and try again.");
+                    console.error(err);
+                }finally{
+                    newSectionBtn.disabled = false;
+                }
+            });
+        }
+
         // Attach drag and drop listeners after render
         add_dnd_listeners();
         for (let section of Array.from(document.getElementsByClassName("sidebar-contents-section"))){

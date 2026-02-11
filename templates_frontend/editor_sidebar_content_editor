@@ -1,6 +1,6 @@
 <div class="sidebar-full-contents-panel-control-bar">
                 <span class="sidebar-full-contents-panel-control-bar-left">
-                    <button title="New Section" class="iconbutton"><svg xmlns="http://www.w3.org/2000/svg" width="25"
+                    <button title="New Section" class="iconbutton" id="sidebar-new-section"><svg xmlns="http://www.w3.org/2000/svg" width="25"
                                                                         height="25"
                                                                         fill="currentColor" class="bi bi-plus"
                                                                         viewBox="0 0 16 16">

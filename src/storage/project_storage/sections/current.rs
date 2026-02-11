@@ -163,3 +163,40 @@ impl Section {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn section_v6_deserializes_from_project_contents_payload() {
+        // This matches the payload sent by the frontend when creating a new section via
+        // `POST /api/projects/<project_id>/contents`.
+        let payload = r#"{
+            "css_classes":[],
+            "sub_sections":[],
+            "content":[],
+            "visible_in_toc":true,
+            "metadata":{
+                "title":"New Section",
+                "toc_title_subtitle_override":null,
+                "subtitle":null,
+                "authors":[],
+                "editors":[],
+                "web_url":null,
+                "identifiers":[],
+                "published":null,
+                "last_changed":null,
+                "lang":null,
+                "custom_fields":{}
+            }
+        }"#;
+
+        let section: Section =
+            serde_json::from_str(payload).expect("Section JSON should deserialize");
+        assert_eq!(section.metadata.title, "New Section");
+        assert!(section.content.is_empty());
+        assert!(section.metadata.custom_fields.is_empty());
+        assert!(section.visible_in_toc);
+    }
+}
