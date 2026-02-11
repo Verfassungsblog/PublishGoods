@@ -10,7 +10,7 @@
     </div>
     <div class="form-group col-6">
         <label for="settings.csl_style">Citation Style (CSL)</label>
-        <select id="settings.csl_style" class="autopatch" data-patch="settings.csl_style">
+        <select id="settings.csl_style" class="autopatch fullwidth-select" data-patch="settings.csl_style">
             <option value="">None</option>
             {{#each available_csl_styles}}
                 <option value="{{this}}" {{#is this ../settings.csl_style}}selected{{/is}}>{{this}}</option>

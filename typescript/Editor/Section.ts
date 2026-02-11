@@ -1147,6 +1147,15 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
 
     const onTitleChange = debounce((text: string) => {
         if (collapsedTitle) collapsedTitle.textContent = text;
+        const pathParts = (content_path || '').split(':').filter(Boolean);
+        const section_id = pathParts[pathParts.length - 1];
+        const sidebarSection = document.querySelector(`.sidebar-contents-section[data-section-id="${section_id}"]`);
+        if (sidebarSection) {
+            const titleSpan = sidebarSection.querySelector('.section-title');
+            if (titleSpan) {
+                titleSpan.textContent = text || '[No title]';
+            }
+        }
         patchSectionMeta(content_path, { title: text });
     });
     const onSubtitleChange = debounce((text: string) => {
