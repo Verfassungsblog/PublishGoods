@@ -7,7 +7,7 @@ import {
     send_get_template_id_for_project,
     TemplateAPI
 } from "./api_requests";
-import {show_preview_column} from "./Editor/Editor";
+import {hide_preview_column, show_preview_column} from "./Editor/Editor";
 import * as Tools from "./tools";
 import * as pdfjs from 'pdfjs-dist';
 
@@ -103,13 +103,8 @@ async function preview_project_listener(){
 }
 
 async function show_pdf(uri: string) {
-    let scale = 1;
+    let scale = 1.5;
     let viewer = document.getElementById("preview-col");
-
-    if (!viewer || viewer.classList.contains("hide")) {
-        show_preview_column();
-        viewer = document.getElementById("preview-col");
-    }
 
     if (!viewer) {
         console.error("Viewer element not found.");
@@ -117,28 +112,91 @@ async function show_pdf(uri: string) {
     }
 
     viewer.innerHTML = "";
+    // @ts-ignore
+    viewer.innerHTML = Handlebars.templates.pdf_preview_toolbar();
+    const pagesContainer = document.createElement("div");
+    pagesContainer.classList.add("pdf-pages-container");
+    viewer.appendChild(pagesContainer);
+
+    const zoomInBtn = viewer.querySelector(".pdf-zoom-in");
+    const zoomOutBtn = viewer.querySelector(".pdf-zoom-out");
+    const zoomResetBtn = viewer.querySelector(".pdf-zoom-reset");
+    const zoomLevelText = viewer.querySelector(".pdf-zoom-level");
+    const closeBtn = viewer.querySelector(".pdf-close");
 
     let loadingTask = pdfjs.getDocument(uri);
     let pdf = await loadingTask.promise;
 
-    for (let page_num = 1; page_num <= pdf.numPages; page_num++) {
-        let canvas = document.createElement("canvas");
-        canvas.classList.add("pdf-page");
-        viewer.appendChild(canvas);
-        await renderPage(page_num, canvas);
+    let current_render_id = 0;
+
+    async function renderAllPages() {
+        const render_id = ++current_render_id;
+        pagesContainer.innerHTML = "";
+        
+        // Create all canvases first so they appear immediately (empty)
+        const canvases: HTMLCanvasElement[] = [];
+        for (let page_num = 1; page_num <= pdf.numPages; page_num++) {
+            let canvas = document.createElement("canvas");
+            canvas.classList.add("pdf-page");
+            pagesContainer.appendChild(canvas);
+            canvases.push(canvas);
+        }
+
+        for (let page_num = 1; page_num <= pdf.numPages; page_num++) {
+            if (render_id !== current_render_id) return;
+            await renderPage(page_num, canvases[page_num - 1]);
+        }
+        if (zoomLevelText) {
+            zoomLevelText.textContent = `${Math.round(scale * 100)}%`;
+        }
     }
+
+    zoomInBtn?.addEventListener("click", () => {
+        scale += 0.25;
+        renderAllPages();
+    });
+
+    zoomOutBtn?.addEventListener("click", () => {
+        if (scale > 0.25) {
+            scale -= 0.25;
+            renderAllPages();
+        }
+    });
+
+    zoomResetBtn?.addEventListener("click", () => {
+        scale = 1.5;
+        renderAllPages();
+    });
+
+    closeBtn?.addEventListener("click", () => {
+        hide_preview_column();
+        viewer.innerHTML = "";
+    });
+
+    await renderAllPages();
 
     async function renderPage(pageNumber: number, canvas: HTMLCanvasElement) {
         let page = await pdf.getPage(pageNumber);
 
-        let viewport = page.getViewport({ scale: scale });
+        const dpr = window.devicePixelRatio || 1;
+        let viewport = page.getViewport({ scale: scale * dpr });
+        
         canvas.height = viewport.height;
         canvas.width = viewport.width;
+
+        // Use CSS to scale the canvas back to the desired size
+        canvas.style.width = (viewport.width / dpr) + "px";
+        canvas.style.height = (viewport.height / dpr) + "px";
+
+        // Set placeholder height while rendering to avoid layout shifts if possible
+        // Actually, we already set the canvas width/height which sets the intrinsic size.
+
         let context = canvas.getContext('2d');
         if (context) {
             await page.render({
                 canvasContext: context,
-                viewport: viewport
+                viewport: viewport,
+                intent: 'print' // Use print intent for potentially better quality
             }).promise;
         } else {
             console.error("Canvas context not found.");
@@ -166,7 +224,7 @@ async function show_pdf(uri: string) {
                     const y = destination[3];
 
                     console.log("Navigating to page:", pageNumber + 1);
-                    let canvas = viewer.querySelectorAll<HTMLCanvasElement>('.pdf-page')[pageNumber - 1];
+                    let canvas = pagesContainer.querySelectorAll<HTMLCanvasElement>('.pdf-page')[pageNumber];
                     let page = await pdf.getPage(pageNumber + 1);
                     let viewport = page.getViewport({ scale: scale });
 
@@ -191,12 +249,9 @@ async function show_pdf(uri: string) {
 
     //await jumpToBookmark("Test3");
 
-    show_rendering_col();
-}
-
-function show_rendering_col(){
     show_preview_column();
 }
+
 
 export async function export_project_listener(){
     // Get template id for project

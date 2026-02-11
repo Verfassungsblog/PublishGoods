@@ -8,7 +8,6 @@ export async function init() {
     let contents_panel : HTMLElement = document.getElementsByClassName("sidebar-full-contents-panel")[0] as HTMLElement;
     let project_name : HTMLElement = document.getElementById("sidebar-full-header-project-name") as HTMLElement;
 
-    show_preview_column(); //TODO: only show after rendering
     add_divider_drag_listeners();
     add_sidebar_collapse_listeners();
 

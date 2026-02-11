@@ -42,7 +42,7 @@
         <button id="settings.delete_backcover_image" data-cover-image-path="{{settings.backcover_image_path}}" class="cover-delete-btn btn btn-danger {{#unless settings.backcover_image_path}}hide{{/unless}}">Delete</button>
         <input type="file" class="form-control {{#if settings.backcover_image_path}}hide{{/if}}" id="settings.backcover_image" accept="image/*">
     </div>
-    <h1 class="mt-4 d-inline-block">Project Metadata</h1>
+    <h1 class="mt-4">Project Metadata</h1>
     <div class="form-group">
         <label for="metadata.title">Project Title</label>
         <input type="text" id="metadata.title" data-patch="metadata.title" class="autopatch" value="{{metadata.title}}">
