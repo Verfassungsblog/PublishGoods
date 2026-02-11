@@ -117,88 +117,6 @@ export async function send_delete_user(user_id: string) {
     }
 }
 
-export async function send_add_new_bib_entry(data: any, project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to add new bib entry: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to add new bib entry: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function send_get_bib_list(project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to get bib entries: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get bib entries: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function send_get_bib_entry(key: string, project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography/` + key, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to get bib entry: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get bib entry: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function update_bib_entry(data: any, key: string, project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography/` + key, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to update bib entry: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to update bib entry: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
 export async function send_poll_import_status(id: string) {
     const response = await fetch(`/api/import/status/` + id, {
         method: 'GET',
@@ -519,6 +437,224 @@ type BlockData =
     | { List: {style: string, items: string[]} }
     | { Quote: {text: string, caption: string, alignment: string} }
     | { Image: {file: UploadedImage, caption?: string, with_border: boolean, with_background: boolean, stretched: boolean}};
+
+export type ShortBibEntryOrFolder = {
+    id: string;
+    is_folder: boolean;
+    bib_entry_type: string | null;
+    name: string;
+};
+
+export type BibTreeEntry = ShortBibEntryOrFolder & {
+    children: BibTreeEntry[];
+};
+
+export type BibEntryOrFolder =
+    | { BibEntry: BibEntryV3 }
+    | { BibFolder: BibFolder };
+
+export interface BibFolder {
+    name: string;
+    parent: string | null;
+}
+
+export type BibEntryV3 = {
+    key: string,
+    entry_type: string,
+    title?: MyFormatString | null,
+    authors: MyPerson[],
+    date?: MyDate | null,
+    editors: MyPerson[],
+    affiliated: MyPersonsWithRoles[],
+    publisher?: MyPublisher | null,
+    location?: MyFormatString | null,
+    organization?: MyFormatString | null,
+    issue?: MyMaybeTyped<MyNumeric> | null,
+    volume?: MyMaybeTyped<MyNumeric> | null,
+    volume_total?: MyNumeric | null,
+    edition?: MyMaybeTyped<MyNumeric> | null,
+    page_range?: MyMaybeTyped<MyPageRanges> | null,
+    page_total?: MyNumeric | null,
+    time_range?: MyMaybeTyped<MyDurationRange> | null,
+    runtime?: MyMaybeTyped<any> | null,
+    url?: MyQualifiedUrl | null,
+    serial_numbers?: Record<string, string> | null,
+    language?: string | null,
+    archive?: MyFormatString | null,
+    archive_location?: MyFormatString | null,
+    call_number?: MyFormatString | null,
+    note?: MyFormatString | null,
+    abstractt?: MyFormatString | null,
+    genre?: MyFormatString | null,
+    parents: string[],
+};
+
+export type MyFormatString = {
+    value: string;
+    short?: string | null;
+};
+
+export type MyPerson = {
+    name: string;
+    given_name?: string | null;
+    prefix?: string | null;
+    suffix?: string | null;
+};
+
+export type MyDate = {
+    year: number;
+    month?: number | null;
+    day?: number | null;
+};
+
+export type MyPersonsWithRoles = {
+    names: MyPerson[];
+    role: string;
+};
+
+export type MyPublisher = {
+    name: string;
+    location?: string | null;
+};
+
+export type MyMaybeTyped<T> =
+    | { Typed: T }
+    | { String: string };
+
+export type MyNumeric = {
+    value: number;
+    prefix?: string | null;
+    suffix?: string | null;
+};
+
+export type MyPageRanges = any; // simplified
+export type MyDurationRange = any; // simplified
+export type MyQualifiedUrl = {
+    value: string;
+    timestamp?: any | null;
+};
+
+export function BibliographyAPI() {
+    async function get_bibliography_tree(project_id: string): Promise<BibTreeEntry[]> {
+        const response = await fetch(`/project/${project_id}/bibliography`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get bibliography tree: ${response.status}`);
+        }
+
+        const response_data: ApiResult<BibTreeEntry[]> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to get bibliography tree: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function get_bibliography_entry(project_id: string, entry_id: string): Promise<BibEntryOrFolder> {
+        const response = await fetch(`/project/${project_id}/bibliography/${entry_id}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<BibEntryOrFolder> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to get bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function post_bibliography_entry(project_id: string, entry: BibEntryOrFolder): Promise<string> {
+        const response = await fetch(`/project/${project_id}/bibliography`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(entry)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to post bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<string> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to post bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function patch_bibliography_entry(project_id: string, entry_id: string, patch: BibEntryOrFolder): Promise<void> {
+        const response = await fetch(`/project/${project_id}/bibliography/${entry_id}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(patch)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to patch bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<void> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to patch bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    async function delete_bibliography_entry(project_id: string, entry_id: string): Promise<void> {
+        const response = await fetch(`/project/${project_id}/bibliography/${entry_id}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to delete bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<void> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to delete bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    return {
+        get_bibliography_tree,
+        get_bibliography_entry,
+        post_bibliography_entry,
+        patch_bibliography_entry,
+        delete_bibliography_entry
+    };
+}
 
 export function ProjectAPI() {
     async function read_project_contents(project_id: string) {
@@ -1776,7 +1912,7 @@ export interface ProjectMetadata {
     custom_fields: Record<string, string> | null;
 }
 
-export type BibEntryV2 = any; //todo: declarate here
+export type BibEntryV2 = BibEntryV3; // updated to V3 structure
 
 // Rust: pub struct ProjectSettingsV5 (from vb_exchange crate)
 // Exact TS mirror so JSON from Rust can be deserialized safely.
