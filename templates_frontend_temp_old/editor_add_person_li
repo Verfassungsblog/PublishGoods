@@ -1,1 +1,0 @@
-<li data-id="{{id}}" tabindex="0">{{first_names}} {{last_names}}</li>

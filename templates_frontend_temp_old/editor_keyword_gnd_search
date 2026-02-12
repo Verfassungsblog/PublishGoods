@@ -1,1 +1,0 @@
-<li data-gnd="{{id}}" data-title="{{label}}">{{label}} [{{category}}]</li>
