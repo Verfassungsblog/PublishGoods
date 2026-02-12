@@ -268,7 +268,7 @@ pub struct ProjectDataV7 {
     pub settings: Option<ProjectSettingsV5>,
     pub sections: Vec<SectionOrTocV4>,
     #[bincode(with_serde)]
-    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+    pub bibliography: HashMap<String, BibEntryV2>,
 }
 
 impl From<ProjectDataV7> for ProjectDataV8 {
@@ -301,7 +301,7 @@ pub struct ProjectDataV9 {
     pub settings: Option<ProjectSettingsV5>,
     pub sections: Vec<SectionOrTocV5>,
     #[bincode(with_serde)]
-    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+    pub bibliography: HashMap<String, BibEntryV2>,
 }
 
 impl From<ProjectDataV8> for ProjectDataV9 {
@@ -454,7 +454,7 @@ pub struct ProjectDataV8 {
     pub settings: Option<ProjectSettingsV5>,
     pub sections: Vec<SectionOrTocV5>,
     #[bincode(with_serde)]
-    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+    pub bibliography: HashMap<String, BibEntryV2>,
 }
 
 /// Struct holds all project-level metadata
@@ -473,7 +473,6 @@ pub struct ProjectMetadataV1 {
     /// URL to a web version of the book or reference
     pub web_url: Option<String>,
     /// List of identifiers of the book (e.g. ISBNs)
-    // TODO: build identifier validator
     pub identifiers: Option<Vec<Identifier>>,
     /// Date of publication
     #[bincode(with_serde)]
@@ -543,7 +542,6 @@ pub struct ProjectMetadataV2 {
     /// URL to a web version of the book or reference
     pub web_url: Option<String>,
     /// List of identifiers of the book (e.g. ISBNs)
-    // TODO: build identifier validator
     pub identifiers: Option<Vec<Identifier>>,
     /// Date of publication
     #[bincode(with_serde)]
@@ -588,7 +586,6 @@ pub struct ProjectMetadataV3 {
     /// URL to a web version of the book or reference
     pub web_url: Option<String>,
     /// List of identifiers of the book (e.g. ISBNs)
-    // TODO: build identifier validator
     pub identifiers: Option<Vec<Identifier>>,
     /// Date of publication
     #[bincode(with_serde)]
@@ -661,7 +658,6 @@ pub struct ProjectMetadataV4 {
     /// URL to a web version of the book or reference
     pub web_url: Option<String>,
     /// List of identifiers of the book (e.g. ISBNs)
-    // TODO: build identifier validator
     pub identifiers: Option<Vec<Identifier>>,
     /// Date of publication
     #[bincode(with_serde)]

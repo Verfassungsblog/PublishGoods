@@ -577,7 +577,7 @@ export type MyQualifiedUrl = {
 
 export function BibliographyAPI() {
     async function get_bibliography_tree(project_id: string): Promise<BibTreeEntry[]> {
-        const response = await fetch(`/project/${project_id}/bibliography`, {
+        const response = await fetch(`/api/project/${project_id}/bibliography`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -601,7 +601,7 @@ export function BibliographyAPI() {
     }
 
     async function get_bibliography_entry(project_id: string, entry_id: string): Promise<BibEntryOrFolder> {
-        const response = await fetch(`/project/${project_id}/bibliography/${entry_id}`, {
+        const response = await fetch(`/api/project/${project_id}/bibliography/${entry_id}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -625,7 +625,7 @@ export function BibliographyAPI() {
     }
 
     async function post_bibliography_entry(project_id: string, entry: BibEntryOrFolder): Promise<string> {
-        const response = await fetch(`/project/${project_id}/bibliography`, {
+        const response = await fetch(`/api/project/${project_id}/bibliography`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -650,7 +650,7 @@ export function BibliographyAPI() {
     }
 
     async function patch_bibliography_entry(project_id: string, entry_id: string, patch: BibEntryOrFolder): Promise<void> {
-        const response = await fetch(`/project/${project_id}/bibliography/${entry_id}`, {
+        const response = await fetch(`/api/project/${project_id}/bibliography/${entry_id}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json'
@@ -670,7 +670,7 @@ export function BibliographyAPI() {
     }
 
     async function delete_bibliography_entry(project_id: string, entry_id: string): Promise<void> {
-        const response = await fetch(`/project/${project_id}/bibliography/${entry_id}`, {
+        const response = await fetch(`/api/project/${project_id}/bibliography/${entry_id}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'

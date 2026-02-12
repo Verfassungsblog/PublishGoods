@@ -27,7 +27,7 @@ pub struct BibTreeEntry {
     pub children: Vec<BibTreeEntry>,
 }
 
-#[get("/project/<project_id>/bibliography")]
+#[get("/api/project/<project_id>/bibliography")]
 pub async fn get_bibliography_tree(
     project_id: &str,
     _session: Session,
@@ -136,7 +136,7 @@ fn entry_sort_key(id: Uuid, bib: &Bibliography) -> (u8, String) {
     }
 }
 
-#[get("/project/<project_id>/bibliography/<entry_id>")]
+#[get("/api/project/<project_id>/bibliography/<entry_id>")]
 pub async fn get_bibliography_entry(
     project_id: &str,
     entry_id: &str,
@@ -178,7 +178,7 @@ pub struct BibSearchResult {
 }
 
 /// Search bibliography entries (entries only, folders excluded) by title, UUID or contributor names
-#[get("/project/<project_id>/bibliography/search?<q>")]
+#[get("/api/project/<project_id>/bibliography/search?<q>")]
 pub async fn search_bibliography_entries(
     project_id: &str,
     q: &str,
@@ -254,7 +254,7 @@ pub async fn search_bibliography_entries(
     Ok(results.into())
 }
 
-#[post("/project/<project_id>/bibliography", data = "<entry>")]
+#[post("/api/project/<project_id>/bibliography", data = "<entry>")]
 pub async fn post_bibliography_entry(
     project_id: &str,
     entry: Json<BibEntryOrFolder>,
@@ -297,7 +297,7 @@ pub async fn post_bibliography_entry(
     Ok(id.into())
 }
 
-#[patch("/project/<project_id>/bibliography/<entry_id>", data = "<patch>")]
+#[patch("/api/project/<project_id>/bibliography/<entry_id>", data = "<patch>")]
 pub async fn patch_bibliography_entry(
     project_id: &str,
     entry_id: &str,
@@ -341,7 +341,7 @@ pub async fn patch_bibliography_entry(
     Ok(().into())
 }
 
-#[delete("/project/<project_id>/bibliography/<entry_id>")]
+#[delete("/api/project/<project_id>/bibliography/<entry_id>")]
 pub async fn delete_bibliography_entry(
     project_id: &str,
     entry_id: &str,

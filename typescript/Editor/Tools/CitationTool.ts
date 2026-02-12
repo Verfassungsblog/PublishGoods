@@ -271,7 +271,7 @@ export class CitationTool {
     }
 
     async send_search(query: string, project_id: string) {
-        const url = `/project/${project_id}/bibliography/search?q=${encodeURIComponent(query)}`;
+        const url = `/api/project/${project_id}/bibliography/search?q=${encodeURIComponent(query)}`;
         const response = await fetch(url, {
             method: 'GET',
             headers: {
