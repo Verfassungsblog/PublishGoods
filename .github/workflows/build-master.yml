@@ -75,8 +75,8 @@ jobs:
         run: | 
           ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "sudo systemctl stop verfassungsbooks-server.service"
           ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "rm -Rf /home/verfassungsbooks/verfassungsbooks-server/data"
-          scp -i ~/.ssh/prod_ssh_key -v -o RequestTTY=no -r verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data data
-          scp -i ~/.ssh/staging_ssh_key -v -o RequestTTY=no -r data verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data
+          rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/prod_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/ data/
+          rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/staging_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" data/ verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/
       - name: Upload artifact to staging server
         run: scp -i ~/.ssh/staging_ssh_key dest/verfassungsbooks-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-bundled.tar.gz
       - name: Start update and start staging server
