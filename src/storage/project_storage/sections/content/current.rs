@@ -5,8 +5,7 @@ use vb_exchange::projects::BlockType;
 use yrs::types::array::Array;
 use yrs::types::map::Map;
 use yrs::updates::decoder::Decode as _;
-use yrs::updates::encoder::Encode as _;
-use yrs::{types::map::MapRef, Doc, GetString, MapPrelim, ReadTxn, Transact, Transaction};
+use yrs::{types::map::MapRef, Doc, MapPrelim, ReadTxn, Transact, Transaction};
 
 pub struct MapRefWithTransaction<'a, 'b> {
     pub map_ref: MapRef,

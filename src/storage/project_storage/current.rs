@@ -5,13 +5,11 @@ use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{
     ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION,
 };
-use crate::storage::{
-    BibEntryV2, BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges, ProjectListEntry,
-};
+use crate::storage::{BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges, ProjectListEntry};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
-use hayagriva::types::{DurationRange, MaybeTyped, Numeric, SerialNumber};
+use hayagriva::types::{MaybeTyped, SerialNumber};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;

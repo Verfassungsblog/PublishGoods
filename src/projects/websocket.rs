@@ -5,16 +5,13 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
-use dashmap::mapref::one::RefMut;
 use dashmap::DashMap;
 use rocket::futures::{SinkExt, StreamExt};
 use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Error;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use uuid::Uuid;
 use yrs::updates::decoder::Decode;
 use yrs::StateVector;
 use yrs::{Doc, ReadTxn, Transact, Update};
@@ -39,7 +36,7 @@ impl DocumentState {
         settings: &Settings,
     ) -> Self {
         debug!("Creating ydoc for section {}", document_id);
-        let mut ydoc = Doc::new();
+        let ydoc = Doc::new();
         let project_lock = project_storage
             .get_project(project_id, &settings)
             .await
@@ -316,7 +313,7 @@ pub async fn websocket<'a>(
         }
     };
     ws.channel(move |mut stream| Box::pin(async move {
-        let mut client_id = uuid::Uuid::new_v4();
+        let client_id = uuid::Uuid::new_v4();
         let mut document_id : Option<uuid::Uuid> = None;
         let mut broadcast_rx : Option<broadcast::Receiver<BroadcastMessage>> = None;
 

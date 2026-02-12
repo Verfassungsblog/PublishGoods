@@ -9,7 +9,7 @@ use hayagriva::types::{
     Date, Duration, DurationRange, FormatString, MaybeTyped, Numeric, NumericDelimiter,
     NumericValue, QualifiedUrl, SerialNumber,
 };
-use hayagriva::types::{EntryType, PageRanges, PageRangesPart};
+use hayagriva::types::{EntryType, PageRangesPart};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

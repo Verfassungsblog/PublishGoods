@@ -1,4 +1,4 @@
-use crate::utils::api_helpers::{APIResponse, APIResult};
+use crate::utils::api_helpers::APIResult;
 
 /// Search lobid GND API (https://lobid.org/gnd/api)
 #[get("/api/gnd?<q>")]

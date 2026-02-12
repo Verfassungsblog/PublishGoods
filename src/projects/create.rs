@@ -9,7 +9,6 @@ use rocket::response::Redirect;
 use rocket::State;
 use rocket_dyn_templates::Template;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Show create project form

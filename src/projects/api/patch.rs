@@ -5,7 +5,6 @@ use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::{Bibliography, PersonUuidOrString};
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{ProjectData, ProjectMetadata, ProjectStorage};
-use crate::storage::{BibEntryV2, BibEntryV3};
 use crate::utils::api_helpers::APIResult;
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
@@ -15,7 +14,6 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 #[derive(Debug, Serialize, Deserialize)]

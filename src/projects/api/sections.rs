@@ -5,7 +5,6 @@ use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::{
     get_section_by_path, get_section_by_path_mut, PersonUuidOrString,
 };
-use crate::storage::project_storage::sections::content::current::NewContentBlock;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};

@@ -1,7 +1,6 @@
 use crate::storage::project_storage::current::{
     Bibliography, PersonUuidOrString, ProjectDataV10, ProjectMetadataV5,
 };
-use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::sections::migration::{
     SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionOrTocV5, SectionV5,
 };

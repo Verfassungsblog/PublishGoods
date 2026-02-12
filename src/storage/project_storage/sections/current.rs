@@ -50,7 +50,7 @@ pub struct SectionMetadataV6 {
 
 impl Section {
     pub fn clone_without_content(&self) -> Section {
-        let mut new_section = Section {
+        let new_section = Section {
             id: self.id.clone(),
             css_classes: self.css_classes.clone(),
             sub_sections: self.sub_sections.clone(),
@@ -62,7 +62,7 @@ impl Section {
     }
 
     pub fn clone_without_subsections(&self) -> Section {
-        let mut new_section = Section {
+        let new_section = Section {
             id: self.id.clone(),
             css_classes: self.css_classes.clone(),
             sub_sections: Vec::new(),
