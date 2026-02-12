@@ -44,9 +44,18 @@ export class CitationTool {
             "<label>Modify Citation:</label><br>" +
             // Title placeholder, will be filled after fetch
             "<div id='citation-entry-title' style='font-weight: 600; margin-bottom: 6px;'>Loading…</div>"+
+            // Prefix/Suffix inputs
+            "<div class='mt-1'>"+
+            "<label for='citation-prefix' style='display:block'>Prefix (optional)</label>"+
+            "<input type='text' class='cdx-input' id='citation-prefix' placeholder='e.g., see also'/>"+
+            "</div>"+
+            "<div class='mt-1'>"+
+            "<label for='citation-suffix' style='display:block'>Suffix (optional)</label>"+
+            "<input type='text' class='cdx-input' id='citation-suffix' placeholder='e.g., p. 42'/>"+
+            "</div>"+
             "<div style='display: flex; justify-content: space-between; gap: 8px'>"+
             "<button id='citation-edit-entry' class='btn btn-sm btn-primary mt-1'>Edit entry</button>"+
-            "<span style='flex:1'></span>"+
+            "<button id='citation-save' class='btn btn-sm btn-success mt-1'>Save</button>"+
             "<button id='citation-delete' class='btn btn-sm btn-danger mt-1'>Delete Citation</button>"+
             "<button id='citation-abort' class='btn btn-sm btn-secondary mt-1'>Cancel</button>"+
             "</div>" +
@@ -102,6 +111,28 @@ export class CitationTool {
                     await openEntryEditorInPreview(key);
                     settings_dialog.remove();
                 });
+
+                // Prefill prefix/suffix inputs from citation element
+                const prefixInput = document.getElementById('citation-prefix') as HTMLInputElement;
+                const suffixInput = document.getElementById('citation-suffix') as HTMLInputElement;
+                if(prefixInput){ prefixInput.value = citation.getAttribute('data-prefix') || ''; }
+                if(suffixInput){ suffixInput.value = citation.getAttribute('data-suffix') || ''; }
+
+                // Save handler: persist attributes to element
+                const saveBtn = document.getElementById('citation-save');
+                if(saveBtn){
+                    saveBtn.addEventListener('click', () => {
+                        const parent = citation.parentElement;
+                        const pref = prefixInput?.value?.trim() || '';
+                        const suff = suffixInput?.value?.trim() || '';
+                        if(pref){ citation.setAttribute('data-prefix', pref); } else { citation.removeAttribute('data-prefix'); }
+                        if(suff){ citation.setAttribute('data-suffix', suff); } else { citation.removeAttribute('data-suffix'); }
+                        settings_dialog.remove();
+                        if (parent) {
+                            parent.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    });
+                }
             }catch(err){
                 const titleEl = document.getElementById('citation-entry-title');
                 if(titleEl){ titleEl.textContent = `Entry ${key}`; }
@@ -127,6 +158,14 @@ export class CitationTool {
         let settings_dialog_html = "" +
             "<div class='citation-settings'>" +
             "<label>Add new Citation:</label>" +
+            "<div class='mt-1'>"+
+            "<label for='citation-prefix' style='display:block'>Prefix (optional)</label>"+
+            "<input type='text' class='cdx-input' id='citation-prefix' placeholder='e.g., see also'>"+
+            "</div>"+
+            "<div class='mt-1'>"+
+            "<label for='citation-suffix' style='display:block'>Suffix (optional)</label>"+
+            "<input type='text' class='cdx-input' id='citation-suffix' placeholder='e.g., p. 42'>"+
+            "</div>"+
             "<input type='text' class='cdx-input' id='citation-search' placeholder='Search title, author or editor'>"+
             "<div id='citation-search-res' class='hide'><ul id='citation-search-res-ul'></ul></div>"+
             "<div style='display: flex; justify-content: space-between'><button id='citation-abort' class='btn btn-sm btn-secondary mt-1'>Cancel</button></div>" +
@@ -179,6 +218,13 @@ export class CitationTool {
                     let citeentry = document.createElement("citation");
                     citeentry.innerText = "C";
                     citeentry.setAttribute("data-key", key || "");
+                    // Read optional prefix/suffix from inputs
+                    const prefixInput = document.getElementById('citation-prefix') as HTMLInputElement | null;
+                    const suffixInput = document.getElementById('citation-suffix') as HTMLInputElement | null;
+                    const pref = prefixInput?.value?.trim() || '';
+                    const suff = suffixInput?.value?.trim() || '';
+                    if(pref){ citeentry.setAttribute('data-prefix', pref); }
+                    if(suff){ citeentry.setAttribute('data-suffix', suff); }
                     citeentry.addEventListener("click", CitationTool.show_note_settings_editor);
                     range.collapse(false);
                     range.insertNode(citeentry);

@@ -846,21 +846,34 @@ pub fn render_text(
     add_soft_hyphens: bool,
 ) -> String {
     let re: Regex = Regex::new(r#"<span(?:[^>]*?\bnote-type="([^"]+)")?(?:[^>]*?\bnote-content="([^"]+)")?[^>]*>.*?</span>"#).unwrap(); //TODO: DO NOT RECOMPILE REGEX, it's bad for performance
-    let re3 = Regex::new(r#"<citation data-key="([^"]*)">C</citation>"#).unwrap();
+    let re_citation = Regex::new(r#"<citation\b([^>]*)>.*?</citation>"#).unwrap();
+    let re_key = Regex::new(r#"\bdata-key="([^"]*)""#).unwrap();
+    let re_prefix = Regex::new(r#"\bdata-prefix="([^"]*)""#).unwrap();
+    let re_suffix = Regex::new(r#"\bdata-suffix="([^"]*)""#).unwrap();
 
     // First Step: Convert Citations to Endnotes
-    let res = re3.replace_all(&text, |caps: &regex::Captures| {
-        let key = match caps.get(1) {
+    let res = re_citation.replace_all(&text, |caps: &regex::Captures| {
+        let attrs = caps.get(1).map_or("", |m| m.as_str());
+        let key = match re_key.captures(attrs).and_then(|c| c.get(1)) {
             Some(key) => key.as_str(),
             None => return String::new(),
         };
+        let prefix = re_prefix
+            .captures(attrs)
+            .and_then(|c| c.get(1))
+            .map_or("", |m| m.as_str());
+        let suffix = re_suffix
+            .captures(attrs)
+            .and_then(|c| c.get(1))
+            .map_or("", |m| m.as_str());
 
         // TODO: add setting if citations should be rendered as endnotes, in text or as footnotes
         match citation_bib.get(key) {
             Some(citation) => {
+                let full_citation = format!("{}{}{}", prefix, citation, suffix);
                 let test = format!(
                     "<span note-type=\"endnote\" note-content=\"{}\"></span>",
-                    escape_html(citation)
+                    escape_html(&full_citation)
                 );
                 println!("Citation got converted to: {}", test);
                 test
@@ -911,17 +924,27 @@ pub fn render_text(
         )
     });
     let binding = res2.to_string();
-    let res3 = re3.replace_all(&binding, |caps: &regex::Captures| {
-        let key = match caps.get(1) {
+    let res3 = re_citation.replace_all(&binding, |caps: &regex::Captures| {
+        let attrs = caps.get(1).map_or("", |m| m.as_str());
+        let key = match re_key.captures(attrs).and_then(|c| c.get(1)) {
             Some(key) => key.as_str(),
             None => return String::new(),
         };
+        let prefix = re_prefix
+            .captures(attrs)
+            .and_then(|c| c.get(1))
+            .map_or("", |m| m.as_str());
+        let suffix = re_suffix
+            .captures(attrs)
+            .and_then(|c| c.get(1))
+            .map_or("", |m| m.as_str());
 
         // TODO: add setting if citations should be rendered as endnotes, in text or as footnotes
         match citation_bib.get(key) {
             Some(citation) => {
                 let uuid = uuid::Uuid::new_v4();
-                endnote_storage.push((uuid, citation.clone()));
+                let full_citation = format!("{}{}{}", prefix, citation, suffix);
+                endnote_storage.push((uuid, full_citation));
                 format!(
                     "<sup class=\"endnote\"><a href=\"#note-{}\">{}</a></sup>",
                     uuid,
@@ -973,6 +996,34 @@ fn unescape_html(text: &str) -> String {
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_citation_prefix_suffix_extraction() {
+        let html = String::from(
+            r#"<p>Before <citation data-key="5136e861-cb95-47d6-8236-a892aee6850c" data-prefix="TESTprefix" data-suffix="TESTsuffix">C</citation> After</p>"#,
+        );
+
+        // Prepare minimal inputs
+        let mut endnotes: Vec<(uuid::Uuid, String)> = Vec::new();
+        let dict = Standard::from_embedded(hyphenation::Language::EnglishUS).unwrap();
+        let mut citation_bib = HashMap::new();
+        citation_bib.insert(
+            String::from("5136e861-cb95-47d6-8236-a892aee6850c"),
+            String::from("RenderedCitation"),
+        );
+
+        let _rendered = render_text(html, &mut endnotes, &dict, &citation_bib, false);
+
+        assert_eq!(endnotes.len(), 1, "Exactly one endnote should be created");
+        let (_id, content) = &endnotes[0];
+        // The content is alphanumeric only, so escaped/unescaped are the same
+        assert_eq!(content, "TESTprefixRenderedCitationTESTsuffix");
+    }
 }
 
 /// Recursively adds any authors and editors from the given `section`

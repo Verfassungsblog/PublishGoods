@@ -499,6 +499,15 @@ textarea{
     color: white;
 }
 
+.btn-success{
+    border: 1px solid var(--green);
+    color: var(--green);
+}
+.btn-success:hover{
+    background-color: var(--green);
+    color: white;
+}
+
 h1{
     clear: both;
 }
