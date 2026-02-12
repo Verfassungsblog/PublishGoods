@@ -9,7 +9,7 @@
     <div class="editor_section_view_metadata">
         <div class="form-group">
             <label>Folder Name</label>
-            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="name" value="{{entry.BibFolder.name}}">
+            <input type="text" class="form-control form-control-sm bib-quickchange" data-path="BibFolder.name" value="{{entry.BibFolder.name}}">
         </div>
 
         <div class="form-group mt-4">

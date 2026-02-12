@@ -213,6 +213,17 @@ body{
 .sidebar-contents-section-body.drag-source{
     opacity: 0.6;
 }
+.bibliography-node.dragging {
+    opacity: 0.5;
+}
+.bibliography-node.drag-over > .sidebar-contents-section-body {
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67, 87, 173, 0.08);
+}
+#bibliography-tree-root.drag-over {
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67, 87, 173, 0.04);
+}
 [data-dropzone]{
     min-height: 0; /* hidden by default; no layout impact when not dragging */
 }
@@ -897,4 +908,84 @@ customstyle{
 .fullwidth-select{
     max-width: 100% !important;
     width: 100% !important;
+}
+
+/* Bibliography tree root drop zone (to unparent/make top-level) */
+#bibliography-tree-root .root-dropzone{
+    display: none; /* hidden by default; only visible while dragging */
+    padding: 10px 12px; /* larger padding for better visibility */
+    /* Keep the drop zone always visible at the very top of the scroll area while dragging */
+    position: sticky;
+    top: 0;
+    z-index: 5; /* stay clearly above list items */
+    margin: 0 6px 12px 6px; /* add a bit more space below to separate from list */
+    font-size: 12px;
+    color: #495057; /* slightly darker text */
+    border: 2px dashed transparent; /* thicker default border */
+    border-radius: 6px;
+    background: #ffffff; /* avoid underlying content bleeding through while sticky */
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06); /* subtle elevation to distinguish from items */
+}
+
+/* Add a soft fade below the sticky dropzone so items underneath don't compete visually */
+#bibliography-tree-root .root-dropzone::after{
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -12px; /* extend below the element */
+    height: 12px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgba(255,255,255,0.95), rgba(255,255,255,0));
+}
+
+/* Show the drop zone while any drag is active within the bibliography tree */
+#bibliography-tree-root.drag-active .root-dropzone,
+#bibliography-tree-root.drag-over .root-dropzone{
+    display: block;
+}
+
+#bibliography-tree-root.drag-over .root-dropzone{
+    border-color: #0d6efd;
+    background-color: rgba(13,110,253,0.08);
+    color: #0d6efd;
+}
+
+/* Add a small indicator icon before the text for stronger affordance */
+#bibliography-tree-root .root-dropzone::before{
+    content: "⇧ "; /* up arrow indicates moving to top-level */
+    font-weight: bold;
+    color: inherit;
+}
+
+/* Citation search popover styling */
+#citation-search-res {
+  margin-top: 6px;
+  max-height: 220px; /* make list scrollable and avoid overflow */
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  z-index: 10000;
+}
+
+#citation-search-res.hide { display: none; }
+
+#citation-search-res-ul {
+  list-style: none; /* remove bullets */
+  margin: 0;
+  padding: 4px 0;
+}
+
+.citation-search-res-li {
+  padding: 6px 10px;
+  cursor: pointer; /* pointer cursor for clickable items */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.citation-search-res-li:hover {
+  background: #f5f5f5;
 }

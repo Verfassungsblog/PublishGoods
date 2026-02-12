@@ -93,7 +93,7 @@ export class CitationTool {
         let settings_dialog_html = "" +
             "<div class='citation-settings'>" +
             "<label>Add new Citation:</label>" +
-            "<input type='text' class='cdx-input' id='citation-search' placeholder='Search Citation Key'>"+
+            "<input type='text' class='cdx-input' id='citation-search' placeholder='Search title, author or editor'>"+
             "<div id='citation-search-res' class='hide'><ul id='citation-search-res-ul'></ul></div>"+
             "<div style='display: flex; justify-content: space-between'><button id='citation-abort' class='btn btn-sm btn-secondary mt-1'>Cancel</button></div>" +
             "</div>";
@@ -129,8 +129,12 @@ export class CitationTool {
 
             search_res_ul.innerHTML = "";
             search_res_div.classList.remove("hide");
-            for(let entry of search_res.data){
-                let li = "<li data-key='"+entry.key+"' class='citation-search-res-li'>["+entry.entry_type+"] "+entry.key+"</li>"
+            // Limit client-side as a safeguard, even though backend also limits
+            const items = (search_res.data || []).slice(0, 5);
+            for(let entry of items){
+                // entry has: id, entry_type, title
+                let safeTitle = (entry.title || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                let li = "<li data-key='"+entry.id+"' class='citation-search-res-li'>["+entry.entry_type+"] "+safeTitle+"</li>"
                 search_res_ul.innerHTML += li;
             }
 
@@ -187,7 +191,8 @@ export class CitationTool {
     }
 
     async send_search(query: string, project_id: string) {
-        const response = await fetch(`/api/projects/` + project_id + `/bibliography/search?query=` + query, {
+        const url = `/project/${project_id}/bibliography/search?q=${encodeURIComponent(query)}`;
+        const response = await fetch(url, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'

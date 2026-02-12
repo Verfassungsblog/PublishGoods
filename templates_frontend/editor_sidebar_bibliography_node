@@ -1,5 +1,5 @@
-<div class="sidebar-contents-section bibliography-node {{#if is_folder}}is-folder{{else}}is-entry{{/if}}" data-id="{{id}}">
-    <div class="sidebar-contents-section-body">
+<div class="sidebar-contents-section bibliography-node {{#if is_folder}}is-folder{{else}}is-entry{{/if}}" data-id="{{id}}" draggable="true">
+    <div class="sidebar-contents-section-body {{#is id active_id}}active{{/is}}">
         <span class="section-icon">
             {{#if is_folder}}
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-folder-fill" viewBox="0 0 16 16">
@@ -16,7 +16,7 @@
     {{#if children.length}}
     <div class="sidebar-contents-section-children">
         {{#each children}}
-            {{> editor_sidebar_bibliography_node this}}
+            {{> editor_sidebar_bibliography_node this active_id=../active_id}}
         {{/each}}
     </div>
     {{/if}}

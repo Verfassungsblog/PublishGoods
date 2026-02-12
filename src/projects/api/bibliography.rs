@@ -7,6 +7,7 @@ use hayagriva::types::EntryType;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::State;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -58,8 +59,11 @@ pub async fn get_bibliography_tree(
     }
 
     if let Some(root_ids) = by_parent.get(&None) {
-        for id in root_ids {
-            tree.push(build_tree_node(*id, &bibliography, &by_parent));
+        // Sort: folders first, then entries; both alphabetically by name (case-insensitive)
+        let mut root_ids_sorted = root_ids.clone();
+        sort_ids_by_folder_then_name(&mut root_ids_sorted, &bibliography);
+        for id in root_ids_sorted {
+            tree.push(build_tree_node(id, &bibliography, &by_parent));
         }
     }
 
@@ -86,8 +90,10 @@ fn build_tree_node(
 
     let mut children = Vec::new();
     if let Some(child_ids) = by_parent.get(&Some(id)) {
-        for child_id in child_ids {
-            children.push(build_tree_node(*child_id, bib, by_parent));
+        let mut child_ids_sorted = child_ids.clone();
+        sort_ids_by_folder_then_name(&mut child_ids_sorted, bib);
+        for child_id in child_ids_sorted {
+            children.push(build_tree_node(child_id, bib, by_parent));
         }
     }
 
@@ -99,6 +105,34 @@ fn build_tree_node(
             name,
         },
         children,
+    }
+}
+
+// Helper: sort IDs so that folders come first, then entries; both groups sorted alphabetically (case-insensitive)
+fn sort_ids_by_folder_then_name(ids: &mut Vec<Uuid>, bib: &Bibliography) {
+    ids.sort_by(|a, b| {
+        let (ka, na) = entry_sort_key(*a, bib);
+        let (kb, nb) = entry_sort_key(*b, bib);
+        match ka.cmp(&kb) {
+            Ordering::Equal => na.cmp(&nb),
+            other => other,
+        }
+    });
+}
+
+// Returns (group_key, name) where group_key ensures folders (0) sort before entries (1)
+fn entry_sort_key(id: Uuid, bib: &Bibliography) -> (u8, String) {
+    let entry = bib.entries.get(&id).unwrap();
+    match entry {
+        BibEntryOrFolder::BibFolder(f) => (0u8, f.name.to_lowercase()),
+        BibEntryOrFolder::BibEntry(e) => {
+            let name = if let Some(title) = &e.title {
+                title.value.clone()
+            } else {
+                e.key.to_string()
+            };
+            (1u8, name.to_lowercase())
+        }
     }
 }
 
@@ -134,6 +168,90 @@ pub async fn get_bibliography_entry(
         })?;
 
     Ok(entry.clone().into())
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BibSearchResult {
+    pub id: Uuid,
+    pub entry_type: EntryType,
+    pub title: String,
+}
+
+/// Search bibliography entries (entries only, folders excluded) by title, UUID or contributor names
+#[get("/project/<project_id>/bibliography/search?<q>")]
+pub async fn search_bibliography_entries(
+    project_id: &str,
+    q: &str,
+    _session: Session,
+    settings: &State<Settings>,
+    project_storage: &State<Arc<ProjectStorage>>,
+) -> APIResult<Vec<BibSearchResult>> {
+    let project_uuid = Uuid::parse_str(project_id)
+        .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
+    let project_lock = project_storage
+        .get_project(&project_uuid, settings)
+        .await
+        .map_err(|e| ApiError::from(e))?;
+    let project = project_lock
+        .read()
+        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
+
+    let bibliography = &project.bibliography;
+    let needle = q.to_lowercase();
+
+    let mut results: Vec<BibSearchResult> = Vec::new();
+    for (id, entry) in &bibliography.entries {
+        if let BibEntryOrFolder::BibEntry(e) = entry {
+            // Title or UUID string match
+            let mut haystacks: Vec<String> = vec![e.key.to_string().to_lowercase()];
+
+            if let Some(title) = &e.title {
+                haystacks.push(title.value.to_lowercase());
+            }
+
+            // Search in contributors (authors/editors) if present
+            for p in e.authors.iter().chain(e.editors.iter()) {
+                // `name` is a mandatory `String` in MyPerson
+                haystacks.push(p.name.to_lowercase());
+                if let Some(n) = &p.given_name {
+                    haystacks.push(n.to_lowercase());
+                }
+                if let Some(n) = &p.prefix {
+                    haystacks.push(n.to_lowercase());
+                }
+                if let Some(n) = &p.suffix {
+                    haystacks.push(n.to_lowercase());
+                }
+                if let Some(n) = &p.alias {
+                    haystacks.push(n.to_lowercase());
+                }
+            }
+
+            if haystacks.iter().any(|h| h.contains(&needle)) {
+                let title = e
+                    .title
+                    .as_ref()
+                    .map(|t| t.value.clone())
+                    .unwrap_or_else(|| e.key.to_string());
+                results.push(BibSearchResult {
+                    id: *id,
+                    entry_type: e.entry_type,
+                    title,
+                });
+            }
+        }
+    }
+
+    // Basic ordering: by title
+    results.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+
+    // Limit the number of results to avoid overly long suggestion lists
+    const MAX_RESULTS: usize = 5;
+    if results.len() > MAX_RESULTS {
+        results.truncate(MAX_RESULTS);
+    }
+
+    Ok(results.into())
 }
 
 #[post("/project/<project_id>/bibliography", data = "<entry>")]

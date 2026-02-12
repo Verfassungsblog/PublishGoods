@@ -243,6 +243,7 @@ async fn rocket() -> _ {
                 projects::api::sections::move_section_after,
                 projects::api::sections::move_section_child_of,
                 projects::api::bibliography::get_bibliography_tree,
+                projects::api::bibliography::search_bibliography_entries,
                 projects::api::bibliography::get_bibliography_entry,
                 projects::api::bibliography::post_bibliography_entry,
                 projects::api::bibliography::patch_bibliography_entry,

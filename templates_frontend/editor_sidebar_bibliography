@@ -13,8 +13,11 @@
         </button>
     </span>
 </div>
-<div class="sidebar-full-contents-panel-contents bibliography-tree">
+<div class="sidebar-full-contents-panel-contents bibliography-tree" id="bibliography-tree-root">
+    <div class="root-dropzone">
+        Drop here to make top-level
+    </div>
     {{#each tree}}
-        {{> editor_sidebar_bibliography_node this}}
+        {{> editor_sidebar_bibliography_node this active_id=../active_id}}
     {{/each}}
 </div>
