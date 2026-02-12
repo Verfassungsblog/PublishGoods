@@ -835,14 +835,15 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
 /// * `dict` - Hyphenation dictionary used for soft hyphenation if `add_soft_hyphens` is true.
 /// * `citation_bib` - Bibliography mapping citation keys to citation strings, used for rendering citations found in the text.
 /// * `add_soft_hyphens` - Flag indicating if soft hyphens should be conditionally inserted for hyphenation in the output.
-/// * `citations_as_footnote` - Flag indicating if citations should be rendered as foot- or endnote
 ///
 /// # Returns
 /// A string containing the rendered HTML representation of the input text, with citations, footnotes, endnotes,
 /// and custom styles processed.
 ///
 /// # Panics
-/// Does not
+/// This function panics if any of the regular expressions used for parsing (citations, endnotes/footnotes, custom styles)
+/// fail to compile.
+///
 /// # Side Effects
 /// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
 /// - Prints warnings to stderr if a citation key is not found.
@@ -894,11 +895,20 @@ pub fn render_text(
                 String::from("!!INVALID CITATION!!")
             }
         }
-    }
-    "".to_string()
-}
+    });
 
+    // Second Step: Convert Footnotes and Endnotes to HTML
+    let binding = res.to_string();
 
+    let res = re.replace_all(&binding, |caps: &regex::Captures| {
+        let note_type = match caps.get(1){
+            Some(note_type) => note_type.as_str(),
+            None => return String::new()
+        };
+        let note_content = match caps.get(2){
+            Some(note_content) => note_content.as_str(),
+            None => return String::new()
+        };
 
         if note_type == "endnote" {
             let uuid = uuid::Uuid::new_v4();
@@ -912,6 +922,7 @@ pub fn render_text(
         }else{
             String::new()
         }
+    });
 
     let re2 = RE_CUSTOMSTYLE.get_or_init(|| {
         Regex::new(r#"<customstyle(?:[^>]*?\binline-style=\"([^\"]*?)\")?(?:[^>]*?\bclasses=\"([^\"]*?)\")?[^>]*>(.*?)</customstyle>"#).unwrap()
@@ -965,44 +976,6 @@ pub fn render_text(
     } else {
         res3.to_string()
     }
-
-    for child in node.children.borrow().iter() {
-        find_replacements(child, mutations, endnote_storage, citation_bib, citations_as_footnote);
-    }
-}
-
-fn serialize_dom(dom: RcDom) -> Result<String, String> {
-    let document: SerializableHandle = dom.document.clone().into();
-    let mut buffer = Vec::new();
-    serialize(& mut buffer, &document, Default::default()).expect("serialization failed");
-    let string_result = String::from_utf8(buffer);
-    match string_result {
-        Ok(result) => Ok(result.replace("<html><head></head><body>", "").replace("</body></html>", "")),
-        Err(_) => Err(String::from("could not serialize document")),
-    }
-}
-
-struct Footnote {
-    node: Handle,
-    uuid: uuid::Uuid,
-    note_content: String
-}
-struct Endnote {
-    node: Handle,
-    uuid: uuid::Uuid,
-    endnote_key: usize
-}
-
-struct CustomStyle {
-    node: Handle,
-    classes: String,
-    inline_style: String,
-}
-
-enum ReplacementType {
-    Footnote(Footnote),
-    Endnote(Endnote),
-    CustomStyle(CustomStyle)
 }
 
 /// Escapes special HTML characters in the input text by replacing:
