@@ -1,4 +1,6 @@
 import {state} from "../Main";
+import {BibEntryOrFolder, BibliographyAPI} from "../../api_requests";
+import {openEntryEditorInPreview} from "../Bibliography";
 
 export class CitationTool {
     private button: HTMLButtonElement | null;
@@ -35,12 +37,19 @@ export class CitationTool {
         }
 
         let citation = e.target as HTMLElement;
-        
+        const key = citation.getAttribute("data-key") || "";
+
         let settings_dialog_html = "" +
             "<div class='citation-settings'>" +
             "<label>Modify Citation:</label><br>" +
-            "<span>Key: "+citation.getAttribute("data-key")+"</span><br>"+
-            "<div style='display: flex; justify-content: space-between'><button id='citation-delete' class='btn btn-sm btn-danger mt-1'>Delete Citation</button><button id='citation-abort' class='btn btn-sm btn-secondary mt-1'>Cancel</button></div>" +
+            // Title placeholder, will be filled after fetch
+            "<div id='citation-entry-title' style='font-weight: 600; margin-bottom: 6px;'>Loading…</div>"+
+            "<div style='display: flex; justify-content: space-between; gap: 8px'>"+
+            "<button id='citation-edit-entry' class='btn btn-sm btn-primary mt-1'>Edit entry</button>"+
+            "<span style='flex:1'></span>"+
+            "<button id='citation-delete' class='btn btn-sm btn-danger mt-1'>Delete Citation</button>"+
+            "<button id='citation-abort' class='btn btn-sm btn-secondary mt-1'>Cancel</button>"+
+            "</div>" +
             "</div>";
         document.body.insertAdjacentHTML('afterbegin', settings_dialog_html);
 
@@ -74,6 +83,31 @@ export class CitationTool {
                 parent.dispatchEvent(new Event('input', { bubbles: true }));
             }
         });
+
+        // Load and display entry title; wire the Edit button to open preview editor
+        (async () => {
+            try{
+                const bibAPI = BibliographyAPI();
+                const entry: BibEntryOrFolder = await bibAPI.get_bibliography_entry(state.project_id, key);
+                const titleEl = document.getElementById('citation-entry-title')!;
+                let displayTitle = key;
+                if ('BibEntry' in entry) {
+                    // @ts-ignore
+                    displayTitle = entry.BibEntry.title?.value || key;
+                }
+                titleEl.textContent = displayTitle;
+
+                const editBtn = document.getElementById('citation-edit-entry')!;
+                editBtn.addEventListener('click', async () => {
+                    await openEntryEditorInPreview(key);
+                    settings_dialog.remove();
+                });
+            }catch(err){
+                const titleEl = document.getElementById('citation-entry-title');
+                if(titleEl){ titleEl.textContent = `Entry ${key}`; }
+                console.error('Failed to load bibliography entry for citation', err);
+            }
+        })();
     }
 
     render(){

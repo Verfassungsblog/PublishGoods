@@ -258,12 +258,41 @@ body{
     width: 5px;
 }
 .preview-col{
-    flex-grow: 1;
+    /* Allow the preview flex item to actually shrink below its content's min width */
+    flex: 1 1 0;
+    min-width: 0;
     overflow: auto;
     display: flex;
     flex-direction: column;
     align-items: center;
     padding: 20px;
+}
+
+/* Ensure the in-preview bibliography editor wrapper/content can shrink within the flex item */
+#preview-bib-wrapper{
+    align-self: stretch;      /* occupy full available inline size of preview-col */
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;            /* critical for flexbox to allow shrinking */
+    display: flex;
+    flex-direction: column;
+}
+
+#preview-bib-content{
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;            /* allow form/content to shrink and scroll */
+    overflow: auto;
+}
+
+.preview-bib-toolbar{
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e5e7eb; /* light gray */
+    margin-bottom: 8px;
 }
 
 .pdf-page {

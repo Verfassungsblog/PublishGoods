@@ -10,6 +10,16 @@ const bibAPI = BibliographyAPI();
 
 let active_id: string | null = null;
 
+// Centralized list of entry types (avoid duplication)
+const ENTRY_TYPES = [
+    "Anthology", "Article", "Audio", "Blog", "Book", "Booklet", "Conference",
+    "CourtDecision", "Document", "Entry", "InBook", "InCollection",
+    "InProceedings", "Legislation", "Manual", "Map", "MastersThesis", "Misc",
+    "Patent", "Periodical", "PhdThesis", "Post", "Proceedings", "Reference",
+    "Report", "Repository", "Software", "Speech", "Standard", "TechReport",
+    "Thesis", "Unpublished", "Video", "Web", "Workshop"
+];
+
 export async function init(){
     await render_sidebar_only();
 
@@ -24,6 +34,75 @@ export async function init(){
         } else {
             main_col.innerHTML = "Select an entry to edit.";
         }
+    }
+}
+
+// Expose small helpers so other tools (e.g., CitationTool) can reuse
+// the existing editor rendering and listeners without duplicating code.
+// - openEntryEditor: opens the editor in the main column
+// - openEntryEditorInPreview: opens the editor in the preview column
+export async function openEntryEditor(id: string){
+    await show_bib_editor(id);
+}
+
+export async function openEntryEditorInPreview(id: string){
+    active_id = id;
+    // Ensure preview column is visible
+    Editor.show_preview_column();
+
+    const preview_col = document.querySelector('.preview-col') as HTMLElement | null;
+    if (!preview_col) return;
+
+    // Ensure a stable wrapper inside the preview column so re-renders don't wipe controls
+    let wrapper = preview_col.querySelector('#preview-bib-wrapper') as HTMLElement | null;
+    if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.id = 'preview-bib-wrapper';
+        // Minimal toolbar with a Close button
+        const toolbar = document.createElement('div');
+        toolbar.className = 'preview-bib-toolbar';
+        const closeBtn = document.createElement('button');
+        closeBtn.id = 'preview-bib-close';
+        closeBtn.className = 'btn btn-sm btn-secondary';
+        closeBtn.textContent = 'Close';
+        toolbar.appendChild(closeBtn);
+
+        const content = document.createElement('div');
+        content.id = 'preview-bib-content';
+
+        wrapper.appendChild(toolbar);
+        wrapper.appendChild(content);
+        // Clear and append wrapper (safe since preview is dedicated for this)
+        preview_col.innerHTML = '';
+        preview_col.appendChild(wrapper);
+
+        // Wire close action
+        closeBtn.addEventListener('click', () => {
+            // Clear content and hide preview column
+            content.innerHTML = '';
+            Editor.hide_preview_column();
+        });
+    } else {
+        // Re-bind close in case of lost listeners after hot reloads
+        const closeBtn = wrapper.querySelector('#preview-bib-close') as HTMLButtonElement | null;
+        const content = wrapper.querySelector('#preview-bib-content') as HTMLElement | null;
+        if (closeBtn && content) {
+            closeBtn.onclick = null;
+            closeBtn.addEventListener('click', () => {
+                content.innerHTML = '';
+                Editor.hide_preview_column();
+            });
+        }
+    }
+
+    const contentDiv = wrapper.querySelector('#preview-bib-content') as HTMLElement | null;
+    if (!contentDiv) return;
+
+    try{
+        await fetch_and_render_into(contentDiv, id);
+    }catch(e){
+        console.error(e);
+        show_alert("Failed to load bibliography entry.");
     }
 }
 
@@ -63,52 +142,50 @@ function add_sidebar_listeners() {
     const sidebar_panel = document.querySelector('.sidebar-full-contents-panel');
     if (!sidebar_panel) return;
 
+    // Small helper to DRY creation flow for entry/folder
+    const createAndOpen = async (payload: BibEntryOrFolder) => {
+        try {
+            const id = await bibAPI.post_bibliography_entry(state.project_id, payload);
+            active_id = id;
+            await render_sidebar_only();
+            await show_bib_editor(id);
+        } catch (e) {
+            console.error(e);
+            const what = 'BibEntry' in payload ? 'bibliography entry' : 'folder';
+            show_alert(`Failed to create new ${what}.`);
+        }
+    };
+
     sidebar_panel.addEventListener('click', async (e) => {
         const target = e.target as HTMLElement;
         // Handle "New Entry" and "New Folder" via delegation to avoid rebinding on re-render
         if (target.closest('#sidebar-new-bib-entry')) {
             e.preventDefault();
             e.stopPropagation();
-            try {
-                const newEntry: BibEntryOrFolder = {
-                    BibEntry: {
-                        key: '00000000-0000-0000-0000-000000000000', // Server will generate UUID
-                        entry_type: 'Article',
-                        authors: [],
-                        editors: [],
-                        affiliated: [],
-                        parents: []
-                    }
-                };
-                const id = await bibAPI.post_bibliography_entry(state.project_id, newEntry);
-                active_id = id;
-                await render_sidebar_only();
-                await show_bib_editor(id);
-            } catch (e) {
-                console.error(e);
-                show_alert("Failed to create new bibliography entry.");
-            }
+            const newEntry: BibEntryOrFolder = {
+                BibEntry: {
+                    key: '00000000-0000-0000-0000-000000000000', // Server will generate UUID
+                    entry_type: 'Article',
+                    authors: [],
+                    editors: [],
+                    affiliated: [],
+                    parents: []
+                }
+            };
+            await createAndOpen(newEntry);
             return;
         }
 
         if (target.closest('#sidebar-new-bib-folder')) {
             e.preventDefault();
             e.stopPropagation();
-            try {
-                const newFolder: BibEntryOrFolder = {
-                    BibFolder: {
-                        name: 'New Folder',
-                        parent: null
-                    }
-                };
-                const id = await bibAPI.post_bibliography_entry(state.project_id, newFolder);
-                active_id = id;
-                await render_sidebar_only();
-                await show_bib_editor(id);
-            } catch (e) {
-                console.error(e);
-                show_alert("Failed to create new folder.");
-            }
+            const newFolder: BibEntryOrFolder = {
+                BibFolder: {
+                    name: 'New Folder',
+                    parent: null
+                }
+            };
+            await createAndOpen(newFolder);
             return;
         }
 
@@ -228,26 +305,7 @@ async function show_bib_editor(id: string) {
     if (!main_col) return;
 
     try {
-        const entry = await bibAPI.get_bibliography_entry(state.project_id, id);
-
-        const entry_types = [
-            "Anthology", "Article", "Audio", "Blog", "Book", "Booklet", "Conference",
-            "CourtDecision", "Document", "Entry", "InBook", "InCollection",
-            "InProceedings", "Legislation", "Manual", "Map", "MastersThesis", "Misc",
-            "Patent", "Periodical", "PhdThesis", "Post", "Proceedings", "Reference",
-            "Report", "Repository", "Software", "Speech", "Standard", "TechReport",
-            "Thesis", "Unpublished", "Video", "Web", "Workshop"
-        ];
-
-        if ('BibEntry' in entry) {
-            // @ts-ignore
-            main_col.innerHTML = Handlebars.templates.editor_bibliography_entry_editor({entry, entry_types});
-        } else {
-            // @ts-ignore
-            main_col.innerHTML = Handlebars.templates.editor_bibliography_folder_editor({entry});
-        }
-
-        add_editor_listeners(id, entry);
+        await fetch_and_render_into(main_col, id);
     } catch (e) {
         console.error(e);
         show_alert("Failed to load bibliography entry.");
@@ -266,8 +324,17 @@ function debounce(fn: Function, delay: number = 500) {
     return debounced;
 }
 
-function add_editor_listeners(id: string, entry: BibEntryOrFolder) {
-    const main_col = document.querySelector('.main-col') as HTMLElement;
+function add_editor_listeners(rootEl: HTMLElement, id: string, entry: BibEntryOrFolder) {
+    const main_col = rootEl;
+
+    const rerenderIntoSameContainer = async () => {
+        try {
+            await fetch_and_render_into(main_col, id);
+        } catch (e) {
+            console.error(e);
+            show_alert("Failed to refresh bibliography editor.");
+        }
+    };
 
     const save = debounce(async () => {
         try {
@@ -279,6 +346,13 @@ function add_editor_listeners(id: string, entry: BibEntryOrFolder) {
             show_alert("Failed to save bibliography entry.");
         }
     }, 500);
+
+    // Helper to persist current entry state immediately and re-render into same container
+    const persistAndRerender = async () => {
+        await save.flush();
+        await bibAPI.patch_bibliography_entry(state.project_id, id, entry);
+        await rerenderIntoSameContainer();
+    };
 
     main_col.querySelectorAll('.bib-quickchange').forEach(input => {
         const handler = async (e: Event) => {
@@ -344,9 +418,7 @@ function add_editor_listeners(id: string, entry: BibEntryOrFolder) {
                 if (!entry.BibEntry[type]) entry.BibEntry[type] = [];
                 // @ts-ignore
                 entry.BibEntry[type].push({name: ''});
-                await save.flush(); 
-                await bibAPI.patch_bibliography_entry(state.project_id, id, entry);
-                await show_bib_editor(id); // Re-render to show new row
+                await persistAndRerender(); // Re-render to show new row
             }
         });
     });
@@ -359,14 +431,12 @@ function add_editor_listeners(id: string, entry: BibEntryOrFolder) {
             if ('BibEntry' in entry) {
                 // @ts-ignore
                 entry.BibEntry[type].splice(index, 1);
-                await save.flush();
-                await bibAPI.patch_bibliography_entry(state.project_id, id, entry);
-                await show_bib_editor(id); // Re-render
+                await persistAndRerender(); // Re-render
             }
         });
     });
 
-    document.getElementById('bib_entry_delete')?.addEventListener('click', async () => {
+    main_col.querySelector('#bib_entry_delete')?.addEventListener('click', async () => {
         if (confirm("Are you sure you want to delete this?")) {
             try {
                 await bibAPI.delete_bibliography_entry(state.project_id, id);
@@ -379,6 +449,25 @@ function add_editor_listeners(id: string, entry: BibEntryOrFolder) {
             }
         }
     });
+}
+
+// Helper to render a bibliography entry or folder into a given container and attach listeners
+function render_entry_into(container: HTMLElement, id: string, entry: BibEntryOrFolder){
+    if ('BibEntry' in entry) {
+        // @ts-ignore
+        container.innerHTML = Handlebars.templates.editor_bibliography_entry_editor({entry, entry_types: ENTRY_TYPES});
+    } else {
+        // @ts-ignore
+        container.innerHTML = Handlebars.templates.editor_bibliography_folder_editor({entry});
+    }
+
+    add_editor_listeners(container, id, entry);
+}
+
+// Helper to fetch an entry and render it into the provided container
+async function fetch_and_render_into(container: HTMLElement, id: string){
+    const entry = await bibAPI.get_bibliography_entry(state.project_id, id);
+    render_entry_into(container, id, entry);
 }
 
 function set_value_by_path(obj: any, path: string, value: any) {
