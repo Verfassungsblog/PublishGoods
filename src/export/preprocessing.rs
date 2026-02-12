@@ -22,12 +22,21 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::projects::{
     PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedLicense, PreparedMetadata,
     PreparedSection, PreparedSectionMetadata,
 };
 use vb_exchange::RenderingError;
+
+// Lazily-initialized regular expressions used by `render_text` to avoid recompilation overhead
+static RE_NOTE_SPAN: OnceLock<Regex> = OnceLock::new();
+static RE_CITATION: OnceLock<Regex> = OnceLock::new();
+static RE_KEY: OnceLock<Regex> = OnceLock::new();
+static RE_PREFIX: OnceLock<Regex> = OnceLock::new();
+static RE_SUFFIX: OnceLock<Regex> = OnceLock::new();
+static RE_CUSTOMSTYLE: OnceLock<Regex> = OnceLock::new();
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
 ///
@@ -845,11 +854,14 @@ pub fn render_text(
     citation_bib: &HashMap<String, String>,
     add_soft_hyphens: bool,
 ) -> String {
-    let re: Regex = Regex::new(r#"<span(?:[^>]*?\bnote-type="([^"]+)")?(?:[^>]*?\bnote-content="([^"]+)")?[^>]*>.*?</span>"#).unwrap(); //TODO: DO NOT RECOMPILE REGEX, it's bad for performance
-    let re_citation = Regex::new(r#"<citation\b([^>]*)>.*?</citation>"#).unwrap();
-    let re_key = Regex::new(r#"\bdata-key="([^"]*)""#).unwrap();
-    let re_prefix = Regex::new(r#"\bdata-prefix="([^"]*)""#).unwrap();
-    let re_suffix = Regex::new(r#"\bdata-suffix="([^"]*)""#).unwrap();
+    let re = RE_NOTE_SPAN.get_or_init(|| {
+        Regex::new(r#"<span(?:[^>]*?\bnote-type=\"([^\"]+)\")?(?:[^>]*?\bnote-content=\"([^\"]+)\")?[^>]*>.*?</span>"#).unwrap()
+    });
+    let re_citation =
+        RE_CITATION.get_or_init(|| Regex::new(r#"<citation\b([^>]*)>.*?</citation>"#).unwrap());
+    let re_key = RE_KEY.get_or_init(|| Regex::new(r#"\bdata-key=\"([^\"]*)\""#).unwrap());
+    let re_prefix = RE_PREFIX.get_or_init(|| Regex::new(r#"\bdata-prefix=\"([^\"]*)\""#).unwrap());
+    let re_suffix = RE_SUFFIX.get_or_init(|| Regex::new(r#"\bdata-suffix=\"([^\"]*)\""#).unwrap());
 
     // First Step: Convert Citations to Endnotes
     let res = re_citation.replace_all(&text, |caps: &regex::Captures| {
@@ -912,7 +924,9 @@ pub fn render_text(
         }
     });
 
-    let re2 = Regex::new(r#"<customstyle(?:[^>]*?\binline-style="([^"]*?)")?(?:[^>]*?\bclasses="([^"]*?)")?[^>]*>(.*?)</customstyle>"#).unwrap();
+    let re2 = RE_CUSTOMSTYLE.get_or_init(|| {
+        Regex::new(r#"<customstyle(?:[^>]*?\binline-style=\"([^\"]*?)\")?(?:[^>]*?\bclasses=\"([^\"]*?)\")?[^>]*>(.*?)</customstyle>"#).unwrap()
+    });
     let binding = res.to_string();
     let res2 = re2.replace_all(&binding, |caps: &regex::Captures| {
         let inline_style = caps.get(1).map_or("", |m| m.as_str());
