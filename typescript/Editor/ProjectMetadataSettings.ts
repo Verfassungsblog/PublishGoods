@@ -1,4 +1,12 @@
-import {APIProjectData, EditorAPI, PersonsAPI, PersonUuidOrString} from "../api_requests";
+import {
+    APIProjectData,
+    EditorAPI,
+    PersonsAPI,
+    PersonUuidOrString,
+    send_get_template_id_for_project,
+    send_list_templates,
+    send_set_project_template
+} from "../api_requests";
 import {init, main_col} from "./Editor";
 import {state} from "./Main";
 import {add_search, show_alert} from "../tools";
@@ -41,8 +49,24 @@ let dragged_editor_element: HTMLElement | null = null;
  * @return {void} This function does not return a value.
  */
 export async function show_project_metadata_settings(data: APIProjectData) {
-    // @ts-ignore
-    main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(data);
+    // Fetch templates + current template id to render selector
+    try{
+        const [templates, currentTmpl] = await Promise.all([
+            send_list_templates(),
+            send_get_template_id_for_project(state.project_id)
+        ]);
+        const viewData = Object.assign({}, data, {
+            available_templates: templates || [],
+            current_template_id: currentTmpl || null
+        });
+        // @ts-ignore
+        main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(viewData);
+    }catch(err){
+        console.error("Failed to load templates for selector", err);
+        // Fallback render without template selector data
+        // @ts-ignore
+        main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(data);
+    }
 
     // Clear active section highlight when project settings are shown
     state.active_section_id = null;
@@ -79,6 +103,9 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     if(data.metadata && data.metadata.ddc){
         set_initial_ddc(data.metadata.ddc);
     }
+
+    // Enable Template selector change handler
+    init_template_selector_listeners();
 }
 
 function init_ddc_listeners(){
@@ -128,6 +155,21 @@ function init_ddc_listeners(){
             const target = e.target as HTMLSelectElement;
             patch_ddc(target.value);
         });
+    });
+}
+
+function init_template_selector_listeners(){
+    const sel = document.getElementById("project_template_select") as HTMLSelectElement | null;
+    if(!sel){ return; }
+    sel.addEventListener("change", async () => {
+        const tmplId = sel.value;
+        try{
+            await send_set_project_template(state.project_id, tmplId);
+            show_alert("Template updated", "success");
+        }catch(err){
+            console.error("Failed to set template", err);
+            show_alert("Failed to update template", "danger");
+        }
     });
 }
 

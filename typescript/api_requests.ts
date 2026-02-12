@@ -18,6 +18,47 @@ export async function send_get_template_id_for_project(project_id: string) {
     }
 }
 
+export async function send_list_templates() {
+    const response = await fetch(`/api/templates`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to list templates: ${response.status}`);
+    } else {
+        let response_data = await response.json();
+        if (response_data.hasOwnProperty("error")) {
+            console.error(response_data["error"]);
+            throw new Error(`Failed to list templates: ${response_data["error"]}`);
+        } else {
+            return response_data.data;
+        }
+    }
+}
+
+export async function send_set_project_template(project_id: string, template_id: string) {
+    const response = await fetch(`/api/projects/${project_id}/template`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(template_id)
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to set project template: ${response.status}`);
+    } else {
+        let response_data = await response.json();
+        if (response_data.hasOwnProperty("error")) {
+            console.error(response_data["error"]);
+            throw new Error(`Failed to set project template: ${response_data["error"]}`);
+        } else {
+            return response_data.data;
+        }
+    }
+}
+
 export async function send_update_content_blocks(project_id: string, section_path: string, data: any) {
     const response = await fetch(`/api/projects/` + project_id + `/sections/` + section_path + "/content_blocks/", {
         method: 'PUT',

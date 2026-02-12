@@ -8,7 +8,15 @@
         <input type="checkbox" class="autopatch" id="settings.add_soft_hyphens" data-patch="settings.add_soft_hyphens" {{#if settings.add_soft_hyphens}}checked{{/if}}>
         <label for="settings.add_soft_hyphens">Add soft hyphens (activate when using vivliostyle)</label>
     </div>
-    <div class="form-group col-6">
+    <div class="form-group col-4">
+        <label for="project_template_select">Template</label>
+        <select id="project_template_select" class="fullwidth-select">
+            {{#each available_templates}}
+                <option value="{{this.id}}" {{#is this.id ../current_template_id}}selected{{/is}}>{{this.name}}</option>
+            {{/each}}
+        </select>
+    </div>
+    <div class="form-group col-4">
         <label for="settings.csl_style">Citation Style (CSL)</label>
         <select id="settings.csl_style" class="autopatch fullwidth-select" data-patch="settings.csl_style">
             <option value="">None</option>
@@ -17,7 +25,7 @@
             {{/each}}
         </select>
     </div>
-    <div class="form-group col-6">
+    <div class="form-group col-4">
         <label for="settings.csl_language_code">Citation Language</label>
         <select id="settings.csl_language_code" class="autopatch" data-patch="settings.csl_language_code">
             <option value="">None</option>
