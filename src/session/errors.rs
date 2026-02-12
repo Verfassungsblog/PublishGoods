@@ -2,5 +2,5 @@
 pub enum LoginError {
     Missing,
     Invalid,
-    Unavailable
+    Unavailable,
 }

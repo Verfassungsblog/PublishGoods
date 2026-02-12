@@ -25,38 +25,53 @@ fn main() {
     args.push("static/js/precompiled_templates.js".to_string());
 
     // Precompile handlebars templates
-    let res = std::process::Command::new("handlebars")
-        .args(args)
-        .output();
+    let res = std::process::Command::new("handlebars").args(args).output();
 
-
-    match res{
+    match res {
         Ok(res) => {
             if !res.status.success() {
-                panic!("Failed to precompile handlebars frontend templates: {} {}", String::from_utf8_lossy(&res.stdout), String::from_utf8_lossy(&res.stderr));
+                panic!(
+                    "Failed to precompile handlebars frontend templates: {} {}",
+                    String::from_utf8_lossy(&res.stdout),
+                    String::from_utf8_lossy(&res.stderr)
+                );
             }
-        },
+        }
         Err(e) => {
             panic!("Failed to precompile handlebars frontend templates: {}", e);
-        },
+        }
     }
 
-    match res_partials{
+    match res_partials {
         Ok(res) => {
             if !res.status.success() {
-                panic!("Failed to precompile handlebars frontend partials: {} {}", String::from_utf8_lossy(&res.stdout), String::from_utf8_lossy(&res.stderr));
+                panic!(
+                    "Failed to precompile handlebars frontend partials: {} {}",
+                    String::from_utf8_lossy(&res.stdout),
+                    String::from_utf8_lossy(&res.stderr)
+                );
             }
-        },
+        }
         Err(e) => {
             panic!("Failed to precompile handlebars frontend partials: {}", e);
-        },
+        }
     }
 
     println!("Compiling typescript to javascript with tsc...");
     // Compile typescript to javascript with tsc
 
     let res3 = std::process::Command::new("tsc")
-        .args(&["--module", "system", "--lib", "es2015,dom,dom.Iterable", "--target", "es6", "--outFile", "static/js/general.js", "typescript_old/General.ts"])
+        .args(&[
+            "--module",
+            "system",
+            "--lib",
+            "es2015,dom,dom.Iterable",
+            "--target",
+            "es6",
+            "--outFile",
+            "static/js/general.js",
+            "typescript_old/General.ts",
+        ])
         .output()
         .expect("Failed to compile typescript to javascript with tsc");
 
@@ -64,25 +79,38 @@ fn main() {
         .args(&["--prefix", "typescript", "run", "build"])
         .output()
         .expect("Failed to compile typescript to javascript with npm run build");
-
-    let res4 = std::process::Command::new("tsc")
-        .args(&["--module", "system", "--lib", "es2015,dom,dom.Iterable", "--target", "es6", "--outFile", "static/js/editor.js", "typescript_old/Sidebar.ts","typescript_old/Editor-old.ts"])
-        .output()
-        .expect("Failed to compile typescript to javascript with tsc");
-
     let res2 = std::process::Command::new("tsc")
-        .args(&["--module", "system", "--lib", "es2015,dom,dom.Iterable", "--target", "es6", "--outFile", "static/js/persons.js", "typescript_old/Persons.ts"])
+        .args(&[
+            "--module",
+            "system",
+            "--lib",
+            "es2015,dom,dom.Iterable",
+            "--target",
+            "es6",
+            "--outFile",
+            "static/js/persons.js",
+            "typescript_old/Persons.ts",
+        ])
         .output()
         .expect("Failed to compile typescript to javascript with tsc");
 
     println!("cargo:rerun-if-changed=typescript");
     println!("cargo:rerun-if-changed=typescript_old");
     println!("cargo:rerun-if-changed=templates_frontend");
-    if !res1.status.success() || !res2.status.success() || !res3.status.success() || !res4.status.success() {
-        panic!("Failed to compile typescript to javascript with tsc:\n{}\n{}\n{}\n{}", String::from_utf8_lossy(&res1.stdout), String::from_utf8_lossy(&res2.stdout),String::from_utf8_lossy(&res3.stdout), String::from_utf8_lossy(&res4.stdout));
+    if !res1.status.success() || !res2.status.success() || !res3.status.success() {
+        panic!(
+            "Failed to compile typescript to javascript with tsc:\n{}\n{}\n{}",
+            String::from_utf8_lossy(&res1.stdout),
+            String::from_utf8_lossy(&res2.stdout),
+            String::from_utf8_lossy(&res3.stdout)
+        );
     }
 
     // Copy pdf.worker.mjs to static/js to make sure the worker version is always up to date
-    fs::copy("typescript/node_modules/pdfjs-dist/build/pdf.worker.mjs", "static/js/pdf.worker.mjs").expect("Failed to copy pdf.worker.mjs to static/js");
+    fs::copy(
+        "typescript/node_modules/pdfjs-dist/build/pdf.worker.mjs",
+        "static/js/pdf.worker.mjs",
+    )
+    .expect("Failed to copy pdf.worker.mjs to static/js");
     println!("cargo:rerun-if-changed=node_modules/pdfjs-dist/build/pdf.worker.mjs");
 }

@@ -1,0 +1,1029 @@
+:root {
+    --blue: #4357AD;
+    --red: #d62839ff;
+    --light-blue: #caf0ff;
+    --green: #81f495ff;
+    --silver: #bfafa6ff;
+    --light-gray: #F9F9F9;
+    --grey: #808080ff;
+    --white: #ffffffff;
+}
+
+body, html{
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    /* Prevent global horizontal scrollbars */
+    overflow-x: hidden;
+}
+
+/* Ensure predictable sizing to reduce overflow risk */
+*, *::before, *::after { box-sizing: border-box; }
+
+.form-control-fixed-width {
+    width: 300px;
+}
+
+body{
+    font-family: 'Nunito', sans-serif;
+}
+
+.main_wrapper{
+    display: flex;
+    height: 100%;
+    background-color: #F9F9F9;
+}
+
+.sidebar-full{
+    width: 300px;
+    min-width: 300px;
+    background-color: #F9F9F9;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-full-header{
+    display: flex;
+    align-items: center;
+    width: 270px;
+}
+.sidebar-full-header-collapse{
+    position: absolute;
+    border-radius: 3px !important;
+    left: 291px;
+    top: 14px;
+    height: 30px;
+    display: flex;
+    opacity: 0.5;
+    background-color: white;
+    box-shadow: none;
+    color: inherit;
+    border: none;
+    padding: 0;
+    margin: 0 3px 3px 0;
+    font: inherit;
+    outline: inherit;
+    align-items: center;
+    justify-content: center;
+}
+.sidebar-full-header-collapse:hover{
+    opacity: 1;
+    cursor: pointer;
+}
+.sidebar-header-logo{
+    width: 40px;
+    height: 40px;
+}
+
+.sidebar-header-logo-link{
+    display: flex;
+    align-items: center;
+}
+
+#sidebar-full-header-project-name{
+    font-size: 12px;
+    margin-left: 10px;
+    cursor: pointer;
+}
+
+.sidebar-full-bibliography-editor-switcher-wrapper{
+    width: 100%;
+    margin-top: 25px;
+}
+.sidebar-full-bibliography-editor-switcher{
+    display: flex;
+    background-color: white;
+}
+.sidebar-full-bibliography-editor-switcher > span{
+    width: 50%;
+    cursor: pointer;
+    padding: 5px;
+    color: lightgray;
+    text-align: center;
+    border-radius: 5px;
+    margin: 5px;
+    font-variant: all-petite-caps;
+    font-weight: bold;
+}
+.sidebar-full-bibliography-editor-switcher > span:first-of-type{
+    margin-left: 5px;
+    margin-right: 2.5px;
+}
+.sidebar-full-bibliography-editor-switcher > span:last-of-type{
+    margin-left: 2.5px;
+    margin-right: 5px;
+}
+.sidebar-full-bibliography-editor-switcher > span.active{
+    cursor: default;
+    background-color: #F9F9F9;
+    color: var(--blue);
+}
+.sidebar-full-bibliography-editor-switcher > span:hover{
+    background-color: #F9F9F9;
+}
+.sidebar-full-contents-panel{
+    flex-grow: 1;
+    background-color: white;
+    margin-top: 5px;
+    border-radius: 5px;
+    padding: 5px;
+}
+.sidebar-small{
+    width: 56px;
+    min-width: 56px;
+    background-color: #F9F9F9;
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.sidebar-small-items{
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.sidebar-small-items > button{
+    margin-bottom: 30px;
+}
+.iconbutton{
+    background-color: inherit;
+    box-shadow: none;
+    color: inherit;
+    border: none;
+    padding: 0;
+    margin: 0 3px 3px 0;
+    font: inherit;
+    outline: inherit;
+    width: 25px;
+    height: 25px;
+    cursor: pointer;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.75;
+}
+.iconbutton:hover{
+    background-color: #F9F9F9;
+    opacity: 1;
+}
+.sidebar-full-contents-panel-control-bar{
+    width: 100%;
+    display: flex;
+    border-bottom: 1px solid #F9F9F9;
+    justify-content: space-between;
+}
+.sidebar-full-contents-panel-control-bar > span{
+    display: flex;
+}
+.sidebar-full-contents-panel-contents{
+    overflow-y: scroll;
+    height: calc(100vh - 160px);
+}
+.sidebar-contents-section-children{
+    margin-left: 15px;
+}
+.sidebar-contents-section-body{
+    width: 100%;
+    cursor: pointer;
+    border: 1px solid #F9F9F9;
+    padding: 5px;
+    min-height: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.sidebar-contents-section-body:hover{
+    background-color: #f0f0f0;
+}
+.sidebar-contents-section-body.active{
+    background-color: #e0e0e0;
+    font-weight: bold;
+}
+
+/* Drag and drop styles */
+.drag-handle{
+    font-size: 16px;
+    color: #999;
+    cursor: grab;
+    user-select: none;
+}
+.sidebar-contents-section-body.drag-source{
+    opacity: 0.6;
+}
+.bibliography-node.dragging {
+    opacity: 0.5;
+}
+.bibliography-node.drag-over > .sidebar-contents-section-body {
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67, 87, 173, 0.08);
+}
+#bibliography-tree-root.drag-over {
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67, 87, 173, 0.04);
+}
+[data-dropzone]{
+    min-height: 0; /* hidden by default; no layout impact when not dragging */
+}
+/* Only when near during dragging, we show a slight space to make dropping easier */
+[data-dropzone].dz-visible{
+    min-height: 8px;
+}
+.sidebar-contents-section-after{
+    min-height: 0; /* override to hidden; will expand with .dz-visible */
+}
+[data-dropzone].drop-target{
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67,87,173,0.08);
+}
+.sidebar-contents-section-as-child{
+    margin-left: 15px;
+}
+.section-title{
+    flex: 1 1 auto;
+}
+
+.main-col{
+    background-color: white;
+    overflow: scroll;
+    padding: 20px 50px 20px 50px;
+    width: 100%;
+    container-name: main-col;
+    container-type: inline-size;
+}
+.divider{
+    cursor: col-resize;
+    width: 5px;
+}
+.preview-col{
+    /* Allow the preview flex item to actually shrink below its content's min width */
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+}
+
+/* Ensure the in-preview bibliography editor wrapper/content can shrink within the flex item */
+#preview-bib-wrapper{
+    align-self: stretch;      /* occupy full available inline size of preview-col */
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;            /* critical for flexbox to allow shrinking */
+    display: flex;
+    flex-direction: column;
+}
+
+#preview-bib-content{
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;            /* allow form/content to shrink and scroll */
+    overflow: auto;
+}
+
+.preview-bib-toolbar{
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e5e7eb; /* light gray */
+    margin-bottom: 8px;
+}
+
+.pdf-page {
+    margin-bottom: 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.pdf-toolbar {
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 10;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    padding: 10px;
+    border-bottom: 1px solid lightgray;
+    margin-bottom: 20px;
+}
+
+.pdf-zoom-level {
+    font-size: 14px;
+    min-width: 45px;
+    text-align: center;
+}
+
+.pdf-pages-container {
+    padding: 20px;
+}
+
+.hide{
+    display: none !important;
+}
+.form-group{
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    justify-content: center;
+    padding-right: 10px;
+}
+.form-group-inline{
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+.form-group label{
+    min-width: fit-content;
+    margin-right: 10px;
+}
+.form-group select{
+    width: 100%;
+    max-width: fit-content;
+}
+label{
+    font-size: 14px;
+    color: var(--blue);
+    font-variant: small-caps;
+}
+select{
+    height:30px;
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+}
+input[type=text],input[type=url],input[type=email],input[type=number],input[type=password],input[type=date]{
+    height:30px;
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+    width: 100%;
+}
+
+textarea{
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+    resize: vertical;
+    width: 100%;
+}
+
+.col-1{
+    width: 8.33333333% !important;
+    float: left;
+}
+.col-2{
+    width: 16.66666667% !important;
+    float: left;
+}
+.col-3{
+    width: 25% !important;
+    float: left;
+}
+.col-4{
+    width: 33.33333333% !important;
+    float: left;
+}
+.col-5{
+    width: 41.66666667% !important;
+    float: left;
+}
+.col-6{
+    width: 50% !important;
+    float: left;
+}
+.col-7{
+    width: 58.33333333% !important;
+    float: left;
+}
+.col-8{
+    width: 66.66666667% !important;
+    float: left;
+}
+.col-9{
+    width: 75% !important;
+    float: left;
+}
+.col-10{
+    width: 83.33333333% !important;
+    float: left;
+}
+.col-11{
+    width: 91.66666667% !important;
+    float: left;
+}
+.col-12{
+    width: 100% !important;
+    float: left;
+}
+.col-fit{
+    float: left;
+    width: fit-content !important;
+}
+@container main-col (max-width: 400px) {
+    .col-6,.col-1,.col-2,.col-3,.col-4,.col-5,.col-7,.col-8,.col-9,.col-10,.col-11,.col-12{
+        float: none;
+    }
+}
+.d-flex{
+    display: flex !important;
+}
+.row{
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+}
+.cover-preview{
+    width: 100px;
+    border: 1px dashed gray;
+    padding: 2px;
+    border-radius: 2px;
+    margin-bottom: 5px;
+}
+.cover-delete-btn{
+    width: 100px;
+}
+
+.btn{
+    cursor: pointer;
+    border-radius: 2px;
+    background-color: white;
+    padding: 4px;
+}
+.btn-primary{
+    border: 1px solid var(--blue);
+    color: var(--blue);
+}
+
+.btn-primary:hover{
+    background-color: var(--blue);
+    color: white;
+}
+.btn-danger{
+    border: 1px solid #dc3545;
+    color: #dc3545;
+}
+
+.btn-danger:hover{
+    background-color: #dc3545;
+    color: white;
+}
+
+.btn-warning{
+    border: 1px solid #ffc107;
+    color: #ffc107;
+}
+
+.btn-warning:hover{
+    background-color: #ffc107;
+    color: white;
+}
+
+.btn-secondary{
+    border: 1px solid lightgray;
+    color: lightgray;
+}
+
+.btn-secondary:hover{
+    background-color: lightgray;
+    color: white;
+}
+
+.btn-success{
+    border: 1px solid var(--green);
+    color: var(--green);
+}
+.btn-success:hover{
+    background-color: var(--green);
+    color: white;
+}
+
+h1{
+    clear: both;
+}
+.persons_list{
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.keywords_list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.metadata_keyword_div {
+    background-color: #e9ecef;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 2px 8px;
+    display: flex;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.metadata_keyword_title {
+    margin-right: 5px;
+    display: flex;
+    align-items: center;
+}
+
+.metadata_keyword_remove {
+    padding: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+.metadata_person_div_name,
+.section_metadata_person_div_name{
+    border: 1px solid lightgray;
+    padding: 5px;
+    margin-right: 2px;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+.metadata_person_div_name > svg{
+    margin-right: 5px;
+}
+.metadata_persons_div,
+.section_metadata_persons_div{
+    margin: 0 5px 5px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.metadata_person_div_after,
+.section_metadata_person_div_after{
+    width: 10px;
+    align-self: stretch;
+}
+.metadata_person_div_after.dragactive,
+.section_metadata_person_div_after.dragactive{
+    /* Match sidebar's subtle dropzone highlighting (similar to [data-dropzone].dz-visible) */
+    background-color: rgba(67,87,173,0.08);
+}
+.metadata_person_div_after.dragover,
+.section_metadata_person_div_after.dragover{
+    width: 40px;
+    /* Match sidebar's strong drop target highlight (see [data-dropzone].drop-target) */
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67,87,173,0.08);
+}
+#metadata_editors_first_dropzone{
+    width: 10px;
+    margin-left: -10px;
+}
+#metadata_editors_first_dropzone.dragover{
+    width: 40px;
+    /* Match sidebar's strong drop target highlight */
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67,87,173,0.08);
+}
+
+#section_metadata_authors_first_dropzone,
+#section_metadata_editors_first_dropzone{
+    width: 10px;
+    margin-left: -10px;
+}
+
+#section_metadata_authors_first_dropzone.dragover,
+#section_metadata_editors_first_dropzone.dragover{
+    width: 40px;
+    /* Match sidebar's strong drop target highlight */
+    outline: 2px dashed var(--blue);
+    background-color: rgba(67,87,173,0.08);
+}
+.img-btn{
+    margin: 0;
+    padding: 0;
+    background-color: unset;
+    border: none;
+    cursor: pointer;
+    align-self: end;
+}
+.align-self-end{
+    align-self: end;
+}
+.img-btn > svg{
+    display: flex;
+}
+.search_result_list{
+    margin-top: 1px;
+    list-style-type: none;
+    background-color: white;
+    width: 300px;
+    padding: 4px 8px 4px 8px;
+    border: 1px solid lightgray;
+    border-radius: 0;
+    font-size: 0.9rem;
+    z-index: 100;
+}
+.search_result_list li{
+    cursor: pointer;
+    border-bottom: 1px solid lightgray;
+    padding: 4px;
+}
+
+.search_result_list li:hover {
+    background-color: var(--light-blue);
+}
+
+.search_result_list li:last-child{
+    border-bottom: none;
+}
+.project_metadata_identifier_row, .project_metadata_custom_field_row{
+    display: flex;
+    flex-wrap: wrap;
+    margin-bottom: 5px;
+}
+.project_metadata_identifier_value, .project_metadata_custom_field_value{
+    width: auto !important;
+    min-width: 200px;
+    margin-left: 5px;
+    flex-grow: 1;
+}
+.project_metadata_identifier_name, .project_metadata_custom_field_key{
+    width: auto !important;
+    margin-left: 5px;
+    min-width: 100px;
+}
+.alert{
+    width: 80%;
+    margin: auto;
+    position: fixed;
+    top: 30px;
+    left: 50%;
+    transform: translate(-50%);
+    padding: 15px;
+    border-radius: 5px;
+    z-index: 10000;
+    opacity: 0.9;
+}
+.alert-close{
+    position: absolute;
+    opacity: 0.9;
+    right: 6px;
+}
+.alert-success{
+    background-color: var(--green);
+}
+.alert-danger{
+    background-color: var(--red);
+}
+.alert-warning{
+    background-color: #ffc107;
+}
+.mt-1{
+    margin-top: 3px;
+}
+.mt-2{
+    margin-top: 6px;
+}
+.mt-3{
+    margin-top: 9px;
+}
+.mt-4{
+    margin-top: 12px;
+}
+
+.d-inline-block{
+    display: inline-block !important;
+}
+
+/* EditorJS adjustments */
+.formatted_text_bold{
+    font-weight: bold;
+}
+.formatted_text_italic{
+    font-style: italic;
+}
+.formatted_text_underline{
+    text-decoration: underline;
+}
+.ce-block__content,
+.ce-toolbar__content {
+    max-width: unset !important;
+}
+.ce-inline-tool{
+    font-size: 10pt;
+}
+#section_content_blocks_inner{
+    padding-left: 50px;
+    padding-right: 50px;
+    overflow-wrap: anywhere;
+}
+.note-settings{
+    position: absolute;
+    background-color: white;
+    z-index: 1000;
+    width: 300px;
+    padding: 10px;
+    border-radius: 5px;
+    opacity: 1;
+    border: 1px solid gray;
+    box-shadow: 0 3px 15px -3px rgba(13,20,33,0.13);
+}
+.custom-style-tool-settings,.fixed-link-tool-settings{
+    position: absolute;
+    background-color: white;
+    z-index: 1000;
+    width: 300px;
+    padding: 10px;
+    border-radius: 5px;
+    opacity: 1;
+    border: 1px solid gray;
+    box-shadow: 0 3px 15px -3px rgba(13,20,33,0.13);
+}
+.citation-settings{
+    position: absolute;
+    background-color: white;
+    z-index: 1000;
+    width: 300px;
+    padding: 10px;
+    border-radius: 5px;
+    opacity: 1;
+    border: 1px solid var(--grey);
+    box-shadow: 0 3px 15px -3px rgba(13,20,33,0.13);
+}
+.note{
+    vertical-align: super;
+    font-weight: bold;
+    padding: 1px;
+    cursor: pointer;
+    font-style: italic;
+}
+citation{
+    vertical-align: super;
+    font-weight: bold;
+    padding: 1px;
+    cursor: pointer;
+    font-style: italic;
+}
+customstyle{
+    border-bottom: 1px dotted gray;
+}
+.faded-out-background{
+    background: rgba(128,128,128,0.7);
+    position: absolute;
+    z-index: 1000;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+}
+.overlay{
+    position: absolute;
+    background-color: white;
+    width: 80vw;
+    height: 80vh;
+    opacity: 1;
+    z-index:2000;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+#inner_overlay{
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+#overlay_close_btn{
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    color: gray;
+}
+
+/* Import Wizard (moved from app.css) */
+.import-card{
+    width: 150px;
+    height: 200px;
+    border: 1px solid var(--silver);
+    padding: 5px;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    align-items: center;
+    cursor: pointer;
+}
+
+.wizard-card{
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+    overflow: auto;
+}
+
+#wizard-pandoc-upload-progress{
+    width: 100%;
+}
+
+#wizard-wordpress-by-filter-3{
+    height: calc(100% - 50px);
+}
+
+#wizard-filter-mask-wrapper{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    column-gap: 10px;
+    height: calc(100% - 50px);
+    overflow: auto;
+}
+
+#wizard-filter-mask-footer{
+    height: 50px;
+    padding-top: 10px;
+}
+
+.wizard-column{
+    display: grid;
+    grid-template-rows: auto 1fr;
+    border: 1px solid var(--light-gray);
+    overflow: hidden;
+    min-height: 150px;
+}
+
+.wizard-column-title{
+    border-bottom: 1px solid var(--light-gray);
+    padding: 5px;
+}
+
+.wizard-column-content{
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: scroll;
+    max-height: 100%;
+}
+
+.wizard-column-content.disabled{
+    background-color: #EBEBE4;
+    color: #C6C6C6;
+    cursor: not-allowed;
+    overflow: hidden;
+}
+
+.wizard-wp-subcategories{
+    margin-left: 45px;
+    margin-bottom: 5px;
+}
+
+.wizard-wp-category-check-recursive-btn, .wizard-wp-category-uncheck-recursive-btn{
+    color: var(--grey);
+    margin-right: 5px;
+}
+
+.wizard-wp-category-row{
+    display: flex;
+}
+
+.section_metadata_panel_ctl{
+    text-align: center;
+}
+#section_hide_metadata{
+    background-color: var(--light-gray);
+    border-radius: 5rem 5rem 0 0 ;
+    margin-bottom: -20px;
+    padding-bottom: 10px;
+    cursor: pointer;
+}
+.editor_section_view_collapsed_metadata_inner{
+    background-color: white;
+    padding: 10px 10px 0px 10px;
+}
+.editor_section_view_collapsed_metadata{
+    margin-bottom: 50px;
+}
+#section_show_metadata{
+    background-color: white;
+    border-radius: 0 0 5rem 5rem;
+    margin-top: -10px;
+    cursor: pointer;
+}
+.section_metadata_panel_ctl{
+    margin-top: -3px;
+}
+.me-1{
+    margin-right: 3px;
+}
+.me-2{
+    margin-right: 6px;
+}
+.me-3{
+    margin-right: 9px;
+}
+.me-4{
+    margin-right: 12px;
+}
+.mb-1{
+    margin-bottom: 3px;
+}
+.mb-2{
+    margin-bottom: 6px;
+}
+.mb-3{
+    margin-bottom: 9px;
+}
+.mb-4{
+    margin-bottom: 12px;
+}
+.fullwidth-select{
+    max-width: 100% !important;
+    width: 100% !important;
+}
+
+/* Bibliography tree root drop zone (to unparent/make top-level) */
+#bibliography-tree-root .root-dropzone{
+    display: none; /* hidden by default; only visible while dragging */
+    padding: 10px 12px; /* larger padding for better visibility */
+    /* Keep the drop zone always visible at the very top of the scroll area while dragging */
+    position: sticky;
+    top: 0;
+    z-index: 5; /* stay clearly above list items */
+    margin: 0 6px 12px 6px; /* add a bit more space below to separate from list */
+    font-size: 12px;
+    color: #495057; /* slightly darker text */
+    border: 2px dashed transparent; /* thicker default border */
+    border-radius: 6px;
+    background: #ffffff; /* avoid underlying content bleeding through while sticky */
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06); /* subtle elevation to distinguish from items */
+}
+
+/* Add a soft fade below the sticky dropzone so items underneath don't compete visually */
+#bibliography-tree-root .root-dropzone::after{
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -12px; /* extend below the element */
+    height: 12px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgba(255,255,255,0.95), rgba(255,255,255,0));
+}
+
+/* Show the drop zone while any drag is active within the bibliography tree */
+#bibliography-tree-root.drag-active .root-dropzone,
+#bibliography-tree-root.drag-over .root-dropzone{
+    display: block;
+}
+
+#bibliography-tree-root.drag-over .root-dropzone{
+    border-color: #0d6efd;
+    background-color: rgba(13,110,253,0.08);
+    color: #0d6efd;
+}
+
+/* Add a small indicator icon before the text for stronger affordance */
+#bibliography-tree-root .root-dropzone::before{
+    content: "⇧ "; /* up arrow indicates moving to top-level */
+    font-weight: bold;
+    color: inherit;
+}
+
+/* Citation search popover styling */
+#citation-search-res {
+  margin-top: 6px;
+  max-height: 220px; /* make list scrollable and avoid overflow */
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  z-index: 10000;
+}
+
+#citation-search-res.hide { display: none; }
+
+#citation-search-res-ul {
+  list-style: none; /* remove bullets */
+  margin: 0;
+  padding: 4px 0;
+}
+
+.citation-search-res-li {
+  padding: 6px 10px;
+  cursor: pointer; /* pointer cursor for clickable items */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.citation-search-res-li:hover {
+  background: #f5f5f5;
+}

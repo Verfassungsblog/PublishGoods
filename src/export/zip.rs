@@ -5,7 +5,10 @@ use vb_exchange::NamedFile;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-pub fn create_zip_from_bytes(files: Vec<NamedFile>, output_zip_path: PathBuf) -> std::io::Result<()> {
+pub fn create_zip_from_bytes(
+    files: Vec<NamedFile>,
+    output_zip_path: PathBuf,
+) -> std::io::Result<()> {
     // Create a file to write the ZIP archive asynchronously
     let zip_file = File::create(output_zip_path)?;
 
@@ -13,8 +16,8 @@ pub fn create_zip_from_bytes(files: Vec<NamedFile>, output_zip_path: PathBuf) ->
     let mut zip_writer = ZipWriter::new(zip_file);
 
     // Set the file options for the files inside the ZIP
-    let options: FileOptions<()> = FileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+    let options: FileOptions<()> =
+        FileOptions::default().compression_method(CompressionMethod::Deflated);
 
     // Add each file to the ZIP archive
     for file in files {

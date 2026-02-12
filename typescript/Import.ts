@@ -9,6 +9,18 @@ import {
     WordpressImportRequest
 } from "./api_requests";
 
+function get_project_id(): string | null {
+    // Prefer the globally exposed `project_id` (set in `Editor/Main.ts`), but
+    // fall back to parsing it from the URL to avoid sending `undefined`.
+    // @ts-ignore
+    let pid: unknown = globalThis.project_id;
+    if (typeof pid === 'string' && pid.length > 0) {
+        return pid;
+    }
+    const fromUrl = window.location.href.split('/').pop();
+    return fromUrl && fromUrl.length > 0 ? fromUrl : null;
+}
+
 /**
  * Handles the event when the Import button is clicked. This method initializes
  * the import wizard overlay and sets up event listeners for various wizard options
@@ -21,6 +33,24 @@ function import_btn_handler() {
     let overlay_wrapper = document.getElementById("overlay-wrapper");
     let overlay_content = document.getElementById("inner_overlay");
     overlay_wrapper.classList.remove("hide");
+
+    let close_overlay = function(){
+        overlay_wrapper.classList.add("hide");
+        overlay_content.innerHTML = "";
+    }
+
+    // Ensure the overlay close button works for import wizard too
+    let overlay_close_btn = document.getElementById("overlay_close_btn");
+    if(overlay_close_btn){
+        overlay_close_btn.onclick = close_overlay;
+    }
+
+    // Close with Escape
+    document.onkeydown = function(e: KeyboardEvent){
+        if(e.key === "Escape" && !overlay_wrapper.classList.contains("hide")){
+            close_overlay();
+        }
+    };
 
     // @ts-ignore
     overlay_content.innerHTML = Handlebars.templates.editor_import_wizard();
@@ -281,12 +311,16 @@ async function wordpress_show_settings(import_data: WordpressImportData){
     let start_import_btn = document.getElementById("wizard-wordpress-start-import-btn") as HTMLInputElement;
 
     start_import_btn.addEventListener("click", async function(){
+        const project_id = get_project_id();
+        if(!project_id){
+            Tools.show_alert("Couldn't determine project id for import request.", "danger");
+            return;
+        }
         let import_request : WordpressImportRequest = {
             convert_links: (document.getElementById("wizard-wordpress-settings-convert-links") as HTMLInputElement).checked,
             data: import_data,
             endnotes: (document.getElementById("wizard-wordpress-settings-convert-to-endnotes") as HTMLInputElement).checked,
-            // @ts-ignore
-            project_id: globalThis.project_id,
+            project_id,
             shift_headings: (document.getElementById("wizard-wordpress-settings-shift-levels-up") as HTMLInputElement).checked,
             import_author_names: (document.getElementById("wizard-wordpress-settings-import-authors") as HTMLInputElement).checked,
         };
@@ -462,8 +496,12 @@ async function upload_files_handler() {
     formData.append("shift_headings_up", shift_headings_up.toString());
     formData.append("convert_links", convert_links.toString());
 
-    // @ts-ignore
-    formData.append("project_id", globalThis.project_id);
+    const project_id = get_project_id();
+    if(!project_id){
+        Tools.show_alert("Couldn't determine project id for import request.", "danger");
+        return;
+    }
+    formData.append("project_id", project_id);
 
     try{
         let api = API.ImportAPI();

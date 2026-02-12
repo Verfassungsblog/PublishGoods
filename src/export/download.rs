@@ -1,8 +1,8 @@
+use crate::session::session_guard::Session;
+use crate::settings::Settings;
 use rocket::fs::NamedFile;
 use rocket::http::Status;
 use rocket::State;
-use crate::session::session_guard::Session;
-use crate::settings::Settings;
 
 /// GET /download/renderings/<id>
 ///
@@ -16,7 +16,11 @@ use crate::settings::Settings;
 /// - `settings`: Shared application settings. Used to determine the data storage path.
 /// - `_session`: Request guard ensuring a valid session.
 #[get("/download/renderings/<id>")]
-pub async fn download_rendering(id: String, settings: &State<Settings>, _session: Session) -> Result<NamedFile, Status> {
+pub async fn download_rendering(
+    id: String,
+    settings: &State<Settings>,
+    _session: Session,
+) -> Result<NamedFile, Status> {
     let path = format!("{}/temp/{}/output.pdf", settings.data_path, id);
     let file = NamedFile::open(path).await.map_err(|_| Status::NotFound)?;
     Ok(file)

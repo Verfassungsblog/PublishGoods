@@ -18,6 +18,47 @@ export async function send_get_template_id_for_project(project_id: string) {
     }
 }
 
+export async function send_list_templates() {
+    const response = await fetch(`/api/templates`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to list templates: ${response.status}`);
+    } else {
+        let response_data = await response.json();
+        if (response_data.hasOwnProperty("error")) {
+            console.error(response_data["error"]);
+            throw new Error(`Failed to list templates: ${response_data["error"]}`);
+        } else {
+            return response_data.data;
+        }
+    }
+}
+
+export async function send_set_project_template(project_id: string, template_id: string) {
+    const response = await fetch(`/api/projects/${project_id}/template`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(template_id)
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to set project template: ${response.status}`);
+    } else {
+        let response_data = await response.json();
+        if (response_data.hasOwnProperty("error")) {
+            console.error(response_data["error"]);
+            throw new Error(`Failed to set project template: ${response_data["error"]}`);
+        } else {
+            return response_data.data;
+        }
+    }
+}
+
 export async function send_update_content_blocks(project_id: string, section_path: string, data: any) {
     const response = await fetch(`/api/projects/` + project_id + `/sections/` + section_path + "/content_blocks/", {
         method: 'PUT',
@@ -111,88 +152,6 @@ export async function send_delete_user(user_id: string) {
         let response_data = await response.json();
         if (response_data.hasOwnProperty("error")) {
             throw new Error(`Failed to delete user: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function send_add_new_bib_entry(data: any, project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to add new bib entry: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to add new bib entry: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function send_get_bib_list(project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to get bib entries: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get bib entries: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function send_get_bib_entry(key: string, project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography/` + key, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to get bib entry: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get bib entry: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function update_bib_entry(data: any, key: string, project_id: string) {
-    const response = await fetch(`/api/projects/` + project_id + `/bibliography/` + key, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-        headers: {
-            'Content-Type': 'application/json'
-        }
-
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to update bib entry: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to update bib entry: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
         } else {
             return response_data;
         }
@@ -357,6 +316,37 @@ export interface Section {
     metadata: SectionMetadata;
 }
 
+// NOTE: `/api/projects/<project_id>/contents` (deprecated endpoints) uses the backend `Section` type
+// which currently is `SectionV6` (see `src/storage/project_storage/sections/current.rs`).
+// That JSON shape differs from the editor's section shape (it has `content: Vec<u8>` instead of
+// `children`, and `metadata.custom_fields`). Keep this separate to avoid breaking the editor APIs.
+export interface ProjectContentsSection {
+    id?: string; // UUID represented as a string in JavaScript/TypeScript
+    css_classes: string[];
+    sub_sections: ProjectContentsSection[];
+    // Backend expects `Vec<u8>`; JSON representation is a number array.
+    content: number[];
+    visible_in_toc: boolean;
+    metadata: ProjectContentsSectionMetadata;
+}
+
+export type ProjectContentsSectionMetadata = {
+    title: string,
+    toc_title_subtitle_override: string | null,
+    subtitle: string | null,
+    // Backend uses `PersonUuidOrString` here.
+    authors: PersonUuidOrString[],
+    editors: PersonUuidOrString[],
+    web_url: string | null,
+    identifiers: Identifier[],
+    // Backend uses chrono types; we send `null` for new sections.
+    published: Date | null,
+    last_changed: Date | null,
+    // Backend uses `language::Language`; we send `null` for new sections.
+    lang: string | null,
+    custom_fields: Record<string, string>,
+};
+
 export interface APISectionResult {
     id: string; // UUID represented as a string in JavaScript/TypeScript
     css_classes: string[];
@@ -489,6 +479,224 @@ type BlockData =
     | { Quote: {text: string, caption: string, alignment: string} }
     | { Image: {file: UploadedImage, caption?: string, with_border: boolean, with_background: boolean, stretched: boolean}};
 
+export type ShortBibEntryOrFolder = {
+    id: string;
+    is_folder: boolean;
+    bib_entry_type: string | null;
+    name: string;
+};
+
+export type BibTreeEntry = ShortBibEntryOrFolder & {
+    children: BibTreeEntry[];
+};
+
+export type BibEntryOrFolder =
+    | { BibEntry: BibEntryV3 }
+    | { BibFolder: BibFolder };
+
+export interface BibFolder {
+    name: string;
+    parent: string | null;
+}
+
+export type BibEntryV3 = {
+    key: string,
+    entry_type: string,
+    title?: MyFormatString | null,
+    authors: MyPerson[],
+    date?: MyDate | null,
+    editors: MyPerson[],
+    affiliated: MyPersonsWithRoles[],
+    publisher?: MyPublisher | null,
+    location?: MyFormatString | null,
+    organization?: MyFormatString | null,
+    issue?: MyMaybeTyped<MyNumeric> | null,
+    volume?: MyMaybeTyped<MyNumeric> | null,
+    volume_total?: MyNumeric | null,
+    edition?: MyMaybeTyped<MyNumeric> | null,
+    page_range?: MyMaybeTyped<MyPageRanges> | null,
+    page_total?: MyNumeric | null,
+    time_range?: MyMaybeTyped<MyDurationRange> | null,
+    runtime?: MyMaybeTyped<any> | null,
+    url?: MyQualifiedUrl | null,
+    serial_numbers?: Record<string, string> | null,
+    language?: string | null,
+    archive?: MyFormatString | null,
+    archive_location?: MyFormatString | null,
+    call_number?: MyFormatString | null,
+    note?: MyFormatString | null,
+    abstractt?: MyFormatString | null,
+    genre?: MyFormatString | null,
+    parents: string[],
+};
+
+export type MyFormatString = {
+    value: string;
+    short?: string | null;
+};
+
+export type MyPerson = {
+    name: string;
+    given_name?: string | null;
+    prefix?: string | null;
+    suffix?: string | null;
+};
+
+export type MyDate = {
+    year: number;
+    month?: number | null;
+    day?: number | null;
+};
+
+export type MyPersonsWithRoles = {
+    names: MyPerson[];
+    role: string;
+};
+
+export type MyPublisher = {
+    name: string;
+    location?: string | null;
+};
+
+export type MyMaybeTyped<T> =
+    | { Typed: T }
+    | { String: string };
+
+export type MyNumeric = {
+    value: number;
+    prefix?: string | null;
+    suffix?: string | null;
+};
+
+export type MyPageRanges = any; // simplified
+export type MyDurationRange = any; // simplified
+export type MyQualifiedUrl = {
+    value: string;
+    timestamp?: any | null;
+};
+
+export function BibliographyAPI() {
+    async function get_bibliography_tree(project_id: string): Promise<BibTreeEntry[]> {
+        const response = await fetch(`/api/project/${project_id}/bibliography`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get bibliography tree: ${response.status}`);
+        }
+
+        const response_data: ApiResult<BibTreeEntry[]> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to get bibliography tree: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function get_bibliography_entry(project_id: string, entry_id: string): Promise<BibEntryOrFolder> {
+        const response = await fetch(`/api/project/${project_id}/bibliography/${entry_id}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<BibEntryOrFolder> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to get bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function post_bibliography_entry(project_id: string, entry: BibEntryOrFolder): Promise<string> {
+        const response = await fetch(`/api/project/${project_id}/bibliography`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(entry)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to post bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<string> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to post bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function patch_bibliography_entry(project_id: string, entry_id: string, patch: BibEntryOrFolder): Promise<void> {
+        const response = await fetch(`/api/project/${project_id}/bibliography/${entry_id}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(patch)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to patch bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<void> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to patch bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    async function delete_bibliography_entry(project_id: string, entry_id: string): Promise<void> {
+        const response = await fetch(`/api/project/${project_id}/bibliography/${entry_id}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to delete bibliography entry: ${response.status}`);
+        }
+
+        const response_data: ApiResult<void> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to delete bibliography entry: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    return {
+        get_bibliography_tree,
+        get_bibliography_entry,
+        post_bibliography_entry,
+        patch_bibliography_entry,
+        delete_bibliography_entry
+    };
+}
+
 export function ProjectAPI() {
     async function read_project_contents(project_id: string) {
         const response = await fetch(`/api/projects/${project_id}/contents`, {
@@ -514,8 +722,66 @@ export function ProjectAPI() {
         return response_data.data;
     }
 
+    async function create_section(project_id: string, section: ProjectContentsSection) {
+        const response = await fetch(`/api/projects/${project_id}/contents`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            // Backend expects a `Section` JSON body (not `{Section: ...}`)
+            body: JSON.stringify(section)
+        });
+
+        if (!response.ok) {
+            let details = '';
+            try{
+                details = await response.text();
+            }catch(_e){
+                details = '';
+            }
+            throw new Error(`Failed to create section: ${response.status}${details ? ` (${details})` : ''}`);
+        }
+
+        const response_data: ApiResult<ProjectContentsSection> = await response.json();
+
+        if (response_data.error) {
+            throw new Error(`Failed to create section: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+
+        return response_data.data;
+    }
+
+    async function create_default_section(project_id: string, title: string = 'New Section') {
+        const section: ProjectContentsSection = {
+            css_classes: [],
+            sub_sections: [],
+            content: [],
+            visible_in_toc: true,
+            metadata: {
+                title,
+                toc_title_subtitle_override: null,
+                subtitle: null,
+                authors: [],
+                editors: [],
+                web_url: null,
+                identifiers: [],
+                published: null,
+                last_changed: null,
+                lang: null,
+                custom_fields: {}
+            }
+        };
+
+        return create_section(project_id, section);
+    }
+
     return {
-        read_project_contents
+        read_project_contents,
+        create_section,
+        create_default_section
     }
 }
 
@@ -1360,10 +1626,44 @@ export function SectionAPI(){
 
         return response_data.data;
     }
+    async function move_section_after(project_id: string, section_id: string, after_id: string){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}/move/after/${after_id}` ,{
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        if(!response.ok){
+            throw new Error(`Failed to move section after: ${response.status}`);
+        }
+        const response_data: ApiResult<any> = await response.json();
+        if(response_data.error){
+            throw new Error(`Failed to move section after: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data;
+    }
+    async function move_section_child_of(project_id: string, section_id: string, parent_id: string){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}/move/child_of/${parent_id}` ,{
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        if(!response.ok){
+            throw new Error(`Failed to move section as child: ${response.status}`);
+        }
+        const response_data: ApiResult<any> = await response.json();
+        if(response_data.error){
+            throw new Error(`Failed to move section as child: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data;
+    }
     return{
         read_section,
         patch_section,
-        delete_section
+        delete_section,
+        move_section_after,
+        move_section_child_of
     }
 }
 
@@ -1603,4 +1903,264 @@ export function ImportAPI(){
         poll_import_status,
         add_file_import_job,
     }
+}
+
+
+// ===== Projects API types =====
+// These interfaces mirror the Rust types used in src/projects/api/get.rs so that
+// JSON returned from the backend can be deserialized into TypeScript safely.
+
+// Rust: pub struct ProjectMetadataV4 { ... }
+// TS representation of Rust enum vb_exchange::projects::License
+// Serde JSON (externally tagged):
+// - Unit variants serialize as a bare string, e.g. "CC0"
+// - Newtype variant serializes as an object: { Other: string }
+export type License =
+    | "CC0"
+    | "CC_BY_4"
+    | "CC_BY_SA_4"
+    | "CC_BY_ND_4"
+    | "CC_BY_NC_4"
+    | "CC_BY_NC_SA_4"
+    | "CC_BY_NC_ND_4"
+    | { Other: string };
+
+export interface ProjectMetadata {
+    title: string;
+    subtitle: string | null;
+    authors: PersonUuidOrString[] | null;
+    authors_expanded: PersonOrString[] | null;
+    editors: PersonUuidOrString[] | null;
+    editors_expanded: PersonOrString[] | null;
+    web_url: string | null;
+    identifiers: Identifier[] | null;
+    // Rust uses chrono::NaiveDate; it is serialized as an ISO date string like "YYYY-MM-DD"
+    published: string | null;
+    // Rust uses `language::Language`; represented here as BCP-47 / IETF language tags
+    languages: string[] | null;
+    number_of_pages: number | null;
+    short_abstract: string | null;
+    long_abstract: string | null;
+    // Rust uses vb_exchange::projects::Keyword; represent as plain strings
+    keywords: string[] | null;
+    ddc: string | null;
+    // Unit variants serialize as strings like "CC0"; the newtype variant serializes as { Other: string }
+    license: License | null;
+    series: string | null;
+    volume: string | null;
+    edition: string | null;
+    publisher: string | null;
+    custom_fields: Record<string, string> | null;
+}
+
+export type BibEntryV2 = BibEntryV3; // updated to V3 structure
+
+// Rust: pub struct ProjectSettingsV5 (from vb_exchange crate)
+// Exact TS mirror so JSON from Rust can be deserialized safely.
+export interface ProjectSettingsV5 {
+    toc_enabled: boolean;
+    csl_style: string | null;
+    csl_language_code: string | null;
+    metadata_page_additional_html: string | null;
+    cover_image_path: string | null;
+    backcover_image_path: string | null;
+    add_soft_hyphens: boolean;
+}
+
+// Rust: pub struct APIProjectData { ... }
+export interface APIProjectData {
+    // Project id
+    project_id: string;
+    // Project Title
+    name: string;
+    // Project Description
+    description: string | null;
+    // Id for the ProjectTemplate (UUID as string)
+    template_id: string;
+    // Optionally extended ProjectTemplate
+    template_extended: ProjectTemplateV2 | null;
+    // Optionally extended ProjectMetadata
+    metadata: ProjectMetadata | null;
+    // Optionally extended ProjectSettings
+    settings: ProjectSettingsV5 | null;
+    // Optionally extended Sections
+    sections: SectionOrToc[] | null;
+    // Optionally extended Bibliography
+    bibliography: Record<string, BibEntryV2> | null;
+    // Optionally extend available_csl_styles
+    available_csl_styles: string[] | null;
+    // Optionally extend available_csl_locales
+    available_csl_locales: string[] | null;
+
+}
+
+export function EditorAPI(){
+    /**
+     * Fetch the project data as JSON and deserialize into APIProjectData.
+     *
+     * GET /api/projects/<project_id>?extend=template,metadata,settings,sections,bibliography
+     *
+     * @param project_id - UUID string of the project
+     * @param opts
+     * @param opts.extend - Optional list of parts to extend in the response
+     * @returns Promise resolving to APIProjectData
+     */
+    async function getProject(
+        project_id: string,
+        opts?: { extend?: ("template"|"metadata"|"metadata.authors"|"metadata.editors"|"settings"|"sections"|"bibliography" | "available_csl_styles" | "available_csl_locales")[] }
+    ): Promise<APIProjectData> {
+        const extend = opts?.extend && opts.extend.length > 0
+            ? `?extend=${opts.extend.join(",")}`
+            : "";
+
+        const response = await fetch(`/api/projects/${project_id}${extend}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get project: ${response.status}`);
+        }
+
+        const response_data = await response.json();
+        if (response_data && response_data.hasOwnProperty("error")) {
+            throw new Error(`Failed to get project: ${response_data["error"]}`);
+        }
+        // Backend uses an APIResponse wrapper: { data: APIProjectData }
+        return response_data.data as APIProjectData;
+    }
+
+    /**
+     * Patch parts of a project.
+     *
+     * PATCH /api/projects/<project_id>
+     * Body matches the backend's PatchProjectData (fields are optional/nullable).
+     *
+     * Note: The backend returns an APIResponse<()> (no payload). We return null on success.
+     */
+    async function patchProject(
+        project_id: string,
+        patch: any
+    ): Promise<null> {
+        const response = await fetch(`/api/projects/${project_id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to patch project: ${response.status}`);
+        }
+
+        const response_data = await response.json();
+        if (response_data && response_data.hasOwnProperty("error")) {
+            throw new Error(`Failed to patch project: ${response_data["error"]}`);
+        }
+        // Backend wraps in { data: null }
+        return (response_data && 'data' in response_data) ? response_data.data : null;
+    }
+
+    async function getCslStyles(): Promise<string[]> {
+        const response = await fetch(`/api/csl/styles`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if(!response.ok){
+            throw new Error(`Failed to load CSL styles: ${response.status}`);
+        }
+        const response_data: any = await response.json();
+        if(response_data && response_data.error){
+            throw new Error(`Failed to load CSL styles: ${response_data.error}`);
+        }
+        return (response_data && 'data' in response_data) ? (response_data.data as string[]) : [];
+    }
+
+    async function searchGnd(q: string): Promise<any[]>{
+        const url = `/api/gnd?q=${encodeURIComponent(q)}`;
+        const response = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' }});
+        if(!response.ok){
+            throw new Error(`Failed to search GND: ${response.status}`);
+        }
+        const response_data: any = await response.json();
+        if(response_data && response_data.error){
+            throw new Error(`Failed to search GND: ${response_data.error}`);
+        }
+        const data = (response_data && 'data' in response_data) ? response_data.data : [];
+        // Normalize to an array of simple items when possible
+        if(Array.isArray(data)) return data;
+        return [];
+    }
+
+    /**
+     * Upload an image file to a project.
+     *
+     * POST /api/projects/<project_id>/uploads
+     *
+     * The backend expects a multipart form field named "image" and responds with
+     * `{ success: 1, file: UploadedImage }` on success.
+     */
+    async function uploadToProject(
+        project_id: string,
+        file: File
+    ): Promise<UploadedImage> {
+        const formData = new FormData();
+        formData.append("image", file);
+
+        const response = await fetch(`/api/projects/${project_id}/uploads`, {
+            method: 'POST',
+            // Do not set Content-Type header explicitly so that the browser
+            // can add the correct multipart boundary.
+            body: formData,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to upload image to project: ${response.status}`);
+        }
+
+        const response_data: any = await response.json();
+        if (!response_data || response_data.success !== 1 || !response_data.file) {
+            throw new Error("Failed to upload image to project: invalid response");
+        }
+
+        return response_data.file as UploadedImage;
+    }
+
+    /**
+     * Delete a previously uploaded file for a project.
+     *
+     * DELETE /api/projects/<project_id>/uploads/<filename>
+     *
+     * Backend returns a deprecated ApiResult wrapper; we treat any non-error
+     * response as success and return null.
+     */
+    async function deleteProjectUpload(
+        project_id: string,
+        filename: string,
+    ): Promise<null> {
+        const response = await fetch(`/api/projects/${project_id}/uploads/${encodeURIComponent(filename)}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to delete project upload: ${response.status}`);
+        }
+
+        const response_data: any = await response.json();
+        if (response_data && response_data.error) {
+            throw new Error(`Failed to delete project upload: ${response_data.error}`);
+        }
+
+        return (response_data && 'data' in response_data) ? response_data.data : null;
+    }
+
+
+    return {
+        getProject,
+        patchProject,
+        getCslStyles,
+        searchGnd,
+        uploadToProject,
+        deleteProjectUpload,
+    };
 }

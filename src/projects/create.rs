@@ -1,21 +1,32 @@
-use std::collections::HashMap;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use crate::session::session_guard::Session;
+use crate::settings::Settings;
+use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::current::Bibliography;
+use crate::storage::project_storage::{ProjectData, ProjectStorage};
+use crate::storage::ProjectTemplateV2;
 use rocket::http::Status;
 use rocket::response::Redirect;
 use rocket::State;
 use rocket_dyn_templates::Template;
-use crate::session::session_guard::Session;
-use crate::settings::Settings;
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::storage::ProjectTemplateV2;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Show create project form
 #[get("/projects/create")]
-pub async fn show_create_project(_session: Session, data_storage: &State<Arc<DataStorage>>) -> Result<Template, Status> {
+pub async fn show_create_project(
+    _session: Session,
+    data_storage: &State<Arc<DataStorage>>,
+) -> Result<Template, Status> {
     // Get list of all templates
-    let templates : Vec<ProjectTemplateV2> = data_storage.data.read().unwrap().templates.iter().map(|(_id, entry) | entry.clone().read().unwrap().clone()).collect();
+    let templates: Vec<ProjectTemplateV2> = data_storage
+        .data
+        .read()
+        .unwrap()
+        .templates
+        .iter()
+        .map(|(_id, entry)| entry.clone().read().unwrap().clone())
+        .collect();
 
     let mut data = BTreeMap::new();
     data.insert("templates", templates);
@@ -24,7 +35,7 @@ pub async fn show_create_project(_session: Session, data_storage: &State<Arc<Dat
 
 /// Struct used for creating a new project
 #[derive(FromForm)]
-pub struct CreateProjectForm{
+pub struct CreateProjectForm {
     /// Project Name
     pub project_name: String,
     /// uuid of the template used
@@ -35,18 +46,33 @@ pub struct CreateProjectForm{
 
 /// Process create project form
 #[post("/projects/create", data = "<data>")]
-pub async fn process_create_project(_session: Session, data: rocket::form::Form<CreateProjectForm>, data_storage: &State<Arc<DataStorage>>, project_storage: &State<Arc<ProjectStorage>>, settings: &State<Settings>) -> Result<Redirect, Status> {
-    let template_id = match uuid::Uuid::try_parse(&data.template_id){
+pub async fn process_create_project(
+    _session: Session,
+    data: rocket::form::Form<CreateProjectForm>,
+    data_storage: &State<Arc<DataStorage>>,
+    project_storage: &State<Arc<ProjectStorage>>,
+    settings: &State<Settings>,
+) -> Result<Redirect, Status> {
+    let template_id = match uuid::Uuid::try_parse(&data.template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
-            eprintln!("Couldn't parse template_id from create new project form: {}", e);
+            eprintln!(
+                "Couldn't parse template_id from create new project form: {}",
+                e
+            );
             return Err(Status::BadRequest);
         }
     };
 
     //Check if template exists
-    if !data_storage.data.read().unwrap().templates.contains_key(&template_id){
-        return Err(Status::BadRequest)
+    if !data_storage
+        .data
+        .read()
+        .unwrap()
+        .templates
+        .contains_key(&template_id)
+    {
+        return Err(Status::BadRequest);
     }
 
     let project_data = ProjectData {
@@ -57,16 +83,14 @@ pub async fn process_create_project(_session: Session, data: rocket::form::Form<
         metadata: None,
         settings: None,
         sections: vec![],
-        bibliography: HashMap::new(),
+        bibliography: Bibliography::new(),
     };
 
-    match project_storage.insert_project(project_data, settings).await{
+    match project_storage.insert_project(project_data, settings).await {
         Ok(id) => {
             println!("Successfully created new project with id {}", id);
             Ok(Redirect::to("/"))
-        },
-        Err(_) => {
-            Err(Status::InternalServerError)
         }
+        Err(_) => Err(Status::InternalServerError),
     }
 }

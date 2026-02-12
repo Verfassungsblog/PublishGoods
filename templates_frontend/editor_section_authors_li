@@ -1,6 +1,6 @@
 {{#if Person}}
 <div draggable="true" data-id="{{Person.id}}" id="section_metadata_authors_editors_div_{{Person.id}}" data-entry-type="Person" data-group="authors" class="section_metadata_authors_div section_metadata_persons_div">
-    <div class="section_metadata_authors_div_name section_metadata_person_div_name">
+    <div class="section_metadata_authors_div_name d-flex section_metadata_person_div_name">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-square me-1" viewBox="0 0 16 16">
             <path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/>
             <path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1v-1c0-1-1-4-6-4s-6 3-6 4v1a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>
@@ -12,7 +12,7 @@
 </div>
 {{else}}
 <div draggable="true" data-id="{{base64 NameString}}" id="section_metadata_authors_editors_div_{{base64 NameString}}" data-name="{{NameString}}" data-entry-type="NameString" data-group="authors" class="section_metadata_authors_div section_metadata_persons_div">
-    <div class="section_metadata_authors_div_name section_metadata_person_div_name">
+    <div class="section_metadata_authors_div_name section_metadata_person_div_name d-flex">
         {{NameString}} <button class="img-btn section_metadata_authors_remove"><svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="red"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg></button>
     </div>
     <div class="section_metadata_authors_div_after section_metadata_person_div_after" data-dropzone-after="{{base64 NameString}}">

@@ -1,4 +1,4 @@
 <div class="alert alert-{{type}}" role="alert" id="alert_{{id}}">
     {{message}}
-    <button type="button" class="btn-close alert-close" aria-label="Close"></button>
+    <button type="button" class="btn-close alert-close" aria-label="Close">X</button>
 </div>

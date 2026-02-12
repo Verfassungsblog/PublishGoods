@@ -1,0 +1,40 @@
+<div class="sidebar-full-contents-panel-control-bar">
+                <span class="sidebar-full-contents-panel-control-bar-left">
+                    <button title="New Section" class="iconbutton" id="sidebar-new-section"><svg xmlns="http://www.w3.org/2000/svg" width="25"
+                                                                        height="25"
+                                                                        fill="currentColor" class="bi bi-plus"
+                                                                        viewBox="0 0 16 16">
+  <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4"/>
+                    </svg></button>
+                    <button title="Import Wizard" class="iconbutton" id="editor_sidebar_import"><svg xmlns="http://www.w3.org/2000/svg" width="20"
+                                                                          viewBox="0 0 512 512"><!--!Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2025 Fonticons, Inc.--><path
+                            d="M128 64c0-35.3 28.7-64 64-64L352 0l0 128c0 17.7 14.3 32 32 32l128 0 0 288c0 35.3-28.7 64-64 64l-256 0c-35.3 0-64-28.7-64-64l0-112 174.1 0-39 39c-9.4 9.4-9.4 24.6 0 33.9s24.6 9.4 33.9 0l80-80c9.4-9.4 9.4-24.6 0-33.9l-80-80c-9.4-9.4-24.6-9.4-33.9 0s-9.4 24.6 0 33.9l39 39L128 288l0-224zm0 224l0 48L24 336c-13.3 0-24-10.7-24-24s10.7-24 24-24l104 0zM512 128l-128 0L384 0 512 128z"/></svg></button>
+                    <button title="Delete Sections" class="iconbutton"><svg xmlns="http://www.w3.org/2000/svg"
+                                                                            width="20" height="20"
+                                                                            fill="currentColor" class="bi bi-trash-fill"
+                                                                            viewBox="0 0 16 16">
+  <path d="M2.5 1a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1H3v9a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V4h.5a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H10a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1zm3 4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 .5-.5M8 5a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-1 0v-7A.5.5 0 0 1 8 5m3 .5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 1 0"/>
+</svg></button>
+                </span>
+    <span class="sidebar-full-contents-panel-control-bar-right">
+                    <button title="Export Project" class="iconbutton" id="editor_export_project_btn"><svg xmlns="http://www.w3.org/2000/svg" width="20"
+                                                                           height="20"
+                                                                           fill="currentColor"
+                                                                           class="bi bi-file-earmark-arrow-down-fill"
+                                                                           viewBox="0 0 16 16">
+                      <path d="M9.293 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707A1 1 0 0 0 13.707 4L10 .293A1 1 0 0 0 9.293 0M9.5 3.5v-2l3 3h-2a1 1 0 0 1-1-1m-1 4v3.793l1.146-1.147a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2a.5.5 0 0 1 .708-.708L7.5 11.293V7.5a.5.5 0 0 1 1 0"/>
+                    </svg></button>
+                    <button title="Generate Preview" class="iconbutton" id="editor_render_project_btn"><svg xmlns="http://www.w3.org/2000/svg"
+                                                                             width="25" height="25"
+                                                                             fill="#4357AD" class="bi bi-play-fill"
+                                                                             viewBox="0 0 16 16">
+                      <path d="m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393"/>
+                        </svg>
+                    </button>
+                </span>
+</div>
+<div class="sidebar-full-contents-panel-contents">
+    {{#each sections}}
+        {{> editor_sidebar_content_editor_section}}
+    {{/each}}
+</div>

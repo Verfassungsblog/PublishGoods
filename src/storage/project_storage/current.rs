@@ -1,20 +1,29 @@
-use crate::projects::{ProjectMetadataV4, SectionOrTocV5, SectionV5};
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
+use crate::storage::project_storage::sections::current::SectionV6;
+use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{
-    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION
+    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION,
 };
-use crate::storage::{BibEntryV2, MultipleFileLocks, ProjectListEntry};
+use crate::storage::{
+    BibEntryV2, BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges, ProjectListEntry,
+};
+use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
+use chrono::NaiveDate;
+use hayagriva::types::{DurationRange, MaybeTyped, Numeric, SerialNumber};
+use language::Language;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
-use vb_exchange::projects::ProjectSettingsV5;
-use crate::utils::api_helpers::{ApiError, ApiErrorType};
+use unic_langid_impl::LanguageIdentifier;
+use uuid::Uuid;
+use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 impl MultipleFileLocks for ProjectStorage {
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool> {
@@ -126,8 +135,8 @@ impl ProjectStorage {
                                             self.projects.read().unwrap().keys()
                                         );
                                     }
-                                    Err(_) => {
-                                        error!("error while loading project {} into memory. Skipping project.", uuid);
+                                    Err(e) => {
+                                        error!("error while loading project {} into memory: {:?}, Skipping project.", uuid, e);
                                         continue;
                                     }
                                 }
@@ -365,7 +374,8 @@ impl ProjectStorage {
         Ok(())
     }
 
-    pub(crate) async fn save_project_to_disk(
+    pub async fn save_project_to_disk(
+        //todo: create as new file and move after saving
         &self,
         uuid: &uuid::Uuid,
         settings: &Settings,
@@ -435,35 +445,247 @@ impl ProjectStorage {
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
-pub struct ProjectDataV8 {
+pub struct ProjectDataV10 {
     pub name: String,
     pub description: Option<String>,
     #[bincode(with_serde)]
-    pub template_id: uuid::Uuid,
+    pub template_id: Uuid,
     pub last_interaction: u64,
-    pub metadata: Option<ProjectMetadataV4>,
+    pub metadata: Option<ProjectMetadataV5>,
     pub settings: Option<ProjectSettingsV5>,
-    pub sections: Vec<SectionOrTocV5>,
+    pub sections: Vec<SectionV6>,
     #[bincode(with_serde)]
-    pub bibliography: HashMap<String, BibEntryV2>, //TODO: add prefix & suffix support
+    pub bibliography: Bibliography,
 }
 
-impl ProjectDataV8 {
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct Bibliography {
+    #[bincode(with_serde)]
+    pub entries: HashMap<Uuid, BibEntryOrFolder>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub enum BibEntryOrFolder {
+    BibEntry(BibEntryV3),
+    BibFolder(BibFolder),
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct BibFolder {
+    pub name: String,
+    #[bincode(with_serde)]
+    pub parent: Option<Uuid>,
+}
+
+impl Bibliography {
+    pub fn new() -> Bibliography {
+        Bibliography {
+            entries: HashMap::new(),
+        }
+    }
+    pub fn add_entry(&mut self, entry: BibEntryV3) {
+        self.entries
+            .insert(entry.key, BibEntryOrFolder::BibEntry(entry));
+    }
+    pub fn get_entry(&self, key: &Uuid) -> Option<&BibEntryOrFolder> {
+        self.entries.get(key)
+    }
+
+    pub fn get_entry_as_hayagriva(&self, key: &Uuid) -> Option<hayagriva::Entry> {
+        let value = match self.get_entry(key)?.clone() {
+            BibEntryOrFolder::BibEntry(e) => e,
+            BibEntryOrFolder::BibFolder(_) => {
+                return None;
+            }
+        };
+
+        let mut parents: Vec<hayagriva::Entry> = vec![];
+        for parent in &value.parents {
+            if let BibEntryOrFolder::BibEntry(parent_entry) = self.get_entry(parent)?.clone() {
+                if let Some(parent) = self.get_entry_as_hayagriva(parent) {
+                    // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
+                    parents.push(parent);
+                }
+            }
+        }
+
+        let mut entry = hayagriva::Entry::new(&value.key.to_string(), value.entry_type);
+
+        if let Some(title) = value.title {
+            entry.set_title(title.into());
+        }
+
+        if value.authors.len() > 0 {
+            entry.set_authors(value.authors.iter().map(|x| x.clone().into()).collect())
+        }
+
+        if let Some(date) = value.date {
+            entry.set_date(date.into());
+        }
+
+        if value.editors.len() > 0 {
+            entry.set_editors(value.editors.iter().map(|x| x.clone().into()).collect());
+        }
+
+        if value.affiliated.len() > 0 {
+            entry.set_affiliated(value.affiliated.into_iter().map(|x| x.into()).collect());
+        }
+
+        if let Some(publisher) = value.publisher {
+            entry.set_publisher(publisher.into());
+        }
+
+        if let Some(location) = value.location {
+            entry.set_location(location.into());
+        }
+
+        if let Some(organization) = value.organization {
+            entry.set_organization(organization.into());
+        }
+
+        if let Some(issue) = value.issue {
+            entry.set_issue(issue.to_hayagriva());
+        }
+
+        if let Some(volume) = value.volume {
+            entry.set_volume(volume.to_hayagriva())
+        }
+
+        if let Some(volume_total) = value.volume_total {
+            entry.set_volume_total(volume_total.into());
+        }
+
+        if let Some(edition) = value.edition {
+            entry.set_edition(edition.to_hayagriva())
+        }
+
+        if let Some(page_range) = value.page_range {
+            let npage_range: MaybeTyped<hayagriva::types::PageRanges> = match page_range {
+                MyMaybeTyped::Typed(t) => {
+                    let my_page_ranges: MyPageRanges = t.into();
+                    MaybeTyped::Typed(my_page_ranges.into())
+                }
+                MyMaybeTyped::String(s) => MaybeTyped::String(s),
+            };
+            entry.set_page_range(npage_range);
+        }
+
+        if let Some(page_total) = value.page_total {
+            entry.set_page_total(page_total.into());
+        }
+
+        if let Some(time_range) = value.time_range {
+            entry.set_time_range(time_range.to_hayagriva())
+        }
+
+        if let Some(runtime) = value.runtime {
+            entry.set_runtime(runtime.to_hayagriva());
+        }
+
+        if let Some(url) = value.url {
+            entry.set_url(url.into());
+        }
+
+        if let Some(serial_numbers) = value.serial_numbers {
+            entry.set_serial_number(SerialNumber(serial_numbers));
+        }
+
+        if let Some(language) = value.language {
+            entry.set_language(
+                LanguageIdentifier::from_str(&language)
+                    .unwrap_or(LanguageIdentifier::from_str("en-GB").unwrap()),
+            );
+        }
+
+        if let Some(archive) = value.archive {
+            entry.set_archive(archive.into());
+        }
+
+        if let Some(archive_location) = value.archive_location {
+            entry.set_archive_location(archive_location.into());
+        }
+
+        if let Some(call_number) = value.call_number {
+            entry.set_call_number(call_number.into());
+        }
+
+        if let Some(note) = value.note {
+            entry.set_note(note.into());
+        }
+
+        if let Some(abstract_) = value.abstractt {
+            entry.set_abstract_(abstract_.into());
+        }
+
+        if let Some(genre) = value.genre {
+            entry.set_genre(genre.into());
+        }
+
+        Some(entry)
+    }
+}
+
+/// New default metadata version
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Default)]
+pub struct ProjectMetadataV5 {
+    /// Book Title
+    pub title: String,
+    /// Subtitle of the book
+    pub subtitle: Option<String>,
+    /// List of authors (uuid reference or free-form string)
+    #[bincode(with_serde)]
+    pub authors: Option<Vec<PersonUuidOrString>>,
+    /// List of editors (uuid reference or free-form string)
+    #[bincode(with_serde)]
+    pub editors: Option<Vec<PersonUuidOrString>>,
+    /// URL to a web version of the book or reference
+    pub web_url: Option<String>,
+    /// List of identifiers of the book (e.g. ISBNs)
+    pub identifiers: Option<Vec<Identifier>>,
+    /// Date of publication
+    #[bincode(with_serde)]
+    pub published: Option<NaiveDate>,
+    /// Languages of the book
+    #[bincode(with_serde)]
+    pub languages: Option<Vec<Language>>,
+    /// Number of pages of the book (should be automatically calculated)
+    pub number_of_pages: Option<u32>,
+    /// Short abstract of the book
+    pub short_abstract: Option<String>,
+    /// Long abstract of the book
+    pub long_abstract: Option<String>,
+    /// Keywords of the book
+    pub keywords: Option<Vec<Keyword>>,
+    /// Dewey Decimal Classification (DDC) classes (subject groups)
+    pub ddc: Option<String>,
+    /// License of the book
+    pub license: Option<License>,
+    /// Series the book belongs to
+    pub series: Option<String>,
+    /// Volume of the book in the series
+    pub volume: Option<String>,
+    /// Edition of the book
+    pub edition: Option<String>,
+    /// Publisher of the book
+    pub publisher: Option<String>,
+    /// additional fields
+    pub custom_fields: HashMap<String, String>,
+}
+
+impl ProjectDataV10 {
     // TODO migrate to using path instead of the id and searching for it
-    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<SectionV5> {
-        let pos = self.sections.iter().position(|section| match section {
-            SectionOrTocV5::Section(section) => section.id == Some(*section_to_remove_id),
-            _ => false,
-        });
+    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<Section> {
+        let pos = self
+            .sections
+            .iter()
+            .position(|section| section.id == Some(*section_to_remove_id));
 
         match pos {
-            Some(pos) => self.sections.remove(pos).into_section(),
+            Some(pos) => Some(self.sections.remove(pos)),
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrTocV5::Section(section) = section {
-                        if let Some(removed) = section.remove_child_section(section_to_remove_id) {
-                            return Some(removed);
-                        }
+                    if let Some(removed) = section.remove_child_section(section_to_remove_id) {
+                        return Some(removed);
                     }
                 }
                 None
@@ -473,21 +695,19 @@ impl ProjectDataV8 {
     pub fn insert_section_as_first_child(
         &mut self,
         parent_section_id: &uuid::Uuid,
-        section_to_insert: SectionV5,
+        section_to_insert: Section,
     ) -> Result<(), ()> {
         for section in &mut self.sections {
-            if let SectionOrTocV5::Section(section) = section {
-                // Check if this is the parent section
-                if section.id == Some(*parent_section_id) {
-                    section.sub_sections.insert(0, section_to_insert);
+            // Check if this is the parent section
+            if section.id == Some(*parent_section_id) {
+                section.sub_sections.insert(0, section_to_insert);
+                return Ok(());
+            } else {
+                // Check if one of the children is the parent section
+                if let Some(_) =
+                    section.insert_child_section_as_child(parent_section_id, &section_to_insert)
+                {
                     return Ok(());
-                } else {
-                    // Check if one of the children is the parent section
-                    if let Some(_) =
-                        section.insert_child_section_as_child(parent_section_id, &section_to_insert)
-                    {
-                        return Ok(());
-                    }
                 }
             }
         }
@@ -496,47 +716,58 @@ impl ProjectDataV8 {
     pub fn insert_section_after(
         &mut self,
         previous_element: &uuid::Uuid,
-        section_to_insert: SectionV5,
+        section_to_insert: Section,
     ) -> Result<(), ()> {
-        let pos = self.sections.iter().position(|section| match section {
-            SectionOrTocV5::Section(section) => section.id == Some(*previous_element),
-            _ => false,
-        });
+        let pos = self
+            .sections
+            .iter()
+            .position(|section| section.id == Some(*previous_element));
 
         match pos {
             Some(pos) => {
-                self.sections
-                    .insert(pos + 1, SectionOrTocV5::Section(section_to_insert));
+                self.sections.insert(pos + 1, section_to_insert);
                 Ok(())
             }
             None => {
                 for section in &mut self.sections {
-                    if let SectionOrTocV5::Section(section) = section {
-                        if let Some(_) =
-                            section.insert_child_section_after(previous_element, &section_to_insert)
-                        {
-                            return Ok(());
-                        }
+                    if let Some(_) =
+                        section.insert_child_section_after(previous_element, &section_to_insert)
+                    {
+                        return Ok(());
                     }
                 }
                 Err(())
             }
         }
     }
+
+    pub fn get_section(&self, section_id: &uuid::Uuid) -> Option<&Section> {
+        for section in &self.sections {
+            if let Some(found) = section.get_section(section_id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    pub fn get_section_mut(&mut self, section_id: &uuid::Uuid) -> Option<&mut Section> {
+        for section in &mut self.sections {
+            if let Some(found) = section.get_section_mut(section_id) {
+                return Some(found);
+            }
+        }
+        None
+    }
 }
 
 pub fn get_section_by_path_mut<'a>(
     project: &'a mut RwLockWriteGuard<ProjectData>,
     path: &Vec<uuid::Uuid>,
-) -> Result<&'a mut SectionV5, ApiError> {
+) -> Result<&'a mut Section, ApiError> {
     // Find first section
     let first_section_opt = project.sections.iter_mut().find_map(|section| {
-        if let SectionOrTocV5::Section(section) = section {
-            if section.id.unwrap_or_default() == path[0] {
-                Some(section)
-            } else {
-                None
-            }
+        if section.id.unwrap_or_default() == path[0] {
+            Some(section)
         } else {
             None
         }
@@ -576,20 +807,18 @@ pub fn get_section_by_path_mut<'a>(
 pub fn get_section_by_path<'a>(
     project: &'a RwLockReadGuard<ProjectData>,
     path: &Vec<uuid::Uuid>,
-) -> Result<&'a SectionV5, ApiError> {
-    let mut first_section: Option<&SectionV5> = None;
+) -> Result<&'a Section, ApiError> {
+    let mut first_section: Option<&Section> = None;
 
     // Find first section
     for section in project.sections.iter() {
-        if let SectionOrTocV5::Section(section) = section {
-            if section.id.unwrap_or_default() == path[0] {
-                first_section = Some(section);
-            }
+        if section.id.unwrap_or_default() == path[0] {
+            first_section = Some(section);
         }
     }
 
     // Return error if no first section found
-    let first_section: &SectionV5 = match first_section {
+    let first_section: &Section = match first_section {
         Some(first_section) => first_section,
         None => {
             println!("Couldn't find section with id {}", path[0]);
@@ -597,7 +826,7 @@ pub fn get_section_by_path<'a>(
         }
     };
 
-    let mut current_section: &SectionV5 = first_section;
+    let mut current_section: &Section = first_section;
 
     // Skip first element, because we already found it
     for part in path.iter().skip(1) {
@@ -617,4 +846,11 @@ pub fn get_section_by_path<'a>(
     }
 
     Ok(current_section)
+}
+
+/// is either the uuid to a person or just a string with a name
+#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq, Eq, Hash)]
+pub enum PersonUuidOrString {
+    PersonUuid(#[bincode(with_serde)] Uuid),
+    NameString(String),
 }
