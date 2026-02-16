@@ -1,8 +1,7 @@
 use crate::export::rendering_manager::{LocalRenderingRequest, RenderingManager};
-use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::session::session_guard::Session;
 use crate::templates_editor::api::safe_path_combine;
-use crate::utils::api_helpers::APIResult;
+use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use rocket::fs::NamedFile;
 use rocket::http::Status;
 use rocket::serde::json::Json;
@@ -109,15 +108,8 @@ pub fn get_request_status(
     _session: Session,
     request_id: &str,
     rendering_manager: &State<Arc<RenderingManager>>,
-) -> Json<DeprecatedApiResult<APIRenderingStatus>> {
-    let request_id = match uuid::Uuid::parse_str(request_id) {
-        Ok(res) => res,
-        Err(_) => {
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid request_id.".to_string(),
-            ))
-        }
-    };
+) -> APIResult<APIRenderingStatus> {
+    let request_id = uuid::Uuid::parse_str(request_id)?;
 
     let rendering_manager = Arc::clone(rendering_manager);
 
@@ -128,10 +120,10 @@ pub fn get_request_status(
         .get(&request_id)
     {
         Some(status) => APIRenderingStatus::from(status),
-        None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+        None => return Err(ApiErrorType::ResourceNotFound("rendering_request".to_string()).into()),
     };
 
-    DeprecatedApiResult::new_data(status)
+    Ok(status.into())
 }
 
 /// GET /export/<request_id>/<filename>

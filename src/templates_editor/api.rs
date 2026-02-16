@@ -1,7 +1,7 @@
-use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
 use crate::session::session_guard::Session;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::ProjectTemplateV2;
+use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
@@ -24,13 +24,13 @@ pub async fn get_template(
     _session: Session,
     template_id: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<ProjectTemplateV2>> {
+) -> APIResult<ProjectTemplateV2> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -40,8 +40,8 @@ pub async fn get_template(
     let lock = data_storage.data.read().unwrap();
     let template = lock.templates.get(&template_id);
     template.map_or_else(
-        || DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
-        |template| DeprecatedApiResult::new_data(template.clone().read().unwrap().clone()),
+        || Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
+        |template| Ok(template.clone().read().unwrap().clone().into()),
     )
 }
 
@@ -55,13 +55,13 @@ pub async fn update_template(
     template_id: String,
     template: Json<ProjectTemplateV2>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -74,28 +74,29 @@ pub async fn update_template(
     // Check if template exists, otherwise return 404
     let lock = data_storage.data.read().unwrap();
     if !lock.templates.contains_key(&template_id) {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
     // Check if id in template matches id in url
     if template_id != template.id {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
+        return Err(ApiErrorType::Other(
             "Template id in url does not match template id in body, id change is not supported."
                 .to_string(),
-        ));
+        )
+        .into());
     }
 
     *lock.templates.get(&template_id).unwrap().write().unwrap() = template;
 
-    DeprecatedApiResult::new_data(())
+    Ok(().into())
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct AssetList {
     pub assets: Vec<Asset>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct AssetFolder {
     /// Path to the folder to identify uniquily, e.g. folder1.folder2
     pub path: String,
@@ -105,7 +106,7 @@ pub struct AssetFolder {
     pub assets: Vec<Asset>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct AssetFile {
     /// Path to the file to identify uniquily, e.g. folder1.folder2.file1
     pub path: String,
@@ -115,7 +116,7 @@ pub struct AssetFile {
     pub mime_type: Option<String>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub enum Asset {
     Folder(AssetFolder),
     File(AssetFile),
@@ -217,13 +218,13 @@ pub async fn create_file_asset(
     template_id: String,
     asset: Form<NewAssetFile<'_>>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -233,9 +234,7 @@ pub async fn create_file_asset(
         Some(name) => name,
         None => {
             eprintln!("No file name provided");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "No file name provided".to_string(),
-            ));
+            return Err(ApiErrorType::Other("No file name provided".to_string()).into());
         }
     };
 
@@ -283,13 +282,13 @@ pub async fn create_file_asset(
     match file.copy_to(path).await {
         Ok(_) => {
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
-            return DeprecatedApiResult::new_data(());
+            return Ok(().into());
         }
         Err(e) => {
             eprintln!("Error copying file: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+            return Err(ApiErrorType::InternalServerError.into());
         }
     }
 }
@@ -307,13 +306,13 @@ pub async fn delete_assets(
     template_id: String,
     paths: Json<DeleteAssetRequest>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -327,9 +326,7 @@ pub async fn delete_assets(
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error deleting asset, invalid path.");
-                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                    "Invalid path".to_string(),
-                ));
+                return Err(ApiErrorType::Other("Invalid path".to_string()).into());
             }
         };
 
@@ -339,7 +336,7 @@ pub async fn delete_assets(
                 Ok(_) => (),
                 Err(_) => {
                     eprintln!("Error deleting asset.");
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+                    return Err(ApiErrorType::InternalServerError.into());
                 }
             }
         } else {
@@ -347,17 +344,17 @@ pub async fn delete_assets(
                 Ok(_) => (),
                 Err(_) => {
                     eprintln!("Error deleting asset.");
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+                    return Err(ApiErrorType::InternalServerError.into());
                 }
             }
         }
     }
 
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
-    DeprecatedApiResult::new_data(())
+    Ok(().into())
 }
 
 /// POST /api/templates/<template_id>/assets/folder
@@ -368,13 +365,13 @@ pub async fn create_folder_asset(
     template_id: String,
     asset: Json<NewAssetFolder>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -385,14 +382,14 @@ pub async fn create_folder_asset(
 
     // Create the folder
     let res = tokio::task::spawn_blocking(move || match fs::create_dir(&path) {
-        Ok(_) => DeprecatedApiResult::new_data(()),
+        Ok(_) => Ok(().into()),
         Err(e) => match e.kind() {
-            io::ErrorKind::AlreadyExists => DeprecatedApiResult::new_error(
-                DeprecatedApiError::Conflict("Folder already exists".to_string()),
-            ),
+            io::ErrorKind::AlreadyExists => {
+                Err(ApiErrorType::Other("Folder already exists".to_string()).into())
+            }
             _ => {
                 eprintln!("Error creating folder: {}", e);
-                DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+                Err(ApiErrorType::InternalServerError.into())
             }
         },
     })
@@ -401,13 +398,13 @@ pub async fn create_folder_asset(
     match res {
         Ok(res) => {
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
             res
         }
         Err(e) => {
             eprintln!("Error creating folder: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -415,16 +412,13 @@ pub async fn create_folder_asset(
 /// GET /api/templates/<template_id>/assets
 /// List all global assets saved for the template
 #[get("/api/templates/<template_id>/assets")]
-pub async fn get_assets(
-    _session: Session,
-    template_id: String,
-) -> Json<DeprecatedApiResult<AssetList>> {
+pub async fn get_assets(_session: Session, template_id: String) -> APIResult<AssetList> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -432,10 +426,10 @@ pub async fn get_assets(
     let res = tokio::task::spawn_blocking(move || {
         let path = format!("data/templates/{}/assets", template_id);
         match get_assets_recursive(&path, None) {
-            Ok(assets) => DeprecatedApiResult::new_data(AssetList { assets }),
+            Ok(assets) => Ok(AssetList { assets }.into()),
             Err(e) => {
                 eprintln!("Error getting assets: {}", e);
-                DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+                Err(ApiErrorType::InternalServerError.into())
             }
         }
     })
@@ -445,7 +439,7 @@ pub async fn get_assets(
         Ok(assets) => assets,
         Err(e) => {
             eprintln!("Error getting assets: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -547,13 +541,13 @@ pub async fn update_asset_file(
     path: PathBuf,
     content: Json<UpdateAssetRequest>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -566,27 +560,25 @@ pub async fn update_asset_file(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error updating asset, invalid path.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid path".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
         }
     };
 
     // Check if file exists
     if !path.exists() {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("asset".to_string()).into());
     }
 
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
     // Update the file
     match tokio::fs::write(&path, content.into_inner().content).await {
-        Ok(_) => DeprecatedApiResult::new_data(()),
+        Ok(_) => Ok(().into()),
         Err(e) => {
             eprintln!("Error updating asset: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -599,13 +591,13 @@ pub async fn move_asset(
     template_id: String,
     asset: Json<MoveAssetRequest>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
     let base_path = format!("data/templates/{}/assets", template_id);
@@ -615,9 +607,7 @@ pub async fn move_asset(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid path".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
         }
     };
 
@@ -625,45 +615,26 @@ pub async fn move_asset(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid path".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
         }
     };
 
-    // Move the asset
-    let res = tokio::task::spawn_blocking(move || {
-        if !asset.overwrite {
-            // Check if file already exists
-            if new_path.exists() {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::Conflict(
-                    "Target path already exists".to_string(),
-                ));
-            }
-        }
-
-        match fs::rename(&old_path, &new_path) {
-            Ok(_) => DeprecatedApiResult::new_data(()),
-            Err(_) => {
-                eprintln!("Error moving asset, invalid path.");
-                DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
-            }
-        }
-    })
-    .await;
-
-    match res {
-        Ok(res) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-            }
-            res
-        }
-        Err(e) => {
-            eprintln!("Error moving asset: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
-        }
+    // If not overwriting, ensure target doesn't exist
+    if !asset.overwrite && new_path.exists() {
+        return Err(ApiErrorType::Conflict("Target path already exists".to_string()).into());
     }
+
+    // Move the asset asynchronously
+    if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
+        eprintln!("Error moving asset: {}", e);
+        return Err(ApiErrorType::InternalServerError.into());
+    }
+
+    if let Err(()) = data_storage.update_template_version_id(template_id).await {
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
+    }
+
+    Ok(().into())
 }
 
 #[post("/api/templates/<template_id>/export_formats", data = "<data>")]
@@ -672,7 +643,7 @@ pub async fn add_export_format(
     template_id: String,
     data_storage: &State<Arc<DataStorage>>,
     data: Json<ExportFormat>,
-) -> Json<DeprecatedApiResult<ExportFormat>> {
+) -> APIResult<ExportFormat> {
     // Clone data storage
     let data_storage = data_storage;
 
@@ -680,7 +651,7 @@ pub async fn add_export_format(
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -695,16 +666,15 @@ pub async fn add_export_format(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error creating export Format, invalid slug.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid Slug".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
         }
     };
 
     if new_path.exists() {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
+        return Err(ApiErrorType::Conflict(
             "An export format with this slug already exists.".to_string(),
-        ));
+        )
+        .into());
     }
 
     let template_exists;
@@ -724,19 +694,19 @@ pub async fn add_export_format(
     }
 
     if !template_exists {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
     match tokio::fs::create_dir_all(new_path).await {
         Ok(_) => {
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
-            DeprecatedApiResult::new_data(format)
+            Ok(format.into())
         }
         Err(e) => {
             eprintln!("Couldn't create folder for new export format: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -760,7 +730,7 @@ pub async fn update_export_format_metadata(
     template_id: String,
     data_storage: &State<Arc<DataStorage>>,
     data: Json<ExportFormatMetadata>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     // Clone data storage
     let data_storage = data_storage;
 
@@ -768,7 +738,7 @@ pub async fn update_export_format_metadata(
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -780,7 +750,7 @@ pub async fn update_export_format_metadata(
         .templates
         .get(&template_id)
     {
-        None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+        None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
         Some(template) => Arc::clone(template),
     };
 
@@ -793,36 +763,33 @@ pub async fn update_export_format_metadata(
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error moving export Format, invalid slug.");
-                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                    "Invalid Slug".to_string(),
-                ));
+                return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
             }
         };
         let new_path = match safe_path_combine(&base_path.to_str().unwrap(), &data.slug) {
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error moving export Format, invalid slug.");
-                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                    "Invalid Slug".to_string(),
-                ));
+                return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
             }
         };
 
         if new_path.exists() {
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
+            return Err(ApiErrorType::Conflict(
                 "An export format with this slug already exists.".to_string(),
-            ));
+            )
+            .into());
         }
 
         if let Err(e) = tokio::fs::rename(old_path, new_path).await {
             eprintln!("Couldn't rename export format: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+            return Err(ApiErrorType::InternalServerError.into());
         }
     }
 
     if slug != data.slug {
         let mut entry = match template_entry.write().unwrap().export_formats.remove(&slug) {
-            None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+            None => return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into()),
             Some(entry) => entry,
         };
         entry.slug = data.slug.clone();
@@ -841,7 +808,7 @@ pub async fn update_export_format_metadata(
             .export_formats
             .get_mut(&slug)
         {
-            None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+            None => return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into()),
             Some(export_format) => {
                 export_format.name = data.name.clone();
                 export_format.preview_pdf_path = data.preview_pdf_path.clone();
@@ -849,7 +816,7 @@ pub async fn update_export_format_metadata(
         }
     }
 
-    DeprecatedApiResult::new_data(())
+    Ok(().into())
 }
 
 /// DELETE /api/templates/<template_id>/export_formats/<slug>
@@ -860,14 +827,14 @@ pub async fn delete_export_format(
     template_id: String,
     data_storage: &State<Arc<DataStorage>>,
     slug: String,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     let data_storage = data_storage;
 
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
     let slug = sanitize_path(&slug);
@@ -878,7 +845,7 @@ pub async fn delete_export_format(
         // This scope ensures that we drop the lock as soon as we finish using it
         match templates.get(&template_id) {
             Some(template) => template.clone(),
-            None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+            None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
         }
     };
 
@@ -897,24 +864,24 @@ pub async fn delete_export_format(
                     Ok(_) => {
                         if let Err(()) = data_storage.update_template_version_id(template_id).await
                         {
-                            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                            return Err(
+                                ApiErrorType::ResourceNotFound("template".to_string()).into()
+                            );
                         }
-                        DeprecatedApiResult::new_data(())
+                        Ok(().into())
                     }
                     Err(e) => {
                         eprintln!("Couldn't delete physical folder for export format: {}", e);
-                        DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+                        Err(ApiErrorType::InternalServerError.into())
                     }
                 },
                 Err(_) => {
                     eprintln!("Couldn't delete physical folder for export format. Couldn't create safe_path");
-                    DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                        "Invalid Slug".to_string(),
-                    ))
+                    Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into())
                 }
             }
         }
-        None => DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+        None => Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into()),
     }
 }
 
@@ -925,13 +892,13 @@ pub async fn get_assets_for_export_format(
     _session: Session,
     template_id: String,
     slug: String,
-) -> Json<DeprecatedApiResult<AssetList>> {
+) -> APIResult<AssetList> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
     let slug = sanitize_path(&slug);
@@ -940,10 +907,10 @@ pub async fn get_assets_for_export_format(
     let res = tokio::task::spawn_blocking(move || {
         let path = format!("data/templates/{}/formats/{}", template_id, slug);
         match get_assets_recursive(&path, None) {
-            Ok(assets) => DeprecatedApiResult::new_data(AssetList { assets }),
+            Ok(assets) => Ok(AssetList { assets }.into()),
             Err(e) => {
                 eprintln!("Error getting assets: {}", e);
-                DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+                Err(ApiErrorType::InternalServerError.into())
             }
         }
     })
@@ -953,7 +920,7 @@ pub async fn get_assets_for_export_format(
         Ok(assets) => assets,
         Err(e) => {
             eprintln!("Error getting assets: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -1011,13 +978,13 @@ pub async fn create_file_asset_for_export_format(
     slug: String,
     asset: Form<NewAssetFile<'_>>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1029,9 +996,7 @@ pub async fn create_file_asset_for_export_format(
         Some(name) => name,
         None => {
             eprintln!("No file name provided");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "No file name provided".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("No file name provided".to_string()).into());
         }
     };
 
@@ -1083,13 +1048,13 @@ pub async fn create_file_asset_for_export_format(
     match file.copy_to(path).await {
         Ok(_) => {
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
-            return DeprecatedApiResult::new_data(());
+            return Ok(().into());
         }
         Err(e) => {
             eprintln!("Error copying file: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+            return Err(ApiErrorType::InternalServerError.into());
         }
     }
 }
@@ -1106,13 +1071,13 @@ pub async fn delete_assets_for_export_format(
     paths: Json<DeleteAssetRequest>,
     slug: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1128,9 +1093,7 @@ pub async fn delete_assets_for_export_format(
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error deleting asset, invalid path.");
-                return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                    "Invalid path".to_string(),
-                ));
+                return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
             }
         };
 
@@ -1140,7 +1103,7 @@ pub async fn delete_assets_for_export_format(
                 Ok(_) => (),
                 Err(e) => {
                     eprintln!("Error deleting asset: {} ", e);
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+                    return Err(ApiErrorType::InternalServerError.into());
                 }
             }
         } else {
@@ -1148,16 +1111,16 @@ pub async fn delete_assets_for_export_format(
                 Ok(_) => (),
                 Err(e) => {
                     eprintln!("Error deleting asset: {}", e);
-                    return DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError);
+                    return Err(ApiErrorType::InternalServerError.into());
                 }
             }
         }
     }
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
-    DeprecatedApiResult::new_data(())
+    Ok(().into())
 }
 
 /// POST /api/templates/<template_id>/export_formats/<slug>/assets/folder
@@ -1172,13 +1135,13 @@ pub async fn create_folder_asset_for_export_format(
     asset: Json<NewAssetFolder>,
     slug: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1191,14 +1154,14 @@ pub async fn create_folder_asset_for_export_format(
 
     // Create the folder
     let res = tokio::task::spawn_blocking(move || match fs::create_dir(&path) {
-        Ok(_) => DeprecatedApiResult::new_data(()),
+        Ok(_) => Ok(().into()),
         Err(e) => match e.kind() {
-            io::ErrorKind::AlreadyExists => DeprecatedApiResult::new_error(
-                DeprecatedApiError::Conflict("Folder already exists".to_string()),
-            ),
+            io::ErrorKind::AlreadyExists => {
+                Err(ApiErrorType::Conflict("Folder already exists".to_string()).into())
+            }
             _ => {
                 eprintln!("Error creating folder: {}", e);
-                DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+                Err(ApiErrorType::InternalServerError.into())
             }
         },
     })
@@ -1207,13 +1170,13 @@ pub async fn create_folder_asset_for_export_format(
     match res {
         Ok(res) => {
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
             res
         }
         Err(e) => {
             eprintln!("Error creating folder: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -1232,13 +1195,13 @@ pub async fn update_asset_file_for_export_format(
     content: Json<UpdateAssetRequest>,
     slug: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1253,28 +1216,26 @@ pub async fn update_asset_file_for_export_format(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error updating asset, invalid path.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid path".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
         }
     };
 
     // Check if file exists
     if !path.exists() {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("asset".to_string()).into());
     }
 
     // Update the file
     match tokio::fs::write(&path, content.into_inner().content).await {
         Ok(_) => {
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
-            DeprecatedApiResult::new_data(())
+            Ok(().into())
         }
         Err(e) => {
             eprintln!("Error updating asset: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -1291,13 +1252,13 @@ pub async fn move_asset_for_export_format(
     asset: Json<MoveAssetRequest>,
     slug: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1310,9 +1271,7 @@ pub async fn move_asset_for_export_format(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid path".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
         }
     };
 
@@ -1320,45 +1279,25 @@ pub async fn move_asset_for_export_format(
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Invalid path".to_string(),
-            ));
+            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
         }
     };
 
-    // Move the asset
-    let res = tokio::task::spawn_blocking(move || {
-        if !asset.overwrite {
-            // Check if file already exists
-            if new_path.exists() {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::Conflict(
-                    "Target path already exists".to_string(),
-                ));
-            }
-        }
-
-        match fs::rename(&old_path, &new_path) {
-            Ok(_) => DeprecatedApiResult::new_data(()),
-            Err(_) => {
-                eprintln!("Error moving asset, invalid path.");
-                DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
-            }
-        }
-    })
-    .await;
-
-    match res {
-        Ok(res) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-            }
-            res
-        }
-        Err(e) => {
-            eprintln!("Error moving asset: {}", e);
-            DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError)
-        }
+    // If not overwriting, ensure target doesn't exist
+    if !asset.overwrite && new_path.exists() {
+        return Err(ApiErrorType::Conflict("Target path already exists".to_string()).into());
     }
+
+    if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
+        eprintln!("Error moving asset: {}", e);
+        return Err(ApiErrorType::InternalServerError.into());
+    }
+
+    if let Err(()) = data_storage.update_template_version_id(template_id).await {
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
+    }
+
+    Ok(().into())
 }
 
 #[derive(serde::Deserialize)]
@@ -1380,13 +1319,13 @@ pub async fn create_export_step(
     slug: String,
     step: Json<ExportStep>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<ExportStep>> {
+) -> APIResult<ExportStep> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1403,7 +1342,7 @@ pub async fn create_export_step(
         Some(template) => template.clone(),
         None => {
             eprintln!("Couldn't find template");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
         }
     };
 
@@ -1413,15 +1352,15 @@ pub async fn create_export_step(
     match template.write().unwrap().export_formats.get_mut(&slug) {
         None => {
             eprintln!("Couldn't find export format");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
         }
         Some(export_format) => export_format.export_steps.push(step.clone()),
     }
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
-    return DeprecatedApiResult::new_data(step);
+    return Ok(step.into());
 }
 
 #[derive(serde::Deserialize)]
@@ -1443,13 +1382,13 @@ pub async fn move_export_step(
     step_id: String,
     movedata: Json<MoveExportStepRequest>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
     //Parse step_id to uuid
@@ -1457,7 +1396,7 @@ pub async fn move_export_step(
         Ok(step_id) => step_id,
         Err(e) => {
             eprintln!("Couldn't parse step id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1475,14 +1414,14 @@ pub async fn move_export_step(
         Some(template) => template.clone(),
         None => {
             eprintln!("Couldn't find template");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
         }
     };
 
     match template.write().unwrap().export_formats.get_mut(&slug) {
         None => {
             eprintln!("Couldn't find export format");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
         }
         Some(export_format) => {
             // Find export step and move it after move_after:
@@ -1492,7 +1431,9 @@ pub async fn move_export_step(
                 .position(|step| step.id == Some(step_id));
             let step_index = match step_index {
                 Some(index) => index,
-                None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+                None => {
+                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into())
+                }
             };
             let step = export_format.export_steps.remove(step_index);
             // Find new position:
@@ -1504,7 +1445,9 @@ pub async fn move_export_step(
                         .position(|step| step.id == Some(move_after))
                     {
                         None => {
-                            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
+                            return Err(
+                                ApiErrorType::ResourceNotFound("export_step".to_string()).into()
+                            )
                         }
                         Some(index) => index + 1,
                     }
@@ -1516,9 +1459,9 @@ pub async fn move_export_step(
     }
 
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    return DeprecatedApiResult::new_data(());
+    return Ok(().into());
 }
 
 /// PUT /api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>
@@ -1534,13 +1477,13 @@ pub async fn update_export_step(
     step_id: String,
     step: Json<ExportStep>,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1557,7 +1500,7 @@ pub async fn update_export_step(
         Some(template) => template.clone(),
         None => {
             eprintln!("Couldn't find template");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
         }
     };
 
@@ -1565,29 +1508,25 @@ pub async fn update_export_step(
         Ok(id) => id,
         Err(e) => {
             eprintln!("Couldn't parse step id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
     let step = step.into_inner();
     let step_id = match step.id {
         Some(id) => id,
-        None => {
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(String::from(
-                "Missing step_id",
-            )))
-        }
+        None => return Err(ApiErrorType::BadRequest(String::from("Missing step_id")).into()),
     };
     if parameter_step_id != step_id {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(String::from(
-            "step_id mismatches in data and url",
-        )));
+        return Err(
+            ApiErrorType::BadRequest(String::from("step_id mismatches in data and url")).into(),
+        );
     }
 
     match template.write().unwrap().export_formats.get_mut(&slug) {
         None => {
             eprintln!("Couldn't find export format");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
         }
         Some(export_format) => {
             // Find export_step and update
@@ -1597,19 +1536,23 @@ pub async fn update_export_step(
                 .position(|x| x.id == Some(step_id))
             {
                 Some(id) => id,
-                None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+                None => {
+                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into())
+                }
             };
 
             match export_format.export_steps.get_mut(index) {
                 Some(old_step) => *old_step = step,
-                None => return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound),
+                None => {
+                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into())
+                }
             }
         }
     }
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    DeprecatedApiResult::new_data(())
+    Ok(().into())
 }
 
 #[delete("/api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>")]
@@ -1619,13 +1562,13 @@ pub async fn delete_export_step(
     slug: String,
     step_id: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
+) -> APIResult<()> {
     //Parse template_id and step_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1633,7 +1576,7 @@ pub async fn delete_export_step(
         Ok(step_id) => step_id,
         Err(e) => {
             eprintln!("Couldn't parse step id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1650,7 +1593,7 @@ pub async fn delete_export_step(
         Some(template) => template.clone(),
         None => {
             eprintln!("Couldn't find template");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
         }
     };
 
@@ -1662,13 +1605,13 @@ pub async fn delete_export_step(
         }
         None => {
             eprintln!("Couldn't find export format");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
         }
     };
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    return DeprecatedApiResult::new_data(());
+    return Ok(().into());
 }
 
 #[get("/api/templates/<template_id>/export_formats/<slug>/export_steps")]
@@ -1677,13 +1620,13 @@ pub async fn get_export_steps(
     template_id: String,
     slug: String,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<Vec<ExportStep>>> {
+) -> APIResult<Vec<ExportStep>> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
     };
 
@@ -1700,7 +1643,7 @@ pub async fn get_export_steps(
         Some(template) => template.clone(),
         None => {
             eprintln!("Couldn't find template");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
         }
     };
 
@@ -1708,11 +1651,11 @@ pub async fn get_export_steps(
         Some(export_format) => export_format.export_steps.clone(),
         None => {
             eprintln!("Couldn't find export format");
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
         }
     };
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    return DeprecatedApiResult::new_data(export_steps);
+    return Ok(export_steps.into());
 }

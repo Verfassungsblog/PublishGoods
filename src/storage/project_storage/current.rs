@@ -619,6 +619,8 @@ impl Bibliography {
             entry.set_genre(genre.into());
         }
 
+        entry.set_parents(parents);
+
         Some(entry)
     }
 }

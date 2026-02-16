@@ -1,4 +1,4 @@
-use crate::projects::api::{DeprecatedApiError, DeprecatedApiResult};
+use crate::projects::api::DeprecatedApiError;
 use crate::settings::Settings;
 use crate::storage::data_storage::current::DataStorageError;
 use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
@@ -17,14 +17,12 @@ use std::sync::{Arc, RwLock};
 ///
 /// # Arguments
 /// * `uuid` - String slice containing the UUID to be parsed.
-pub fn parse_uuid(uuid: &str) -> Result<uuid::Uuid, Json<DeprecatedApiResult<DeprecatedApiError>>> {
+pub fn parse_uuid(uuid: &str) -> Result<uuid::Uuid, ApiError> {
     match uuid::Uuid::parse_str(uuid) {
         Ok(uuid) => Ok(uuid),
         Err(e) => {
             eprintln!("Couldn't parse UUID: {}", e);
-            Err(DeprecatedApiResult::new_error(
-                DeprecatedApiError::BadRequest("Invalid UUID".to_string()),
-            ))
+            Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into())
         }
     }
 }
@@ -40,12 +38,12 @@ pub async fn get_project(
     project_id: &uuid::Uuid,
     settings: &State<Settings>,
     project_storage: Arc<ProjectStorage>,
-) -> Result<Arc<RwLock<ProjectData>>, Json<DeprecatedApiResult<DeprecatedApiError>>> {
+) -> Result<Arc<RwLock<ProjectData>>, ApiError> {
     match project_storage.get_project(&project_id, settings).await {
         Ok(project_entry) => Ok(project_entry.clone()),
-        Err(_) => {
-            eprintln!("Couldn't get project with id {}", project_id);
-            Err(DeprecatedApiResult::new_error(DeprecatedApiError::NotFound))
+        Err(e) => {
+            eprintln!("Couldn't get project with id {}: {:?}", project_id, e);
+            Err(ApiError::from(e))
         }
     }
 }
@@ -60,8 +58,12 @@ pub enum ApiErrorType {
     Unauthorized,
     /// A request parameter could not be parsed. Contains the parameter name.
     UnparsableParameter(String),
+    /// The request couldn't be fulfilled due to user error, see string
+    BadRequest(String),
     /// The requested resource does not exist. Contains the resource name.
     ResourceNotFound(String),
+    /// e.g. Folder/File with this name already exists
+    Conflict(String),
     /// A generic internal server error.
     InternalServerError,
     /// Arbitrary error, contains a message.
@@ -73,10 +75,10 @@ impl From<DeprecatedApiError> for ApiErrorType {
     fn from(value: DeprecatedApiError) -> Self {
         match value {
             DeprecatedApiError::NotFound => ApiErrorType::ResourceNotFound("unknown".to_string()),
-            DeprecatedApiError::BadRequest(x) => ApiErrorType::Other(x),
+            DeprecatedApiError::BadRequest(x) => ApiErrorType::BadRequest(x),
             DeprecatedApiError::Unauthorized => ApiErrorType::Unauthorized,
             DeprecatedApiError::InternalServerError => ApiErrorType::InternalServerError,
-            DeprecatedApiError::Conflict(x) => ApiErrorType::Other(x),
+            DeprecatedApiError::Conflict(x) => ApiErrorType::Conflict(x),
             DeprecatedApiError::Other(x) => ApiErrorType::Other(x),
         }
     }
@@ -113,7 +115,9 @@ impl<'r> Responder<'r, 'static> for ApiError {
         let status = match self.error {
             ApiErrorType::Unauthorized => Status::Unauthorized,
             ApiErrorType::UnparsableParameter(_) => Status::BadRequest,
+            ApiErrorType::BadRequest(_) => Status::BadRequest,
             ApiErrorType::ResourceNotFound(_) => Status::NotFound,
+            ApiErrorType::Conflict(_) => Status::Conflict,
             ApiErrorType::InternalServerError => Status::InternalServerError,
             ApiErrorType::Other(_) => Status::ImATeapot,
         };
@@ -134,7 +138,9 @@ impl From<ApiErrorType> for ApiError {
         let error_description = match &value{
             ApiErrorType::Unauthorized => Some("You session is invalid or expired. Please login.".to_string()),
             ApiErrorType::UnparsableParameter(parameter) => Some(format!("Value of parameter {} is not parsable.", parameter)),
+            ApiErrorType::BadRequest(msg) => Some(format!("Bad request: {}", msg)),
             ApiErrorType::ResourceNotFound(resource_name) => Some(format!("The requested resource {} couldn't be found.", resource_name)),
+            ApiErrorType::Conflict(msg) => Some(format!("Conflict: {}", msg)),
             ApiErrorType::InternalServerError => Some("An interal error occured. Please contact the administrator if this problem persists.".to_string()),
             ApiErrorType::Other(_) => None,
         };
@@ -148,7 +154,7 @@ impl From<ApiErrorType> for ApiError {
 
 /// Converts UUID parsing errors into a standardized API error indicating the parameter was unparsable.
 impl From<uuid::Error> for ApiError {
-    fn from(value: uuid::Error) -> Self {
+    fn from(_value: uuid::Error) -> Self {
         ApiErrorType::UnparsableParameter("uuid".to_string()).into()
     }
 }
@@ -201,7 +207,7 @@ pub struct APIResponse<T: Serialize> {
 
 impl<'r, T: Serialize + std::fmt::Debug> Responder<'r, 'static> for APIResponse<T> {
     /// Implements Rocket responder for `NewAPIResponse`, returning JSON data and HTTP 200.
-    fn respond_to(self, request: &'r Request<'_>) -> rocket::response::Result<'static> {
+    fn respond_to(self, _request: &'r Request<'_>) -> rocket::response::Result<'static> {
         debug!("Responding with data {:?}", self.data);
 
         let mut response = Response::new();

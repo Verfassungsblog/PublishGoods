@@ -4,7 +4,7 @@ use crate::settings::Settings;
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
 use crate::storage::ProjectTemplateV2;
-use crate::utils::api_helpers::APIResult;
+use crate::utils::api_helpers::{APIResponse, APIResult, ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
@@ -78,28 +78,14 @@ pub async fn delete_project(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            eprintln!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse project id".to_string(),
-            ));
-        }
-    };
+) -> APIResult<()> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let project_storage = Arc::clone(project_storage);
-
-    match project_storage.delete_project(&project_id, settings).await {
-        Ok(_) => DeprecatedApiResult::new_data(()),
-        Err(e) => match e {
-            ProjectStorageError::ProjectNotFound => DeprecatedApiResult::new_error(
-                DeprecatedApiError::BadRequest("Project not Found".to_string()),
-            ),
-            _ => DeprecatedApiResult::new_error(DeprecatedApiError::InternalServerError),
-        },
-    }
+    project_storage
+        .delete_project(&project_id, settings)
+        .await?;
+    Ok(().into())
 }
 
 /// Trait for HTTP PATCH routes
@@ -135,24 +121,11 @@ pub async fn get_project_contents(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> Json<DeprecatedApiResult<Vec<Section>>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            println!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+) -> APIResult<Vec<Section>> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let project_storage = Arc::clone(project_storage);
-
-    let project = match project_storage.get_project(&project_id, settings).await {
-        Ok(project) => project,
-        Err(_) => {
-            println!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project = project_storage.get_project(&project_id, settings).await?;
 
     let project = project.read().unwrap();
 
@@ -161,7 +134,7 @@ pub async fn get_project_contents(
         contents.push(entry.clone_without_content());
     }
 
-    DeprecatedApiResult::new_data(contents)
+    Ok(contents.into())
 }
 
 /// POST /api/projects/<project_id>/contents
@@ -173,16 +146,8 @@ pub async fn add_content(
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
     content: Json<Section>,
-) -> Json<DeprecatedApiResult<Section>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            eprintln!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse project id".to_string(),
-            ));
-        }
-    };
+) -> APIResult<Section> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     // Check if Section or Toc, generate uuid if section
     let mut content = content.into_inner();
@@ -191,14 +156,7 @@ pub async fn add_content(
     }
 
     let project_storage = Arc::clone(project_storage);
-
-    let project_entry = match project_storage.get_project(&project_id, settings).await {
-        Ok(project_entry) => project_entry.clone(),
-        Err(_) => {
-            eprintln!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project_entry = project_storage.get_project(&project_id, settings).await?;
 
     // Insert new content block at the end
     project_entry
@@ -208,7 +166,7 @@ pub async fn add_content(
         .push(content.clone());
 
     //Return inserted content block
-    DeprecatedApiResult::new_data(content)
+    Ok(content.into())
 }
 
 /// PUT /api/projects/<project_id>/contents/<content_id>/move/after/<after_id>
@@ -221,44 +179,13 @@ pub async fn move_content_after(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
-    let content_id = match uuid::Uuid::parse_str(&content_id) {
-        Ok(content_id) => content_id,
-        Err(e) => {
-            eprintln!("Couldn't parse content id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse content id".to_string(),
-            ));
-        }
-    };
-
-    let after_id = match uuid::Uuid::parse_str(&after_id) {
-        Ok(after_id) => after_id,
-        Err(e) => {
-            eprintln!("Couldn't parse after id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse after id".to_string(),
-            ));
-        }
-    };
-
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            println!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+) -> APIResult<()> {
+    let content_id = uuid::Uuid::parse_str(&content_id)?;
+    let after_id = uuid::Uuid::parse_str(&after_id)?;
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let project_storage = Arc::clone(project_storage);
-
-    let project = match project_storage.get_project(&project_id, settings).await {
-        Ok(project) => project,
-        Err(_) => {
-            println!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project = project_storage.get_project(&project_id, settings).await?;
 
     let mut project = project.write().unwrap();
 
@@ -267,17 +194,17 @@ pub async fn move_content_after(
         Some(content) => content,
         None => {
             println!("Couldn't find content with id {}", content_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("content".to_string()).into());
         }
     };
 
     // Add section after specified section
     match project.insert_section_after(&after_id, content.clone()) {
-        Ok(_) => DeprecatedApiResult::new_data(()),
+        Ok(_) => Ok(().into()),
         Err(_) => {
             println!("Couldn't find content with id {}", after_id);
             project.sections.push(content);
-            DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
+            Err(ApiErrorType::ResourceNotFound("content".to_string()).into())
         }
     }
 }
@@ -292,44 +219,13 @@ pub async fn move_content_child_of(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
-) -> Json<DeprecatedApiResult<()>> {
-    let content_id = match uuid::Uuid::parse_str(&content_id) {
-        Ok(content_id) => content_id,
-        Err(e) => {
-            eprintln!("Couldn't parse content id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse content id".to_string(),
-            ));
-        }
-    };
-
-    let parent_id = match uuid::Uuid::parse_str(&parent_id) {
-        Ok(parent_id) => parent_id,
-        Err(e) => {
-            eprintln!("Couldn't parse parent id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::BadRequest(
-                "Couldn't parse parent id".to_string(),
-            ));
-        }
-    };
-
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            println!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+) -> APIResult<()> {
+    let content_id = uuid::Uuid::parse_str(&content_id)?;
+    let parent_id = uuid::Uuid::parse_str(&parent_id)?;
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let project_storage = Arc::clone(project_storage);
-
-    let project = match project_storage.get_project(&project_id, settings).await {
-        Ok(project) => project,
-        Err(_) => {
-            println!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project = project_storage.get_project(&project_id, settings).await?;
 
     let mut project = project.write().unwrap();
 
@@ -338,18 +234,18 @@ pub async fn move_content_child_of(
         Some(content) => content,
         None => {
             println!("Couldn't find content with id {}", content_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
+            return Err(ApiErrorType::ResourceNotFound("content".to_string()).into());
         }
     };
 
     // Add section as first child of specified section
     match project.insert_section_as_first_child(&parent_id, content.clone()) {
-        Ok(_) => DeprecatedApiResult::new_data(()),
+        Ok(_) => Ok(().into()),
         Err(_) => {
             println!("Couldn't find content with id {}", parent_id);
             //TODO re-add content to the end
             project.sections.push(content);
-            DeprecatedApiResult::new_error(DeprecatedApiError::NotFound)
+            Err(ApiErrorType::ResourceNotFound("content".to_string()).into())
         }
     }
 }
@@ -500,28 +396,15 @@ pub async fn get_project_template(
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
     _session: Session,
-) -> Json<DeprecatedApiResult<uuid::Uuid>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            eprintln!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+) -> APIResult<uuid::Uuid> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let project_storage = Arc::clone(project_storage);
-
-    let project = match project_storage.get_project(&project_id, settings).await {
-        Ok(project) => project,
-        Err(_) => {
-            eprintln!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project = project_storage.get_project(&project_id, settings).await?;
 
     let project = project.read().unwrap();
 
-    DeprecatedApiResult::new_data(project.template_id.clone())
+    Ok(project.template_id.clone().into())
 }
 
 /// Set project's template to the specified template_id
@@ -533,30 +416,16 @@ pub async fn set_project_template(
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
     _session: Session,
-) -> Json<DeprecatedApiResult<()>> {
-    let project_id = match uuid::Uuid::parse_str(&project_id) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            eprintln!("Couldn't parse project id: {}", e);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+) -> APIResult<()> {
+    let project_id = uuid::Uuid::parse_str(&project_id)?;
 
     let project_storage = Arc::clone(project_storage);
-
-    let project = match project_storage.get_project(&project_id, settings).await {
-        Ok(project) => project,
-        Err(_) => {
-            eprintln!("Couldn't get project with id {}", project_id);
-            return DeprecatedApiResult::new_error(DeprecatedApiError::NotFound);
-        }
-    };
+    let project = project_storage.get_project(&project_id, settings).await?;
 
     let mut project = project.write().unwrap();
-
     project.template_id = template_id.into_inner();
 
-    DeprecatedApiResult::new_data(())
+    Ok(().into())
 }
 
 /// List all templates
@@ -565,10 +434,10 @@ pub async fn set_project_template(
 pub async fn list_templates(
     _session: Session,
     data_storage: &State<Arc<DataStorage>>,
-) -> Json<DeprecatedApiResult<Vec<ProjectTemplateV2>>> {
+) -> APIResult<Vec<ProjectTemplateV2>> {
     let data_storage = Arc::clone(data_storage);
 
-    let templates = data_storage
+    let templates: Vec<ProjectTemplateV2> = data_storage
         .data
         .read()
         .unwrap()
@@ -578,5 +447,5 @@ pub async fn list_templates(
         .map(|x| x.1.read().unwrap().clone())
         .collect();
 
-    DeprecatedApiResult::new_data(templates)
+    Ok(templates.into())
 }
