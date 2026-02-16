@@ -112,6 +112,8 @@ pub mod test {
      }
 
      */
+    use crate::import::link_converter::send_translation_request;
+    use crate::settings::Settings;
 
     #[tokio::test]
     async fn test_send_invald_translation_request() {
