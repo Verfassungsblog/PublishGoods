@@ -24,6 +24,17 @@ body, html{
     width: 300px;
 }
 
+@font-face {
+    font-family: 'Nunito';
+    src: url('/css/Nunito-VariableFont_wght.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Nunito';
+    font-style: italic;
+    src: url('/css/Nunito-Italic-VariableFont_wght.ttf') format('truetype');
+}
+
 body{
     font-family: 'Nunito', sans-serif;
 }
