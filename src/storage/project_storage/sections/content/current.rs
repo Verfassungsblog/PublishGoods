@@ -77,7 +77,14 @@ impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
         let mut css_classes = Vec::new();
         if let Some(tunes_val) = value.map_ref.get(value.txn, "tunes") {
             if let Ok(tunes) = tunes_val.cast::<MapRef>() {
-                if let Some(style_tunes_val) = tunes.get(value.txn, "block_style_tunes") {
+                // Prefer singular key (correct plugin name), but support legacy plural key for backward compatibility
+                let style_key = if tunes.get(value.txn, "block_style_tune").is_some() {
+                    "block_style_tune"
+                } else {
+                    "block_style_tunes"
+                };
+
+                if let Some(style_tunes_val) = tunes.get(value.txn, style_key) {
                     if let Ok(style_tunes) = style_tunes_val.cast::<MapRef>() {
                         if let Some(css_classes_str) = style_tunes.get(value.txn, "css_classes") {
                             let classes = css_classes_str.to_string(value.txn);
@@ -331,13 +338,13 @@ impl From<NewContentBlock> for yrs::MapPrelim {
             }
         }
         if !value.css_classes.is_empty() {
-            let block_style_tunes: Vec<(String, yrs::In)> = vec![(
+            let block_style_tune: Vec<(String, yrs::In)> = vec![(
                 "css_classes".to_string(),
                 value.css_classes.join(" ").into(),
             )];
             let tunes_data: Vec<(String, yrs::In)> = vec![(
-                "block_style_tunes".to_string(),
-                MapPrelim::from_iter(block_style_tunes).into(),
+                "block_style_tune".to_string(),
+                MapPrelim::from_iter(block_style_tune).into(),
             )];
             map.push(("tunes".to_string(), MapPrelim::from_iter(tunes_data).into()));
         }
@@ -876,7 +883,7 @@ mod tests {
             .cast::<yrs::types::map::MapRef>()
             .unwrap();
         let style_tunes = tunes
-            .get(&txn, "block_style_tunes")
+            .get(&txn, "block_style_tune")
             .unwrap()
             .cast::<yrs::types::map::MapRef>()
             .unwrap();
