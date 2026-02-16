@@ -732,6 +732,9 @@ h1{
 .ce-inline-tool{
     font-size: 10pt;
 }
+.ce-header{
+    font-weight: normal;
+}
 #section_content_blocks_inner{
     padding-left: 50px;
     padding-right: 50px;
