@@ -133,9 +133,20 @@ export async function showSectionEditor(content_path: string){
     const editor = new EditorJS({
         holder: 'section_content_blocks_inner',
         tools: {
-            header: Header,
-            list: List,
-            quote: Quote,
+            // Enable inline toolbar for headers so formatting (z.B. Link, Bold, Italic) erscheint
+            header: {
+                class: Header,
+                inlineToolbar: true
+            },
+            // Enable inline toolbar for lists and quotes as well
+            list: {
+                class: List,
+                inlineToolbar: true
+            } as any,
+            quote: {
+                class: Quote,
+                inlineToolbar: true
+            } as any,
             raw: Raw,
             image: {
                 class: ImageTool,
