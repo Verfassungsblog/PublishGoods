@@ -19,7 +19,7 @@ use crate::storage::project_storage::ProjectData;
 use crate::storage::data_storage::{DataStorage};
 use crate::projects::{BlockData, NewContentBlock, PersonUuidOrString, SectionOrTocV5, Section};
 use crate::utils::csl::CslData;
-use html5ever::{parse_document, serialize, QualName};
+use html5ever::{parse_document, parse_fragment, ParseOpts, serialize, QualName};
 use html5ever::tendril::{StrTendril, TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 use markup5ever::{ns, local_name, Attribute};
@@ -675,7 +675,7 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
 /// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
 /// - Prints warnings to stderr if a citation key is not found.
 pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool, citations_as_footnote: bool) -> String{
-    if let Ok(dom) = parse_document(RcDom::default(), Default::default()).from_utf8().read_from(&mut text.as_bytes()) {
+    if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default()).from_utf8().read_from(&mut text.as_bytes()) {
         let mut mutations: Vec<ReplacementType> = Vec::new();
 
         find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, citations_as_footnote);
@@ -726,12 +726,23 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                             }],
                         Default::default()
                     );
-                    let text = StrTendril::from(footnote.note_content);
+
+                    let context = QualName::new(
+                        None,
+                        ns!(html),
+                        local_name!("div"),
+                    );
 
                     dom.append_before_sibling(&footnote.node, NodeOrText::AppendNode(a_node.clone()));
                     dom.append_before_sibling(&a_node, NodeOrText::AppendNode(span_node.clone()));
                     dom.append(&span_node, NodeOrText::AppendNode(child_a_node.clone()));
-                    dom.append(&span_node, NodeOrText::AppendText(text));
+
+                    if let Ok(fragment) = parse_fragment(RcDom::default(), ParseOpts::default(), context, Vec::<Attribute>::new(), false).from_utf8().read_from(&mut footnote.note_content.as_bytes()) {
+                        if let Some(reparent_handle) = fragment.document.children.borrow().get(0){
+                            fragment.reparent_children(&reparent_handle, &span_node);
+                        }
+                    }
+
                     dom.remove_from_parent(&footnote.node)
                 },
                 ReplacementType::Endnote(endnote) => {
@@ -810,8 +821,8 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
             if attributes.get("note-type") == Some(&"footnote".to_string()) {
                 let uuid = uuid::Uuid::new_v4();
                 let note_content = match attributes.get("note-content") {
-                    Some(value) => unescape_html(value),
-                    None => "Missing note content".to_string()
+                    Some(value) => value,
+                    None => &"Missing note content".to_string()
                 };
 
                 let replacement = ReplacementType::Footnote(Footnote{
