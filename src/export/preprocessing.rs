@@ -17,7 +17,6 @@ use hayagriva::CitationRequest;
 use hyphenation::{Hyphenator, Load, Standard};
 use image::{DynamicImage, ImageOutputFormat};
 use language::Language;
-use regex::Regex;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -29,14 +28,12 @@ use vb_exchange::projects::{
     PreparedSection, PreparedSectionMetadata,
 };
 use vb_exchange::RenderingError;
-
-// Lazily-initialized regular expressions used by `render_text` to avoid recompilation overhead
-static RE_NOTE_SPAN: OnceLock<Regex> = OnceLock::new();
-static RE_CITATION: OnceLock<Regex> = OnceLock::new();
-static RE_KEY: OnceLock<Regex> = OnceLock::new();
-static RE_PREFIX: OnceLock<Regex> = OnceLock::new();
-static RE_SUFFIX: OnceLock<Regex> = OnceLock::new();
-static RE_CUSTOMSTYLE: OnceLock<Regex> = OnceLock::new();
+use html5ever::{parse_document, parse_fragment, ParseOpts, serialize, QualName};
+use html5ever::tendril::{StrTendril, TendrilSink};
+use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
+use markup5ever::{ns, local_name, Attribute};
+use std::borrow::Borrow;
+use markup5ever::interface::{NodeOrText, TreeSink};
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
 ///
@@ -329,6 +326,7 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
     }
     res
 }
+
 
 /// Renders a `Section` into a `PreparedSection`, resolving metadata, author/editor references, and formatting content.
 ///
@@ -835,147 +833,281 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
 /// * `dict` - Hyphenation dictionary used for soft hyphenation if `add_soft_hyphens` is true.
 /// * `citation_bib` - Bibliography mapping citation keys to citation strings, used for rendering citations found in the text.
 /// * `add_soft_hyphens` - Flag indicating if soft hyphens should be conditionally inserted for hyphenation in the output.
+/// * `citations_as_footnote` - Flag indicating if citations should be rendered as foot- or endnote
 ///
 /// # Returns
 /// A string containing the rendered HTML representation of the input text, with citations, footnotes, endnotes,
 /// and custom styles processed.
 ///
 /// # Panics
-/// This function panics if any of the regular expressions used for parsing (citations, endnotes/footnotes, custom styles)
-/// fail to compile.
-///
+/// Does not
 /// # Side Effects
 /// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
 /// - Prints warnings to stderr if a citation key is not found.
-pub fn render_text(
-    text: String,
-    endnote_storage: &mut Vec<(uuid::Uuid, String)>,
-    dict: &Standard,
-    citation_bib: &HashMap<String, String>,
-    add_soft_hyphens: bool,
-) -> String {
-    let re = RE_NOTE_SPAN.get_or_init(|| {
-        Regex::new(r#"<span(?:[^>]*?\bnote-type=\"([^\"]+)\")?(?:[^>]*?\bnote-content=\"([^\"]+)\")?[^>]*>.*?</span>"#).unwrap()
-    });
-    let re_citation =
-        RE_CITATION.get_or_init(|| Regex::new(r#"<citation\b([^>]*)>.*?</citation>"#).unwrap());
-    let re_key = RE_KEY.get_or_init(|| Regex::new(r#"\bdata-key=\"([^\"]*)\""#).unwrap());
-    let re_prefix = RE_PREFIX.get_or_init(|| Regex::new(r#"\bdata-prefix=\"([^\"]*)\""#).unwrap());
-    let re_suffix = RE_SUFFIX.get_or_init(|| Regex::new(r#"\bdata-suffix=\"([^\"]*)\""#).unwrap());
+pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool, citations_as_footnote: bool) -> String{
+    if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default()).from_utf8().read_from(&mut text.as_bytes()) {
+        let mut mutations: Vec<ReplacementType> = Vec::new();
 
-    // First Step: Convert Citations to Endnotes
-    let res = re_citation.replace_all(&text, |caps: &regex::Captures| {
-        let attrs = caps.get(1).map_or("", |m| m.as_str());
-        let key = match re_key.captures(attrs).and_then(|c| c.get(1)) {
-            Some(key) => key.as_str(),
-            None => return String::new(),
-        };
-        let prefix = re_prefix
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map_or("", |m| m.as_str());
-        let suffix = re_suffix
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map_or("", |m| m.as_str());
+        find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, citations_as_footnote);
 
-        // TODO: add setting if citations should be rendered as endnotes, in text or as footnotes
-        match citation_bib.get(key) {
-            Some(citation) => {
-                let full_citation = format!("{}{}{}", prefix, citation, suffix);
-                let test = format!(
-                    "<span note-type=\"endnote\" note-content=\"{}\"></span>",
-                    escape_html(&full_citation)
-                );
-                println!("Citation got converted to: {}", test);
-                test
-            }
-            None => {
-                eprintln!("Citation with key {} not found", key);
-                String::from("!!INVALID CITATION!!")
-            }
-        }
-    });
+        for mutation in mutations {
+            match mutation {
+                ReplacementType::Footnote(footnote) => {
+                    let span_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("span")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("footnote"),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("id")),
+                                value: StrTendril::from(format!("footnote-{}", footnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let child_a_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("a")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("footnote-marker"),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("href")),
+                                value: StrTendril::from(format!("#footnote-call-{}", footnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let a_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("a")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("footnote-call"),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("href")),
+                                value: StrTendril::from(format!("#footnote-{}", footnote.uuid)),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("id")),
+                                value: StrTendril::from(format!("footnote-call-{}", footnote.uuid)),
+                            }],
+                        Default::default()
+                    );
 
-    // Second Step: Convert Footnotes and Endnotes to HTML
-    let binding = res.to_string();
+                    let context = QualName::new(
+                        None,
+                        ns!(html),
+                        local_name!("div"),
+                    );
 
-    let res = re.replace_all(&binding, |caps: &regex::Captures| {
-        let note_type = match caps.get(1){
-            Some(note_type) => note_type.as_str(),
-            None => return String::new()
-        };
-        let note_content = match caps.get(2){
-            Some(note_content) => note_content.as_str(),
-            None => return String::new()
-        };
+                    dom.append_before_sibling(&footnote.node, NodeOrText::AppendNode(a_node.clone()));
+                    dom.append_before_sibling(&a_node, NodeOrText::AppendNode(span_node.clone()));
+                    dom.append(&span_node, NodeOrText::AppendNode(child_a_node.clone()));
 
-        if note_type == "endnote" {
-            let uuid = uuid::Uuid::new_v4();
-            // `note_content` is stored HTML-escaped in the attribute already. Store as-is
-            // and unescape later when creating the final PreparedEndnote to avoid double-escaping.
-            endnote_storage.push((uuid, note_content.to_string()));
-            return format!("<sup class=\"endnote\"><a href=\"#note-{}\">{}</a></sup>", uuid, endnote_storage.len())
-        }else if note_type == "footnote" {
-            let uuid = uuid::Uuid::new_v4();
-            return format!("<span class=\"footnote\" id=\"footnote-{}\"><a class=\"footnote-marker\" href=\"#footnote-call-{}\"></a>{}</span><a class=\"footnote-call\" href=\"#footnote-{}\" id=\"footnote-call-{}\"></a>", uuid, uuid, unescape_html(note_content), uuid, uuid)
-        }else{
-            String::new()
-        }
-    });
+                    if let Ok(fragment) = parse_fragment(RcDom::default(), ParseOpts::default(), context, Vec::<Attribute>::new(), false).from_utf8().read_from(&mut footnote.note_content.as_bytes()) {
+                        if let Some(reparent_handle) = fragment.document.children.borrow().get(0){
+                            fragment.reparent_children(&reparent_handle, &span_node);
+                        }
+                    }
 
-    let re2 = RE_CUSTOMSTYLE.get_or_init(|| {
-        Regex::new(r#"<customstyle(?:[^>]*?\binline-style=\"([^\"]*?)\")?(?:[^>]*?\bclasses=\"([^\"]*?)\")?[^>]*>(.*?)</customstyle>"#).unwrap()
-    });
-    let binding = res.to_string();
-    let res2 = re2.replace_all(&binding, |caps: &regex::Captures| {
-        let inline_style = caps.get(1).map_or("", |m| m.as_str());
-        let classes = caps.get(2).map_or("", |m| m.as_str());
-        let content = caps.get(3).map_or("", |m| m.as_str());
-        format!(
-            r#"<span class="{}" style="{}">{}</span>"#,
-            classes, inline_style, content
-        )
-    });
-    let binding = res2.to_string();
-    let res3 = re_citation.replace_all(&binding, |caps: &regex::Captures| {
-        let attrs = caps.get(1).map_or("", |m| m.as_str());
-        let key = match re_key.captures(attrs).and_then(|c| c.get(1)) {
-            Some(key) => key.as_str(),
-            None => return String::new(),
-        };
-        let prefix = re_prefix
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map_or("", |m| m.as_str());
-        let suffix = re_suffix
-            .captures(attrs)
-            .and_then(|c| c.get(1))
-            .map_or("", |m| m.as_str());
-
-        // TODO: add setting if citations should be rendered as endnotes, in text or as footnotes
-        match citation_bib.get(key) {
-            Some(citation) => {
-                let uuid = uuid::Uuid::new_v4();
-                let full_citation = format!("{}{}{}", prefix, citation, suffix);
-                endnote_storage.push((uuid, full_citation));
-                format!(
-                    "<sup class=\"endnote\"><a href=\"#note-{}\">{}</a></sup>",
-                    uuid,
-                    endnote_storage.len()
-                )
-            }
-            None => {
-                eprintln!("Citation with key {} not found", key);
-                String::from("!!INVALID CITATION!!")
+                    dom.remove_from_parent(&footnote.node)
+                },
+                ReplacementType::Endnote(endnote) => {
+                    let sup_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("sup")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("endnote"),
+                            }],
+                        Default::default()
+                    );
+                    let child_a_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("a")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("href")),
+                                value: StrTendril::from(format!("#note-{}", endnote.uuid)),
+                            }],
+                        Default::default()
+                    );
+                    let endnote_number = StrTendril::from(format!("{}", endnote.endnote_key));
+                    dom.append_before_sibling(&endnote.node, NodeOrText::AppendNode(sup_node.clone()));
+                    dom.append(&sup_node, NodeOrText::AppendNode(child_a_node.clone()));
+                    dom.append(&child_a_node, NodeOrText::AppendText(endnote_number));
+                    dom.remove_from_parent(&endnote.node)
+                },
+                ReplacementType::CustomStyle(custom_style) => {
+                    let span_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("span")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from(format!("{}", custom_style.classes)),
+                            },
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("style")),
+                                value: StrTendril::from(format!("{}", custom_style.inline_style)),
+                            }],
+                        Default::default()
+                    );
+                    dom.append_before_sibling(&custom_style.node, NodeOrText::AppendNode(span_node.clone()));
+                    dom.reparent_children(&custom_style.node, &span_node);
+                    dom.remove_from_parent(&custom_style.node)
+                },
             }
         }
-    });
-    if add_soft_hyphens {
-        hyphenate_text(res3.to_string(), dict)
-    } else {
-        res3.to_string()
+
+        let html = serialize_dom(dom);
+        return match html {
+            Ok(html) => {
+                if add_soft_hyphens {
+                    hyphenate_text(html, dict)
+                } else {
+                    html
+                }
+            },
+            Err(error) => "".to_string(),
+        }
     }
+    "".to_string()
+}
+
+
+
+fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endnote_storage: &mut Vec<(uuid::Uuid, String)>, citation_bib: &HashMap<String, String>, citations_as_footnote: bool) {
+    if let NodeData::Element { ref name, ref attrs, .. } = node.data {
+        let node_name = name.local.to_string();
+        let mut attributes: HashMap<String, String> = HashMap::new();
+        for attribute in attrs.borrow().iter() {
+            attributes.insert(attribute.name.local.to_string(), attribute.value.to_string());
+        }
+
+        if node_name == "span" && attributes.contains_key(&"note-type".to_string()){
+
+            if attributes.get("note-type") == Some(&"footnote".to_string()) {
+                let uuid = uuid::Uuid::new_v4();
+                let note_content = match attributes.get("note-content") {
+                    Some(value) => value,
+                    None => &"Missing note content".to_string()
+                };
+
+                let replacement = ReplacementType::Footnote(Footnote{
+                    node: node.clone(),
+                    uuid,
+                    note_content: note_content.clone()
+                });
+                mutations.push(replacement);
+
+            }else if attributes.get("note-type") == Some(&"endnote".to_string()) {
+                let uuid = uuid::Uuid::new_v4();
+                let note_content = match attributes.get("note-content") {
+                    Some(value) => escape_html(value),
+                    None => "Missing note content".to_string()
+                };
+                endnote_storage.push((uuid, note_content));
+                let replacement = ReplacementType::Endnote(Endnote{
+                    node: node.clone(),
+                    uuid,
+                    endnote_key: endnote_storage.len()
+                });
+                mutations.push(replacement);
+            }
+        }
+
+        if node_name == "citation" {
+            let key =  match attributes.get("data-key") {
+                Some(value) => value.to_string(),
+                None => "".to_string()
+            };
+            let uuid = uuid::Uuid::new_v4();
+            let citation = match citation_bib.get(&key) {
+                Some(citation) => escape_html(citation),
+                None => {
+                    eprintln!("Citation with key {} not found", key);
+                    String::from("!!INVALID CITATION!!")
+                }
+            };
+
+            if citations_as_footnote{
+                let replacement = ReplacementType::Footnote(Footnote{
+                    node: node.clone(),
+                    uuid,
+                    note_content: citation
+                });
+                mutations.push(replacement);
+            }else {
+                endnote_storage.push((uuid, citation));
+                let replacement = ReplacementType::Endnote(Endnote{
+                    node: node.clone(),
+                    uuid,
+                    endnote_key: endnote_storage.len()
+                });
+                mutations.push(replacement);
+            }
+
+        }
+
+        if node_name == "customstyle" {
+            let inline_style = match attributes.get("inline-style") {
+                Some(value) => value.to_string(),
+                None => "".to_string()
+            };
+            let classes = match attributes.get("classes") {
+                Some(value) => value.to_string(),
+                None => "".to_string()
+            };
+
+            let replacement = ReplacementType::CustomStyle(CustomStyle{
+                node: node.clone(),
+                classes: classes.clone(),
+                inline_style: inline_style.clone(),
+            });
+
+            mutations.push(replacement);
+        }
+    }
+
+    for child in node.children.borrow().iter() {
+        find_replacements(child, mutations, endnote_storage, citation_bib, citations_as_footnote);
+    }
+}
+
+fn serialize_dom(dom: RcDom) -> Result<String, String> {
+    let document: SerializableHandle = dom.document.clone().into();
+    let mut buffer = Vec::new();
+    serialize(& mut buffer, &document, Default::default()).expect("serialization failed");
+    let string_result = String::from_utf8(buffer);
+    match string_result {
+        Ok(result) => Ok(result.replace("<html><head></head><body>", "").replace("</body></html>", "")),
+        Err(_) => Err(String::from("could not serialize document")),
+    }
+}
+
+struct Footnote {
+    node: Handle,
+    uuid: uuid::Uuid,
+    note_content: String
+}
+struct Endnote {
+    node: Handle,
+    uuid: uuid::Uuid,
+    endnote_key: usize
+}
+
+struct CustomStyle {
+    node: Handle,
+    classes: String,
+    inline_style: String,
+}
+
+enum ReplacementType {
+    Footnote(Footnote),
+    Endnote(Endnote),
+    CustomStyle(CustomStyle)
 }
 
 /// Escapes special HTML characters in the input text by replacing:
@@ -989,11 +1121,8 @@ pub fn render_text(
 ///
 /// # Returns
 /// A new `String` with special HTML characters replaced by their respective HTML entities.
-fn escape_html(text: &str) -> String {
-    text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
+fn escape_html(text: &str) -> String{
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }
 
 /// Replaces common HTML escape sequences in the input string with their respective characters.
