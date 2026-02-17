@@ -32,7 +32,6 @@ use html5ever::{parse_document, parse_fragment, ParseOpts, serialize, QualName};
 use html5ever::tendril::{StrTendril, TendrilSink};
 use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 use markup5ever::{ns, local_name, Attribute};
-use std::borrow::Borrow;
 use markup5ever::interface::{NodeOrText, TreeSink};
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
@@ -709,7 +708,7 @@ pub async fn render_content_block(
                 "<p id='{}' {}>{}</p>",
                 block.id,
                 css_classes,
-                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens)
+                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false)
             )
         }
         BlockData::Heading { text, level } => {
@@ -718,7 +717,7 @@ pub async fn render_content_block(
                 level,
                 block.id,
                 css_classes,
-                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens),
+                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false),
                 level
             )
         }
@@ -729,7 +728,7 @@ pub async fn render_content_block(
                 res.push_str(&format!(
                     "<li id='{}'>{}</li>",
                     block.id,
-                    render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens)
+                    render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens, false)
                 ));
             }
             if style == "ordered" {
@@ -743,7 +742,7 @@ pub async fn render_content_block(
             caption,
             alignment,
         } => {
-            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens))
+            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens, false))
         }
         BlockData::Image {
             file,
@@ -1160,7 +1159,7 @@ mod tests {
             String::from("RenderedCitation"),
         );
 
-        let _rendered = render_text(html, &mut endnotes, &dict, &citation_bib, false);
+        let _rendered = render_text(html, &mut endnotes, &dict, &citation_bib, false, false);
 
         assert_eq!(endnotes.len(), 1, "Exactly one endnote should be created");
         let (_id, content) = &endnotes[0];
