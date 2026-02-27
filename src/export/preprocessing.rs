@@ -1022,6 +1022,14 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
                 Some(value) => value.to_string(),
                 None => "".to_string()
             };
+            let prefix =  match attributes.get("data-prefix") {
+                Some(value) => escape_html(value),
+                None => "".to_string()
+            };
+            let suffix =  match attributes.get("data-suffix") {
+                Some(value) => escape_html(value),
+                None => "".to_string()
+            };
             let uuid = uuid::Uuid::new_v4();
             let citation = match citation_bib.get(&key) {
                 Some(citation) => escape_html(citation),
@@ -1031,15 +1039,17 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
                 }
             };
 
+            let note_content = format!("{}&nbsp;{}&nbsp;{}", prefix, citation, suffix);
+
             if citations_as_footnote{
                 let replacement = ReplacementType::Footnote(Footnote{
                     node: node.clone(),
                     uuid,
-                    note_content: citation
+                    note_content
                 });
                 mutations.push(replacement);
             }else {
-                endnote_storage.push((uuid, citation));
+                endnote_storage.push((uuid, note_content));
                 let replacement = ReplacementType::Endnote(Endnote{
                     node: node.clone(),
                     uuid,
