@@ -708,7 +708,7 @@ pub async fn render_content_block(
                 "<p id='{}' {}>{}</p>",
                 block.id,
                 css_classes,
-                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false)
+                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote)
             )
         }
         BlockData::Heading { text, level } => {
@@ -717,7 +717,7 @@ pub async fn render_content_block(
                 level,
                 block.id,
                 css_classes,
-                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false),
+                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote),
                 level
             )
         }
@@ -728,7 +728,7 @@ pub async fn render_content_block(
                 res.push_str(&format!(
                     "<li id='{}'>{}</li>",
                     block.id,
-                    render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens, false)
+                    render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote)
                 ));
             }
             if style == "ordered" {
@@ -742,7 +742,7 @@ pub async fn render_content_block(
             caption,
             alignment,
         } => {
-            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, false), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens, false))
+            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote))
         }
         BlockData::Image {
             file,
@@ -843,11 +843,11 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
 /// # Side Effects
 /// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
 /// - Prints warnings to stderr if a citation key is not found.
-pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool, citations_as_footnote: bool) -> String{
+pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool, citations_as: CitationType) -> String{
     if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default()).from_utf8().read_from(&mut text.as_bytes()) {
         let mut mutations: Vec<ReplacementType> = Vec::new();
 
-        find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, citations_as_footnote);
+        find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, citations_as);
 
         for mutation in mutations {
             match mutation {
@@ -957,6 +957,20 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                     dom.reparent_children(&custom_style.node, &span_node);
                     dom.remove_from_parent(&custom_style.node)
                 },
+                ReplacementType::InlineCitation(inline_citation) => {
+                    let span_node = dom.create_element(
+                        QualName::new(None, ns!(html), local_name!("span")),
+                        vec![
+                            Attribute {
+                                name: QualName::new(None, ns!(), local_name!("class")),
+                                value: StrTendril::from("inline-citation"),
+                            }],
+                        Default::default()
+                    );
+                    dom.append_before_sibling(&inline_citation.node, NodeOrText::AppendNode(span_node.clone()));
+                    dom.append(&span_node, NodeOrText::AppendText(StrTendril::from(inline_citation.citation)));
+                    dom.remove_from_parent(&inline_citation.node)
+                }
             }
         }
 
@@ -977,7 +991,7 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
 
 
 
-fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endnote_storage: &mut Vec<(uuid::Uuid, String)>, citation_bib: &HashMap<String, String>, citations_as_footnote: bool) {
+fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endnote_storage: &mut Vec<(uuid::Uuid, String)>, citation_bib: &HashMap<String, String>, citations_as: CitationType) {
     if let NodeData::Element { ref name, ref attrs, .. } = node.data {
         let node_name = name.local.to_string();
         let mut attributes: HashMap<String, String> = HashMap::new();
@@ -1023,41 +1037,51 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
                 None => "".to_string()
             };
             let prefix =  match attributes.get("data-prefix") {
-                Some(value) => escape_html(value),
+                Some(value) => value.to_string(),
                 None => "".to_string()
             };
             let suffix =  match attributes.get("data-suffix") {
-                Some(value) => escape_html(value),
+                Some(value) => value.to_string(),
                 None => "".to_string()
             };
             let uuid = uuid::Uuid::new_v4();
             let citation = match citation_bib.get(&key) {
-                Some(citation) => escape_html(citation),
+                Some(citation) => citation.clone(),
                 None => {
                     eprintln!("Citation with key {} not found", key);
                     String::from("!!INVALID CITATION!!")
                 }
             };
 
-            let note_content = format!("{}&nbsp;{}&nbsp;{}", prefix, citation, suffix);
+            let note_content = build_citation(prefix, citation, suffix);
 
-            if citations_as_footnote{
-                let replacement = ReplacementType::Footnote(Footnote{
-                    node: node.clone(),
-                    uuid,
-                    note_content
-                });
-                mutations.push(replacement);
-            }else {
-                endnote_storage.push((uuid, note_content));
-                let replacement = ReplacementType::Endnote(Endnote{
-                    node: node.clone(),
-                    uuid,
-                    endnote_key: endnote_storage.len()
-                });
-                mutations.push(replacement);
+            match citations_as {
+                CitationType::Footnote => {
+                    let replacement = ReplacementType::Footnote(Footnote{
+                        node: node.clone(),
+                        uuid,
+                        note_content
+                    });
+                    mutations.push(replacement);
+                }
+                CitationType::Endnote => {
+                    endnote_storage.push((uuid, note_content));
+                    let replacement = ReplacementType::Endnote(Endnote {
+                        node: node.clone(),
+                        uuid,
+                        endnote_key: endnote_storage.len()
+                    });
+                    mutations.push(replacement);
+                }
+                CitationType::Inline => {
+                    let replacement = ReplacementType::InlineCitation(InlineCitation{
+                        node: node.clone(),
+                        uuid,
+                        citation: note_content
+                    });
+                    mutations.push(replacement);
+                }
             }
-
         }
 
         if node_name == "customstyle" {
@@ -1081,7 +1105,82 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
     }
 
     for child in node.children.borrow().iter() {
-        find_replacements(child, mutations, endnote_storage, citation_bib, citations_as_footnote);
+        find_replacements(child, mutations, endnote_storage, citation_bib, citations_as);
+    }
+}
+
+fn build_citation(prefix: String, citation: String, suffix: String) -> String {
+    if prefix != "" || suffix != "" {
+        let mut citation_chars: Vec<char> = citation.chars().collect();
+        let mut brackets_flag: Option<bool> = None;
+        let mut dot_flag: Option<bool> = None;
+        let mut prefix_option: Option<String> = None;
+        let mut suffix_option: Option<String> = None;
+
+        if prefix != "" {
+            prefix_option = Some(prefix);
+        }
+        if suffix != "" {
+            suffix_option = Some(suffix);
+        }
+
+        if let (Some(first), Some(last)) = (citation_chars.first(), citation_chars.last()) {
+            if *first == '(' && *last == ')' {
+                brackets_flag = Some(true);
+                citation_chars.remove(0);
+                citation_chars.pop();
+            }
+        }
+
+        if let Some(last) = citation_chars.last() {
+            if *last == '.' {
+                dot_flag = Some(true);
+                citation_chars.pop();
+            }
+        }
+
+        if let Some(suffix) = & mut suffix_option {
+            if let Some(first) = suffix.chars().next() {
+                if first.is_alphanumeric() {
+                    suffix.insert_str(0, "&nbsp;");
+                    suffix_option = Some(suffix.to_string());
+                }
+            }
+        }
+
+        if let Some(prefix) = & mut prefix_option {
+            let mut s = prefix.trim().to_string();
+            s.push_str("&nbsp;");
+            prefix_option = Some(s)
+        }
+
+        let mut final_citation_vec: Vec<String> = vec![];
+
+        if let Some(prefix) = prefix_option {
+            final_citation_vec.push(prefix)
+        }
+
+        final_citation_vec.push(citation_chars.into_iter().collect::<String>());
+
+        if let Some(suffix) = suffix_option {
+            final_citation_vec.push(suffix)
+        }
+
+        if dot_flag.is_some() {
+            final_citation_vec.push(".".to_string());
+        }
+
+        if brackets_flag.is_some() {
+            final_citation_vec.insert(0, "(".to_string());
+            final_citation_vec.push(")".to_string());
+        }
+
+        let final_citation = final_citation_vec.concat();
+
+        final_citation
+
+    } else {
+        citation
     }
 }
 
@@ -1113,10 +1212,24 @@ struct CustomStyle {
     inline_style: String,
 }
 
+struct InlineCitation {
+    node: Handle,
+    uuid: uuid::Uuid,
+    citation: String
+}
+
 enum ReplacementType {
     Footnote(Footnote),
     Endnote(Endnote),
-    CustomStyle(CustomStyle)
+    CustomStyle(CustomStyle),
+    InlineCitation(InlineCitation)
+}
+
+#[derive(Copy, Clone)]
+enum CitationType {
+    Footnote,
+    Endnote,
+    Inline,
 }
 
 /// Escapes special HTML characters in the input text by replacing:
@@ -1169,12 +1282,12 @@ mod tests {
             String::from("RenderedCitation"),
         );
 
-        let _rendered = render_text(html, &mut endnotes, &dict, &citation_bib, false, false);
+        let _rendered = render_text(html, &mut endnotes, &dict, &citation_bib, false, CitationType::Endnote);
 
         assert_eq!(endnotes.len(), 1, "Exactly one endnote should be created");
         let (_id, content) = &endnotes[0];
         // The content is alphanumeric only, so escaped/unescaped are the same
-        assert_eq!(content, "TESTprefixRenderedCitationTESTsuffix");
+        assert_eq!(content, "TESTprefix&nbsp;RenderedCitation&nbsp;TESTsuffix");
     }
 }
 
