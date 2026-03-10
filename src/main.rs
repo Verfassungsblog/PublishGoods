@@ -165,7 +165,10 @@ async fn rocket() -> _ {
     let import_manager =
         import::processing::ImportProcessor::start(settings.clone(), project_storage.clone());
 
-    let websocket_manager = Arc::new(WebsocketManager::new());
+    let websocket_manager = Arc::new(WebsocketManager::new(
+        project_storage.clone(),
+        Arc::new(settings.clone()),
+    ));
 
     info!("Starting web server...");
     rocket::build()

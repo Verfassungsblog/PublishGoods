@@ -59,7 +59,7 @@ impl ProjectStorage {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap()
                     .as_secs();
-                if Arc::strong_count(&project) == 1
+                if Arc::strong_count(project) == 1
                     && project.read().unwrap().last_interaction + settings.project_cache_time < now
                 {
                     projects_to_unload.push(uuid.clone());

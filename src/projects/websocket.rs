@@ -5,6 +5,7 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
+use dashmap::mapref::one::{Ref, RefMut};
 use dashmap::DashMap;
 use rocket::futures::{SinkExt, StreamExt};
 use rocket::State;
@@ -12,33 +13,61 @@ use serde::{Deserialize, Serialize};
 use serde_json::Error;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 use yrs::updates::decoder::Decode;
 use yrs::StateVector;
 use yrs::{Doc, ReadTxn, Transact, Update};
 
 pub struct WebsocketManager {
-    pub documents: DashMap<uuid::Uuid, DocumentState>,
+    documents: Arc<DashMap<uuid::Uuid, DocumentState>>,
+    project_storage: Arc<ProjectStorage>,
+    settings: Arc<Settings>,
 }
 
-#[derive(Clone)]
-pub struct DocumentState {
-    pub broadcast_tx: broadcast::Sender<BroadcastMessage>,
-    pub active_clients: Vec<uuid::Uuid>,
-    pub doc: Doc,
-}
+impl WebsocketManager {
+    pub fn new(project_storage: Arc<ProjectStorage>, settings: Arc<Settings>) -> Self {
+        Self {
+            documents: Arc::new(DashMap::new()),
+            project_storage,
+            settings,
+        }
+    }
 
-impl DocumentState {
+    pub fn get_document(&self, document_id: &uuid::Uuid) -> Option<Ref<'_, Uuid, DocumentState>> {
+        self.documents.get(document_id)
+    }
+
+    pub fn get_document_mut(
+        &self,
+        document_id: &uuid::Uuid,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, uuid::Uuid, DocumentState>> {
+        self.documents.get_mut(document_id)
+    }
+
+    /// Loads a document from storage, decodes it, and insert it into the websocket manager
+    /// Doesn't return the document state, only adds it to the documents [DashMap].
+    ///
+    /// Params:
+    /// - project_id: The project the document belongs to
+    /// - document_id: The id of the document to load
+    /// - client_id: The id of the client that requested the document, will be inserted into the document's clients list
+    ///
+    /// Returns None if the document is already loaded or an error occurs
     pub async fn load_document_from_storage(
+        &self,
         project_id: &uuid::Uuid,
         document_id: &uuid::Uuid,
-        active_clients: Option<Vec<uuid::Uuid>>,
-        project_storage: Arc<ProjectStorage>,
-        settings: &Settings,
-    ) -> Self {
+        client_id: Option<&Uuid>,
+    ) -> Option<()> {
+        // Check if the document is already loaded
+        if self.documents.contains_key(document_id) {
+            return None;
+        }
         debug!("Creating ydoc for section {}", document_id);
         let ydoc = Doc::new();
-        let project_lock = project_storage
-            .get_project(project_id, &settings)
+        let project_lock = self
+            .project_storage
+            .get_project(project_id, &self.settings)
             .await
             .unwrap()
             .clone();
@@ -54,21 +83,168 @@ impl DocumentState {
             let update = match Update::decode_v1(&binary_update) {
                 Ok(update) => update,
                 Err(e) => {
-                    panic!("Couldn't decode section {}: {}", document_id, e);
+                    error!("Couldn't decode section {}: {}", document_id, e);
+                    return None;
                 }
             };
-            ydoc.transact_mut()
-                .apply_update(update)
-                .expect("Couldn't apply update");
+            if let Err(e) = ydoc.transact_mut().apply_update(update) {
+                error!(
+                    "Couldn't apply update to ydoc for section {}: {}",
+                    document_id, e
+                );
+                return None;
+            }
         }
 
         let (tx, _) = broadcast::channel(100);
+        let save_requester = Arc::new(tokio::sync::Notify::new());
 
-        DocumentState {
+        self.spawn_document_save_worker(project_id, document_id, save_requester.clone())
+            .await;
+        let doc_state = DocumentState {
             broadcast_tx: tx,
-            active_clients: active_clients.unwrap_or(vec![]),
+            save_requester: save_requester.clone(),
+            active_clients: client_id.map(|x| vec![x.clone()]).unwrap_or_default(),
             doc: ydoc,
+        };
+        self.documents.insert(document_id.clone(), doc_state);
+        Some(())
+    }
+
+    /// Combines [load_document_from_storage] and [get_document].
+    ///
+    /// Returns None if the document is neither in the documents DashMap nor could be loaded from storage
+    pub async fn get_or_load_from_storage(
+        &self,
+        project_id: &uuid::Uuid,
+        document_id: &uuid::Uuid,
+        client_id: Option<&Uuid>,
+    ) -> Option<Ref<'_, Uuid, DocumentState>> {
+        match self.get_document(document_id) {
+            Some(doc) => Some(doc),
+            None => {
+                if let Some(_) = self
+                    .load_document_from_storage(project_id, document_id, client_id)
+                    .await
+                {
+                    return self.get_document(document_id);
+                }
+                None
+            }
         }
+    }
+
+    /// Combines [`self.load_document_from_storage`] and [self.get_document_mut].
+    ///
+    /// Returns None if the document is neither in the documents DashMap nor could be loaded from storage
+    pub async fn get_mut_or_load_from_storage(
+        &self,
+        project_id: &uuid::Uuid,
+        document_id: &uuid::Uuid,
+        client_id: Option<&Uuid>,
+    ) -> Option<RefMut<'_, Uuid, DocumentState>> {
+        match self.get_document_mut(document_id) {
+            Some(doc) => Some(doc),
+            None => {
+                if let Some(_) = self
+                    .load_document_from_storage(project_id, document_id, client_id)
+                    .await
+                {
+                    return self.get_document_mut(document_id);
+                }
+                None
+            }
+        }
+    }
+
+    async fn spawn_document_save_worker(
+        &self,
+        project_id: &uuid::Uuid,
+        document_id: &uuid::Uuid,
+        save_requester: Arc<tokio::sync::Notify>,
+    ) {
+        let project_id = project_id.clone();
+        let document_id = document_id.clone();
+        let documents = Arc::clone(&self.documents);
+        let project_storage = Arc::clone(&self.project_storage);
+        let settings = Arc::clone(&self.settings);
+
+        tokio::task::spawn(async move {
+            let mut last_save_time = std::time::Instant::now();
+
+            loop {
+                save_requester.notified().await; // Wait for notification to save. Even if notify_one() is called multiple times we will only save one time
+                debug!(
+                    "Save for document {} requested, {:?} elapsed since last safe.",
+                    document_id,
+                    last_save_time.elapsed()
+                );
+                if last_save_time.elapsed() < std::time::Duration::from_millis(500) {
+                    debug!(
+                        "Postponed save for document {} because it was already saved recently.",
+                        document_id
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    // Wait 500ms before saving again
+                }
+                last_save_time = std::time::Instant::now();
+                match documents.get(&document_id) {
+                    None => {
+                        debug!(
+                            "Document {} no longer in DashMap, killing save worker",
+                            document_id
+                        );
+                        break;
+                    }
+                    Some(doc) => {
+                        match doc
+                            .save_document_to_storage(
+                                &project_id.clone(),
+                                &document_id.clone(),
+                                project_storage.clone(),
+                                &settings.clone(),
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                debug!("Saved document {}", document_id);
+                            }
+                            Err(_) => {
+                                error!("Failed to save document {}", document_id);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// Represents a single document (e.g. a section).
+///
+/// Holds the actual content as a [Doc] and a list of all active clients
+/// Also makes sure that the document is saved to the project_storage on changes.
+///
+/// ## Saving Logic
+/// Since we don't want to do unnecessary saves to the project_storage (e.g. when many clients
+/// are doing changes in a short time frame), we need to debounce the save operation.
+/// Each document has its own tokio task for saving and gets notified of changes via a tokio Notify notification.
+/// The thread keeps track of the last save time and waits for at least 500ms before saving again.
+#[derive(Clone)]
+pub struct DocumentState {
+    /// channel to broadcast messages to all clients in this document
+    pub broadcast_tx: broadcast::Sender<BroadcastMessage>,
+    /// notify channel
+    pub save_requester: Arc<tokio::sync::Notify>,
+    /// list of client ids currently connected to this document
+    pub active_clients: Vec<uuid::Uuid>,
+    /// actual yrs document
+    pub doc: Doc,
+}
+
+impl DocumentState {
+    pub fn spawn_document_save_worker() {
+        tokio::task::spawn(async move {});
     }
 
     pub async fn save_document_to_storage(
@@ -106,14 +282,6 @@ impl DocumentState {
 pub struct BroadcastMessage {
     pub sender_id: uuid::Uuid,
     pub message: WebsocketMessage,
-}
-
-impl WebsocketManager {
-    pub fn new() -> Self {
-        Self {
-            documents: DashMap::new(),
-        }
-    }
 }
 
 /// Application-level WebSocket messages encoded as a single identifier byte followed by a payload.
@@ -428,6 +596,7 @@ pub async fn websocket<'a>(
                 state.active_clients.retain(|&id| id != client_id);
                 if state.active_clients.is_empty() {
                     let state_to_save = state.clone();
+                    let save_worker_notifier = state.save_requester.clone();
                     drop(state); // Release lock before saving and potentially removing
 
                     // Re-check and remove atomically
@@ -437,6 +606,7 @@ pub async fn websocket<'a>(
 
                     // If it was removed, save it
                     if !websocket_manager.documents.contains_key(&doc_id) {
+                        save_worker_notifier.notify_one(); // Shutdown save worker notifier.
                         let _ = state_to_save.save_document_to_storage(
                             &project_id,
                             &doc_id,
@@ -468,26 +638,10 @@ async fn handle_client_msg(
             *document_id = Some(msg.document_id);
             let doc_id = msg.document_id;
 
-            // Create or get document state from websocket manager
-            let state = if let Some(mut state) = websocket_manager.documents.get_mut(&doc_id) {
-                state.active_clients.push(*client_id);
-                state.clone()
-            } else {
-                let new_state = DocumentState::load_document_from_storage(
-                    project_id,
-                    &doc_id,
-                    Some(vec![*client_id]),
-                    project_storage.clone(),
-                    settings,
-                )
-                .await;
-                websocket_manager
-                    .documents
-                    .entry(doc_id)
-                    .and_modify(|s| s.active_clients.push(*client_id))
-                    .or_insert(new_state)
-                    .clone()
-            };
+            let state = websocket_manager
+                .get_or_load_from_storage(project_id, &doc_id, Some(client_id))
+                .await
+                .unwrap();
 
             broadcast_rx.replace(state.broadcast_tx.subscribe());
 
@@ -510,7 +664,7 @@ async fn handle_client_msg(
                         });
                     }
                 };
-                if let Some(state) = websocket_manager.documents.get(doc_id) {
+                if let Some(state) = websocket_manager.get_document_mut(&doc_id) {
                     let binary_update = state.doc.transact().encode_diff_v1(&statevec);
                     return Ok(vec![WebsocketMessage::DOCUPDATE(binary_update)]);
                 }
@@ -537,7 +691,7 @@ async fn handle_client_msg(
                 };
 
                 // Apply update to server document state
-                let doc = match websocket_manager.documents.get_mut(doc_id){
+                let doc = match websocket_manager.get_document_mut(doc_id){
                     Some(doc) => doc,
                     None => {
                         return Err(ErrorMessage {
@@ -559,7 +713,12 @@ async fn handle_client_msg(
                 // Broadcast update to all clients (except the sender)
                 let sender = doc.broadcast_tx.clone();
                 drop(txn); // must drop txn before dropping doc or using it
+
+                // Notify save worker to save the document
+                doc.save_requester.notify_one();
+
                 drop(doc);
+
                 let _ = sender.send(BroadcastMessage {
                     sender_id: *client_id,
                     message: DOCUPDATE(raw_update),
@@ -570,7 +729,7 @@ async fn handle_client_msg(
         WebsocketMessage::SETCURSOR(msg) => {
             // Broadcast update to all clients (except the sender)
             if let Some(doc_id) = document_id {
-                let doc = match websocket_manager.documents.get_mut(doc_id) {
+                let doc = match websocket_manager.get_document_mut(doc_id) {
                     Some(doc) => doc,
                     None => {
                         return Err(ErrorMessage {
@@ -592,7 +751,7 @@ async fn handle_client_msg(
         WebsocketMessage::REMOVECURSOR(msg) => {
             // Broadcast update to all clients (except the sender)
             if let Some(doc_id) = document_id {
-                let doc = match websocket_manager.documents.get_mut(doc_id) {
+                let doc = match websocket_manager.get_document_mut(doc_id) {
                     Some(doc) => doc,
                     None => {
                         return Err(ErrorMessage {
@@ -616,7 +775,7 @@ async fn handle_client_msg(
             if let Some(doc_id) = document_id {
                 let doc_id = *doc_id;
 
-                if let Some(mut state) = websocket_manager.documents.get_mut(&doc_id) {
+                if let Some(mut state) = websocket_manager.get_document_mut(&doc_id) {
                     let sender = state.broadcast_tx.clone();
                     let _ = sender.send(BroadcastMessage {
                         sender_id: *client_id,
@@ -627,6 +786,7 @@ async fn handle_client_msg(
                     state.active_clients.retain(|&id| id != *client_id);
                     if state.active_clients.is_empty() {
                         let state_to_save = state.clone();
+                        let save_worker_notifier = state.save_requester.clone();
                         drop(state);
 
                         websocket_manager
@@ -634,6 +794,7 @@ async fn handle_client_msg(
                             .remove_if(&doc_id, |_, s| s.active_clients.is_empty());
 
                         if !websocket_manager.documents.contains_key(&doc_id) {
+                            save_worker_notifier.notify_one(); // Notify the save worker to shut itself down
                             let _ = state_to_save
                                 .save_document_to_storage(
                                     project_id,

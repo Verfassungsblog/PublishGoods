@@ -14,25 +14,24 @@ use hayagriva::BibliographyDriver;
 use hayagriva::BibliographyRequest;
 use hayagriva::CitationItem;
 use hayagriva::CitationRequest;
+use html5ever::tendril::{StrTendril, TendrilSink};
+use html5ever::{parse_document, parse_fragment, serialize, ParseOpts, QualName};
 use hyphenation::{Hyphenator, Load, Standard};
 use image::{DynamicImage, ImageOutputFormat};
 use language::Language;
+use markup5ever::interface::{NodeOrText, TreeSink};
+use markup5ever::{local_name, ns, Attribute};
+use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::projects::{
     PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedLicense, PreparedMetadata,
     PreparedSection, PreparedSectionMetadata,
 };
 use vb_exchange::RenderingError;
-use html5ever::{parse_document, parse_fragment, ParseOpts, serialize, QualName};
-use html5ever::tendril::{StrTendril, TendrilSink};
-use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
-use markup5ever::{ns, local_name, Attribute};
-use markup5ever::interface::{NodeOrText, TreeSink};
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
 ///
@@ -325,7 +324,6 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
     }
     res
 }
-
 
 /// Renders a `Section` into a `PreparedSection`, resolving metadata, author/editor references, and formatting content.
 ///
@@ -708,7 +706,14 @@ pub async fn render_content_block(
                 "<p id='{}' {}>{}</p>",
                 block.id,
                 css_classes,
-                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote)
+                render_text(
+                    text,
+                    endnote_storage,
+                    dict,
+                    citation_bib,
+                    add_soft_hyphens,
+                    CitationType::Endnote
+                )
             )
         }
         BlockData::Heading { text, level } => {
@@ -717,7 +722,14 @@ pub async fn render_content_block(
                 level,
                 block.id,
                 css_classes,
-                render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote),
+                render_text(
+                    text,
+                    endnote_storage,
+                    dict,
+                    citation_bib,
+                    add_soft_hyphens,
+                    CitationType::Endnote
+                ),
                 level
             )
         }
@@ -728,7 +740,14 @@ pub async fn render_content_block(
                 res.push_str(&format!(
                     "<li id='{}'>{}</li>",
                     block.id,
-                    render_text(item, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote)
+                    render_text(
+                        item,
+                        endnote_storage,
+                        dict,
+                        citation_bib,
+                        add_soft_hyphens,
+                        CitationType::Endnote
+                    )
                 ));
             }
             if style == "ordered" {
@@ -843,11 +862,27 @@ fn image_to_base64(img: &DynamicImage) -> Option<String> {
 /// # Side Effects
 /// - Appends processed endnotes to `endnote_storage` with generated UUIDs.
 /// - Prints warnings to stderr if a citation key is not found.
-pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>, dict: &Standard, citation_bib: &HashMap<String, String>, add_soft_hyphens: bool, citations_as: CitationType) -> String{
-    if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default()).from_utf8().read_from(&mut text.as_bytes()) {
+pub fn render_text(
+    text: String,
+    endnote_storage: &mut Vec<(uuid::Uuid, String)>,
+    dict: &Standard,
+    citation_bib: &HashMap<String, String>,
+    add_soft_hyphens: bool,
+    citations_as: CitationType,
+) -> String {
+    if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+        .from_utf8()
+        .read_from(&mut text.as_bytes())
+    {
         let mut mutations: Vec<ReplacementType> = Vec::new();
 
-        find_replacements(&dom.document, &mut mutations, endnote_storage, &citation_bib, citations_as);
+        find_replacements(
+            &dom.document,
+            &mut mutations,
+            endnote_storage,
+            &citation_bib,
+            citations_as,
+        );
 
         for mutation in mutations {
             match mutation {
@@ -862,8 +897,9 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                             Attribute {
                                 name: QualName::new(None, ns!(), local_name!("id")),
                                 value: StrTendril::from(format!("footnote-{}", footnote.uuid)),
-                            }],
-                        Default::default()
+                            },
+                        ],
+                        Default::default(),
                     );
                     let child_a_node = dom.create_element(
                         QualName::new(None, ns!(html), local_name!("a")),
@@ -874,9 +910,13 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                             },
                             Attribute {
                                 name: QualName::new(None, ns!(), local_name!("href")),
-                                value: StrTendril::from(format!("#footnote-call-{}", footnote.uuid)),
-                            }],
-                        Default::default()
+                                value: StrTendril::from(format!(
+                                    "#footnote-call-{}",
+                                    footnote.uuid
+                                )),
+                            },
+                        ],
+                        Default::default(),
                     );
                     let a_node = dom.create_element(
                         QualName::new(None, ns!(html), local_name!("a")),
@@ -892,53 +932,63 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                             Attribute {
                                 name: QualName::new(None, ns!(), local_name!("id")),
                                 value: StrTendril::from(format!("footnote-call-{}", footnote.uuid)),
-                            }],
-                        Default::default()
+                            },
+                        ],
+                        Default::default(),
                     );
 
-                    let context = QualName::new(
-                        None,
-                        ns!(html),
-                        local_name!("div"),
-                    );
+                    let context = QualName::new(None, ns!(html), local_name!("div"));
 
-                    dom.append_before_sibling(&footnote.node, NodeOrText::AppendNode(a_node.clone()));
+                    dom.append_before_sibling(
+                        &footnote.node,
+                        NodeOrText::AppendNode(a_node.clone()),
+                    );
                     dom.append_before_sibling(&a_node, NodeOrText::AppendNode(span_node.clone()));
                     dom.append(&span_node, NodeOrText::AppendNode(child_a_node.clone()));
 
-                    if let Ok(fragment) = parse_fragment(RcDom::default(), ParseOpts::default(), context, Vec::<Attribute>::new(), false).from_utf8().read_from(&mut footnote.note_content.as_bytes()) {
-                        if let Some(reparent_handle) = fragment.document.children.borrow().get(0){
+                    if let Ok(fragment) = parse_fragment(
+                        RcDom::default(),
+                        ParseOpts::default(),
+                        context,
+                        Vec::<Attribute>::new(),
+                        false,
+                    )
+                    .from_utf8()
+                    .read_from(&mut footnote.note_content.as_bytes())
+                    {
+                        if let Some(reparent_handle) = fragment.document.children.borrow().get(0) {
                             fragment.reparent_children(&reparent_handle, &span_node);
                         }
                     }
 
                     dom.remove_from_parent(&footnote.node)
-                },
+                }
                 ReplacementType::Endnote(endnote) => {
                     let sup_node = dom.create_element(
                         QualName::new(None, ns!(html), local_name!("sup")),
-                        vec![
-                            Attribute {
-                                name: QualName::new(None, ns!(), local_name!("class")),
-                                value: StrTendril::from("endnote"),
-                            }],
-                        Default::default()
+                        vec![Attribute {
+                            name: QualName::new(None, ns!(), local_name!("class")),
+                            value: StrTendril::from("endnote"),
+                        }],
+                        Default::default(),
                     );
                     let child_a_node = dom.create_element(
                         QualName::new(None, ns!(html), local_name!("a")),
-                        vec![
-                            Attribute {
-                                name: QualName::new(None, ns!(), local_name!("href")),
-                                value: StrTendril::from(format!("#note-{}", endnote.uuid)),
-                            }],
-                        Default::default()
+                        vec![Attribute {
+                            name: QualName::new(None, ns!(), local_name!("href")),
+                            value: StrTendril::from(format!("#note-{}", endnote.uuid)),
+                        }],
+                        Default::default(),
                     );
                     let endnote_number = StrTendril::from(format!("{}", endnote.endnote_key));
-                    dom.append_before_sibling(&endnote.node, NodeOrText::AppendNode(sup_node.clone()));
+                    dom.append_before_sibling(
+                        &endnote.node,
+                        NodeOrText::AppendNode(sup_node.clone()),
+                    );
                     dom.append(&sup_node, NodeOrText::AppendNode(child_a_node.clone()));
                     dom.append(&child_a_node, NodeOrText::AppendText(endnote_number));
                     dom.remove_from_parent(&endnote.node)
-                },
+                }
                 ReplacementType::CustomStyle(custom_style) => {
                     let span_node = dom.create_element(
                         QualName::new(None, ns!(html), local_name!("span")),
@@ -950,25 +1000,34 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                             Attribute {
                                 name: QualName::new(None, ns!(), local_name!("style")),
                                 value: StrTendril::from(format!("{}", custom_style.inline_style)),
-                            }],
-                        Default::default()
+                            },
+                        ],
+                        Default::default(),
                     );
-                    dom.append_before_sibling(&custom_style.node, NodeOrText::AppendNode(span_node.clone()));
+                    dom.append_before_sibling(
+                        &custom_style.node,
+                        NodeOrText::AppendNode(span_node.clone()),
+                    );
                     dom.reparent_children(&custom_style.node, &span_node);
                     dom.remove_from_parent(&custom_style.node)
-                },
+                }
                 ReplacementType::InlineCitation(inline_citation) => {
                     let span_node = dom.create_element(
                         QualName::new(None, ns!(html), local_name!("span")),
-                        vec![
-                            Attribute {
-                                name: QualName::new(None, ns!(), local_name!("class")),
-                                value: StrTendril::from("inline-citation"),
-                            }],
-                        Default::default()
+                        vec![Attribute {
+                            name: QualName::new(None, ns!(), local_name!("class")),
+                            value: StrTendril::from("inline-citation"),
+                        }],
+                        Default::default(),
                     );
-                    dom.append_before_sibling(&inline_citation.node, NodeOrText::AppendNode(span_node.clone()));
-                    dom.append(&span_node, NodeOrText::AppendText(StrTendril::from(inline_citation.citation)));
+                    dom.append_before_sibling(
+                        &inline_citation.node,
+                        NodeOrText::AppendNode(span_node.clone()),
+                    );
+                    dom.append(
+                        &span_node,
+                        NodeOrText::AppendText(StrTendril::from(inline_citation.citation)),
+                    );
                     dom.remove_from_parent(&inline_citation.node)
                 }
             }
@@ -982,67 +1041,77 @@ pub fn render_text(text: String, endnote_storage: &mut Vec<(uuid::Uuid, String)>
                 } else {
                     html
                 }
-            },
+            }
             Err(error) => "".to_string(),
-        }
+        };
     }
     "".to_string()
 }
 
-
-
-fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endnote_storage: &mut Vec<(uuid::Uuid, String)>, citation_bib: &HashMap<String, String>, citations_as: CitationType) {
-    if let NodeData::Element { ref name, ref attrs, .. } = node.data {
+fn find_replacements(
+    node: &Handle,
+    mutations: &mut Vec<ReplacementType>,
+    endnote_storage: &mut Vec<(uuid::Uuid, String)>,
+    citation_bib: &HashMap<String, String>,
+    citations_as: CitationType,
+) {
+    if let NodeData::Element {
+        ref name,
+        ref attrs,
+        ..
+    } = node.data
+    {
         let node_name = name.local.to_string();
         let mut attributes: HashMap<String, String> = HashMap::new();
         for attribute in attrs.borrow().iter() {
-            attributes.insert(attribute.name.local.to_string(), attribute.value.to_string());
+            attributes.insert(
+                attribute.name.local.to_string(),
+                attribute.value.to_string(),
+            );
         }
 
-        if node_name == "span" && attributes.contains_key(&"note-type".to_string()){
-
+        if node_name == "span" && attributes.contains_key(&"note-type".to_string()) {
             if attributes.get("note-type") == Some(&"footnote".to_string()) {
                 let uuid = uuid::Uuid::new_v4();
                 let note_content = match attributes.get("note-content") {
                     Some(value) => value,
-                    None => &"Missing note content".to_string()
+                    None => &"Missing note content".to_string(),
                 };
 
-                let replacement = ReplacementType::Footnote(Footnote{
+                let replacement = ReplacementType::Footnote(Footnote {
                     node: node.clone(),
                     uuid,
-                    note_content: note_content.clone()
+                    note_content: note_content.clone(),
                 });
                 mutations.push(replacement);
-
-            }else if attributes.get("note-type") == Some(&"endnote".to_string()) {
+            } else if attributes.get("note-type") == Some(&"endnote".to_string()) {
                 let uuid = uuid::Uuid::new_v4();
                 let note_content = match attributes.get("note-content") {
                     Some(value) => escape_html(value),
-                    None => "Missing note content".to_string()
+                    None => "Missing note content".to_string(),
                 };
                 endnote_storage.push((uuid, note_content));
-                let replacement = ReplacementType::Endnote(Endnote{
+                let replacement = ReplacementType::Endnote(Endnote {
                     node: node.clone(),
                     uuid,
-                    endnote_key: endnote_storage.len()
+                    endnote_key: endnote_storage.len(),
                 });
                 mutations.push(replacement);
             }
         }
 
         if node_name == "citation" {
-            let key =  match attributes.get("data-key") {
+            let key = match attributes.get("data-key") {
                 Some(value) => value.to_string(),
-                None => "".to_string()
+                None => "".to_string(),
             };
-            let prefix =  match attributes.get("data-prefix") {
+            let prefix = match attributes.get("data-prefix") {
                 Some(value) => value.to_string(),
-                None => "".to_string()
+                None => "".to_string(),
             };
-            let suffix =  match attributes.get("data-suffix") {
+            let suffix = match attributes.get("data-suffix") {
                 Some(value) => value.to_string(),
-                None => "".to_string()
+                None => "".to_string(),
             };
             let uuid = uuid::Uuid::new_v4();
             let citation = match citation_bib.get(&key) {
@@ -1057,10 +1126,10 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
 
             match citations_as {
                 CitationType::Footnote => {
-                    let replacement = ReplacementType::Footnote(Footnote{
+                    let replacement = ReplacementType::Footnote(Footnote {
                         node: node.clone(),
                         uuid,
-                        note_content
+                        note_content,
                     });
                     mutations.push(replacement);
                 }
@@ -1069,15 +1138,15 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
                     let replacement = ReplacementType::Endnote(Endnote {
                         node: node.clone(),
                         uuid,
-                        endnote_key: endnote_storage.len()
+                        endnote_key: endnote_storage.len(),
                     });
                     mutations.push(replacement);
                 }
                 CitationType::Inline => {
-                    let replacement = ReplacementType::InlineCitation(InlineCitation{
+                    let replacement = ReplacementType::InlineCitation(InlineCitation {
                         node: node.clone(),
                         uuid,
-                        citation: note_content
+                        citation: note_content,
                     });
                     mutations.push(replacement);
                 }
@@ -1087,14 +1156,14 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
         if node_name == "customstyle" {
             let inline_style = match attributes.get("inline-style") {
                 Some(value) => value.to_string(),
-                None => "".to_string()
+                None => "".to_string(),
             };
             let classes = match attributes.get("classes") {
                 Some(value) => value.to_string(),
-                None => "".to_string()
+                None => "".to_string(),
             };
 
-            let replacement = ReplacementType::CustomStyle(CustomStyle{
+            let replacement = ReplacementType::CustomStyle(CustomStyle {
                 node: node.clone(),
                 classes: classes.clone(),
                 inline_style: inline_style.clone(),
@@ -1105,7 +1174,13 @@ fn find_replacements(node: &Handle, mutations: & mut Vec<ReplacementType>, endno
     }
 
     for child in node.children.borrow().iter() {
-        find_replacements(child, mutations, endnote_storage, citation_bib, citations_as);
+        find_replacements(
+            child,
+            mutations,
+            endnote_storage,
+            citation_bib,
+            citations_as,
+        );
     }
 }
 
@@ -1139,7 +1214,7 @@ fn build_citation(prefix: String, citation: String, suffix: String) -> String {
             }
         }
 
-        if let Some(suffix) = & mut suffix_option {
+        if let Some(suffix) = &mut suffix_option {
             if let Some(first) = suffix.chars().next() {
                 if first.is_alphanumeric() {
                     suffix.insert_str(0, "&nbsp;");
@@ -1148,7 +1223,7 @@ fn build_citation(prefix: String, citation: String, suffix: String) -> String {
             }
         }
 
-        if let Some(prefix) = & mut prefix_option {
+        if let Some(prefix) = &mut prefix_option {
             let mut s = prefix.trim().to_string();
             s.push_str("&nbsp;");
             prefix_option = Some(s)
@@ -1178,7 +1253,6 @@ fn build_citation(prefix: String, citation: String, suffix: String) -> String {
         let final_citation = final_citation_vec.concat();
 
         final_citation
-
     } else {
         citation
     }
@@ -1187,10 +1261,12 @@ fn build_citation(prefix: String, citation: String, suffix: String) -> String {
 fn serialize_dom(dom: RcDom) -> Result<String, String> {
     let document: SerializableHandle = dom.document.clone().into();
     let mut buffer = Vec::new();
-    serialize(& mut buffer, &document, Default::default()).expect("serialization failed");
+    serialize(&mut buffer, &document, Default::default()).expect("serialization failed");
     let string_result = String::from_utf8(buffer);
     match string_result {
-        Ok(result) => Ok(result.replace("<html><head></head><body>", "").replace("</body></html>", "")),
+        Ok(result) => Ok(result
+            .replace("<html><head></head><body>", "")
+            .replace("</body></html>", "")),
         Err(_) => Err(String::from("could not serialize document")),
     }
 }
@@ -1198,12 +1274,12 @@ fn serialize_dom(dom: RcDom) -> Result<String, String> {
 struct Footnote {
     node: Handle,
     uuid: uuid::Uuid,
-    note_content: String
+    note_content: String,
 }
 struct Endnote {
     node: Handle,
     uuid: uuid::Uuid,
-    endnote_key: usize
+    endnote_key: usize,
 }
 
 struct CustomStyle {
@@ -1215,14 +1291,14 @@ struct CustomStyle {
 struct InlineCitation {
     node: Handle,
     uuid: uuid::Uuid,
-    citation: String
+    citation: String,
 }
 
 enum ReplacementType {
     Footnote(Footnote),
     Endnote(Endnote),
     CustomStyle(CustomStyle),
-    InlineCitation(InlineCitation)
+    InlineCitation(InlineCitation),
 }
 
 #[derive(Copy, Clone)]
@@ -1243,8 +1319,11 @@ enum CitationType {
 ///
 /// # Returns
 /// A new `String` with special HTML characters replaced by their respective HTML entities.
-fn escape_html(text: &str) -> String{
-    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+fn escape_html(text: &str) -> String {
+    text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
 }
 
 /// Replaces common HTML escape sequences in the input string with their respective characters.
@@ -1282,7 +1361,14 @@ mod tests {
             String::from("RenderedCitation"),
         );
 
-        let _rendered = render_text(html, &mut endnotes, &dict, &citation_bib, false, CitationType::Endnote);
+        let _rendered = render_text(
+            html,
+            &mut endnotes,
+            &dict,
+            &citation_bib,
+            false,
+            CitationType::Endnote,
+        );
 
         assert_eq!(endnotes.len(), 1, "Exactly one endnote should be created");
         let (_id, content) = &endnotes[0];
