@@ -12,6 +12,7 @@ use rocket::State;
 use serde::{Deserialize, Serialize};
 use serde_json::Error;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use yrs::updates::decoder::Decode;
@@ -263,6 +264,10 @@ impl DocumentState {
 
         {
             let mut project_write = project_lock.write().map_err(|_| ())?;
+            project_write.last_interaction = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
             if let Some(section) = project_write.get_section_mut(document_id) {
                 section.content = binary_update;
             } else {
