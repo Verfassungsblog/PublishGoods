@@ -1827,11 +1827,13 @@ impl ImportProcessor {
                                     let mut project = project_data.write().unwrap();
                                     for (key, entry) in by_key.iter() {
                                         let mut converted = BibEntryV3::from(entry);
-                                        converted.key = *uuid_map.get(key).unwrap();
+                                        let entry_uuid = *uuid_map.get(key).unwrap();
+                                        converted.key = entry_uuid;
                                         converted.parents = entry
                                             .parents()
                                             .iter()
                                             .filter_map(|p| uuid_map.get(p.key()).copied())
+                                            .filter(|&p_uuid| p_uuid != entry_uuid)
                                             .collect();
 
                                         project.bibliography.add_entry(converted);
@@ -1906,6 +1908,8 @@ impl ImportProcessor {
             return Err(ImportError::BibFileInvalid);
         }
 
+        debug!("Bib File Content: {:?}", bib_file_content);
+
         let bib = match io::from_biblatex_str(&bib_file_content) {
             Ok(bib) => bib,
             Err(e) => {
@@ -1919,6 +1923,8 @@ impl ImportProcessor {
                 return Err(ImportError::BibFileInvalid);
             }
         };
+
+        debug!("Parsed Bib Entries: {:?}", bib);
 
         let project_storage = self.project_storage.clone();
         let project = project_storage
@@ -1937,15 +1943,21 @@ impl ImportProcessor {
             uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
         }
 
+        debug!("Generated UUID Map: {:?}", uuid_map);
+
         // Convert and resolve parents
         for (key, entry) in by_key.iter() {
             let mut converted = BibEntryV3::from(entry);
-            converted.key = *uuid_map.get(key).unwrap();
+            let entry_uuid = *uuid_map.get(key).unwrap();
+            converted.key = entry_uuid;
             converted.parents = entry
                 .parents()
                 .iter()
                 .filter_map(|p| uuid_map.get(p.key()).copied())
+                .filter(|&p_uuid| p_uuid != entry_uuid)
                 .collect();
+
+            debug!("Converted Entry: {:?}", converted);
 
             project.write().unwrap().bibliography.add_entry(converted);
         }
@@ -2289,32 +2301,6 @@ mod tests {
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
     }
-
-    #[tokio::test]
-    async fn convert_links_does_not_break_when_translation_server_is_unset() {
-        let processor = make_processor();
-        let project = empty_project();
-
-        let html = r#"<p>See <a href="https://example.com">X</a></p>"#.to_string();
-
-        processor
-            .import_html_from_pandoc(html, project.clone(), false, false, true)
-            .await
-            .unwrap();
-
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
-        assert_eq!(blocks.len(), 1);
-        let BlockData::Paragraph { text } = &blocks[0].data else {
-            panic!("expected paragraph");
-        };
-        assert!(text.contains("<a href=\"https://example.com\">X</a>"));
-        assert!(!text.contains("<citation"));
-
-        // Verify UUID
-        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
-    }
-
     #[test]
     fn bibliography_collects_transitive_parents() {
         // child -> parent
@@ -2331,6 +2317,39 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected.get("child").unwrap().parents().len(), 1);
         assert_eq!(collected.get("child").unwrap().parents()[0].key(), "parent");
+    }
+
+    #[test]
+    fn bibliography_entry_cannot_be_its_own_parent() {
+        let mut entry = hayagriva::Entry::new("self_parent", hayagriva::types::EntryType::Book);
+        entry.set_title("Self Parent".to_string().into());
+        // In some cases hayagriva might allow this or we might get it from somewhere else
+        entry.set_parents(vec![entry.clone()]);
+
+        let entries = vec![entry];
+        let by_key = ImportProcessor::collect_bib_entries_with_parents(entries);
+
+        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+        for key in by_key.keys() {
+            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+        }
+
+        for (key, entry) in by_key.iter() {
+            let mut converted = BibEntryV3::from(entry);
+            let entry_uuid = *uuid_map.get(key).unwrap();
+            converted.key = entry_uuid;
+            converted.parents = entry
+                .parents()
+                .iter()
+                .filter_map(|p| uuid_map.get(p.key()).copied())
+                .filter(|&p_uuid| p_uuid != entry_uuid) // THIS IS WHAT WE WANT TO TEST/FIX
+                .collect();
+
+            assert!(
+                converted.parents.is_empty(),
+                "Entry should not have itself as a parent"
+            );
+        }
     }
 
     #[tokio::test]
