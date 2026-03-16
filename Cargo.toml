@@ -1,7 +1,7 @@
 [package]
 name = "Verfassungsbooks"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Keanu Dölle <kd@verfassungsblog.de>"]
 repository = "https://github.com/Verfassungsblog/verfassungsbooks"
 license = "MIT"

@@ -15,13 +15,13 @@ use crate::import::wordpress::{
     Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError,
 };
 use crate::settings::Settings;
+use crate::storage::BibEntryV3;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::content::current::BlockData;
 use crate::storage::project_storage::sections::content::current::NewContentBlock;
 use crate::storage::project_storage::sections::migration::convert_contentblocks_to_yrs;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::storage::BibEntryV3;
 use crate::utils::block_id_generator::generate_id;
 use log::{debug, error, warn};
 use rocket::http::ContentType;
@@ -570,7 +570,7 @@ impl ImportProcessor {
             None => {
                 return Err(ImportError::WordPressApiError(
                     WordpressAPIError::InvalidURL,
-                ))
+                ));
             }
         };
 
@@ -629,7 +629,7 @@ impl ImportProcessor {
                         _ => {
                             return Err(ImportError::WordPressApiError(
                                 WordpressAPIError::UnexpectedResponse,
-                            ))
+                            ));
                         }
                     },
                     Err(e) => return Err(ImportError::WordPressApiError(e)),
@@ -752,14 +752,18 @@ impl ImportProcessor {
         let mut identifiers = vec![];
 
         if let Some(acf) = &post.acf {
-            if let Some(crossref_doi) = &acf.crossref_doi {
+            if let Some(crossref_doi) = &acf.crossref_doi
+                && !crossref_doi.trim().is_empty()
+            {
                 identifiers.push(Identifier {
                     id: Some(uuid::Uuid::new_v4()),
                     name: "DOI".to_string(),
                     value: crossref_doi.clone(),
                     identifier_type: IdentifierType::DOI,
                 });
-            } else if let Some(doi) = &acf.doi {
+            } else if let Some(doi) = &acf.doi
+                && !doi.trim().is_empty()
+            {
                 identifiers.push(Identifier {
                     id: Some(uuid::Uuid::new_v4()),
                     name: "DOI".to_string(),
@@ -835,7 +839,7 @@ impl ImportProcessor {
                 _ => {
                     return Err(ImportError::WordPressApiError(
                         WordpressAPIError::InvalidURL,
-                    ))
+                    ));
                 }
             },
             Err(e) => return Err(ImportError::WordPressApiError(e)),
