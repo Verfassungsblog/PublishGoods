@@ -929,10 +929,6 @@ function createEditorBinding(doc: any, editor: EditorJS) {
             if (initialRenderDone) return;
 
             const blocksToRenderRaw = yBlocks.toArray();
-            if (blocksToRenderRaw.length === 0) {
-                console.log('initialRender: yBlocks is empty, postponing until content arrives');
-                return;
-            }
 
             await new Promise<void>((resolve, reject) => {
                 mutex(() => {

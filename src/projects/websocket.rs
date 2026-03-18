@@ -5,17 +5,17 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
-use dashmap::mapref::one::{Ref, RefMut};
 use dashmap::DashMap;
-use rocket::futures::{SinkExt, StreamExt};
+use dashmap::mapref::one::{Ref, RefMut};
 use rocket::State;
+use rocket::futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Error;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use yrs::updates::decoder::Decode;
 use yrs::StateVector;
+use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, Transact, Update};
 
 pub struct WebsocketManager {
@@ -127,6 +127,30 @@ impl WebsocketManager {
                     .load_document_from_storage(project_id, document_id, client_id)
                     .await
                 {
+                    return self.get_document(document_id);
+                } else {
+                    // new document
+                    let (tx, _) = broadcast::channel(100);
+                    let save_requester = Arc::new(tokio::sync::Notify::new());
+
+                    self.spawn_document_save_worker(
+                        project_id,
+                        document_id,
+                        save_requester.clone(),
+                    )
+                    .await;
+
+                    let mut active_clients = vec![];
+                    if let Some(client_id) = client_id {
+                        active_clients.push(client_id.clone());
+                    }
+                    let doc_state = DocumentState {
+                        broadcast_tx: tx,
+                        save_requester: save_requester.clone(),
+                        active_clients,
+                        doc: Doc::new(),
+                    };
+                    self.documents.insert(document_id.clone(), doc_state);
                     return self.get_document(document_id);
                 }
                 None
