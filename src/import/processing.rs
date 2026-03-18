@@ -2406,7 +2406,7 @@ mod tests {
             .get(&main_uuid)
             .expect("Child entry missing")
         {
-            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(ref be) => be,
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(be) => be,
             _ => panic!("Expected BibEntry, found folder"),
         };
 
@@ -2415,7 +2415,7 @@ mod tests {
         let parent_uuid = child_entry_v3.parents[0];
         assert!(stored.bibliography.entries.contains_key(&parent_uuid));
         let parent_entry_v3 = match stored.bibliography.entries.get(&parent_uuid).unwrap() {
-            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(ref be) => be,
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(be) => be,
             _ => panic!("Expected BibEntry, found folder"),
         };
         assert_eq!(parent_entry_v3.title.as_ref().unwrap().value, "Parent");
