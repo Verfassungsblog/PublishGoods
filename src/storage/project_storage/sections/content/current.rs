@@ -1,11 +1,12 @@
 use crate::projects::api::UploadedImage;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
+use std::any::Any;
 use vb_exchange::projects::BlockType;
 use yrs::types::array::Array;
 use yrs::types::map::Map;
 use yrs::updates::decoder::Decode as _;
-use yrs::{types::map::MapRef, Doc, MapPrelim, ReadTxn, Transact, Transaction};
+use yrs::{Doc, MapPrelim, Out, ReadTxn, Transact, Transaction, types::map::MapRef};
 
 pub struct MapRefWithTransaction<'a, 'b> {
     pub map_ref: MapRef,
@@ -76,21 +77,19 @@ impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
 
         let mut css_classes = Vec::new();
         if let Some(tunes_val) = value.map_ref.get(value.txn, "tunes") {
-            if let Ok(tunes) = tunes_val.cast::<MapRef>() {
-                // Prefer singular key (correct plugin name), but support legacy plural key for backward compatibility
-                let style_key = if tunes.get(value.txn, "block_style_tune").is_some() {
+            debug!("Found tune: {:?}", tunes_val);
+
+            if let Out::Any(yrs::Any::Map(tunes)) = &tunes_val {
+                let style_key = if tunes.contains_key("block_style_tune") {
                     "block_style_tune"
                 } else {
                     "block_style_tunes"
                 };
 
-                if let Some(style_tunes_val) = tunes.get(value.txn, style_key) {
-                    if let Ok(style_tunes) = style_tunes_val.cast::<MapRef>() {
-                        if let Some(css_classes_str) = style_tunes.get(value.txn, "css_classes") {
-                            let classes = css_classes_str.to_string(value.txn);
-                            if !classes.is_empty() {
-                                css_classes = classes.split(" ").map(|s| s.to_string()).collect();
-                            }
+                if let Some(yrs::Any::Map(style_tunes)) = tunes.get(style_key) {
+                    if let Some(yrs::Any::String(classes)) = style_tunes.get("css_classes") {
+                        if !classes.is_empty() {
+                            css_classes = classes.split(" ").map(|s| s.to_string()).collect();
                         }
                     }
                 }
@@ -893,6 +892,51 @@ mod tests {
                 .unwrap()
                 .to_string(&txn),
             "class1 class2"
+        );
+    }
+
+    #[test]
+    fn test_css_classes_any() {
+        use yrs::types::map::Map;
+        let doc = Doc::new();
+        let map_ref = doc.get_or_insert_map("block");
+        let mut txn = doc.transact_mut();
+
+        map_ref.insert(&mut txn, "id", "test-id");
+        map_ref.insert(&mut txn, "type", "paragraph");
+        let data = map_ref.insert(
+            &mut txn,
+            "data",
+            yrs::MapPrelim::from_iter(Vec::<(String, yrs::In)>::new()),
+        );
+        data.insert(&mut txn, "text", "Some text");
+
+        // Construct tunes as Out::Any(Any::Map)
+        let mut style_tune_map = std::collections::HashMap::new();
+        style_tune_map.insert(
+            "css_classes".to_string(),
+            yrs::Any::String("class-any-1 class-any-2".into()),
+        );
+
+        let mut tunes_map = std::collections::HashMap::new();
+        tunes_map.insert(
+            "block_style_tune".to_string(),
+            yrs::Any::Map(style_tune_map.into()),
+        );
+
+        map_ref.insert(&mut txn, "tunes", yrs::Any::Map(tunes_map.into()));
+        drop(txn);
+
+        let txn = doc.transact();
+        let map_ref_with_txn = MapRefWithTransaction {
+            map_ref: map_ref.clone(),
+            txn: &txn,
+        };
+
+        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        assert_eq!(
+            converted_block.css_classes,
+            vec!["class-any-1".to_string(), "class-any-2".to_string()]
         );
     }
 
