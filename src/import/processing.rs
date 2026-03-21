@@ -1054,6 +1054,7 @@ impl ImportProcessor {
                                                                                             None,
                                                                                             endnotes,
                                                                                             convert_links,
+                                                                                            true,
                                                                                             project_data.clone(),
                                                                                         )
                                                                                         .await,
@@ -1127,6 +1128,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1146,6 +1148,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1173,6 +1176,7 @@ impl ImportProcessor {
                                                 Some(&footnotes),
                                                 endnotes,
                                                 convert_links,
+                                                false,
                                                 project_data.clone(),
                                             )
                                             .await,
@@ -1187,6 +1191,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1214,6 +1219,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1273,6 +1279,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1300,6 +1307,7 @@ impl ImportProcessor {
                                             Some(&footnotes),
                                             endnotes,
                                             convert_links,
+                                            false,
                                             project_data.clone(),
                                         )
                                         .await,
@@ -1330,6 +1338,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    true,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1443,6 +1452,7 @@ impl ImportProcessor {
                                                         el.clone(),
                                                         None,
                                                         endnotes,
+                                                        convert_links,
                                                         false,
                                                         project_data.clone(),
                                                     )
@@ -1459,6 +1469,7 @@ impl ImportProcessor {
                                         li.clone(),
                                         None,
                                         endnotes,
+                                        convert_links,
                                         false,
                                         project_data.clone(),
                                     )
@@ -1510,6 +1521,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1529,6 +1541,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1556,6 +1569,7 @@ impl ImportProcessor {
                                                 Some(&footnotes),
                                                 endnotes,
                                                 convert_links,
+                                                false,
                                                 project_data.clone(),
                                             )
                                             .await,
@@ -1570,6 +1584,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1597,6 +1612,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1647,6 +1663,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1674,6 +1691,7 @@ impl ImportProcessor {
                                             Some(&footnotes),
                                             endnotes,
                                             convert_links,
+                                            false,
                                             project_data.clone(),
                                         )
                                         .await,
@@ -1697,6 +1715,7 @@ impl ImportProcessor {
                                 });
                             }
                         }
+                        "script" => {}
                         _ => {
                             let html = self
                                 .dom_to_html(
@@ -1704,6 +1723,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1741,10 +1761,18 @@ impl ImportProcessor {
         footnotes: Option<&HashMap<String, String>>,
         endnotes: bool,
         convert_links: bool,
+        keep_outer_html: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
-        self.element_to_html(&ele, footnotes, endnotes, convert_links, project_data)
-            .await
+        self.element_to_html(
+            &ele,
+            footnotes,
+            endnotes,
+            convert_links,
+            keep_outer_html,
+            project_data,
+        )
+        .await
     }
 
     #[async_recursion]
@@ -1754,6 +1782,7 @@ impl ImportProcessor {
         footnotes: Option<&HashMap<String, String>>,
         endnotes: bool,
         convert_links: bool,
+        keep_outer_html: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
         // Special cases: footnote references and link->citation conversion.
@@ -1881,6 +1910,7 @@ impl ImportProcessor {
                                 footnotes,
                                 endnotes,
                                 convert_links,
+                                true,
                                 project_data.clone(),
                             )
                             .await,
@@ -1890,7 +1920,11 @@ impl ImportProcessor {
             }
         }
 
-        format!("<{}{}>{}</{}>", el.name, attrs, inner, el.name)
+        if keep_outer_html {
+            format!("<{}{}>{}</{}>", el.name, attrs, inner, el.name)
+        } else {
+            inner
+        }
     }
 
     async fn import_bib_entries(
