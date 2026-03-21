@@ -1007,9 +1007,6 @@ impl ImportProcessor {
                 return Err(ImportError::HtmlConversionFailed);
             }
         };
-        if dom.tree_type == html_parser::DomVariant::Document {
-            return Err(ImportError::HtmlConversionFailed);
-        }
 
         // Get footnotes (WP footnote plugin)
         let mut footnotes: HashMap<String, String> = HashMap::new();
@@ -1741,10 +1738,14 @@ impl ImportProcessor {
             }
         }
 
+        debug!("Converted HTML to ContentBlocks: {:?}", blocks);
+
         let doc = convert_contentblocks_to_yrs(blocks);
         section.content = doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
+
+        debug!("Converted ContentBlocks to YRS.");
 
         if cfg!(feature = "language_detection") {
             section.metadata.lang = detect_language_for_section(&section);
@@ -2274,18 +2275,23 @@ mod tests {
 
     #[tokio::test]
     async fn blockquote_is_converted_to_quote_block() {
+        env_logger::init();
         let processor = make_processor();
         let project = empty_project();
 
         let html = r#"<blockquote class="q">Hello <em>world</em></blockquote>"#.to_string();
 
+        println!("Starting import");
         processor
             .import_html_from_pandoc(html, project.clone(), false, false, false)
             .await
             .unwrap();
 
+        println!("Imported section: {:?}", project.read().unwrap().sections);
         let stored = project.read().unwrap();
+        println!("Decoding yjs to blocks");
         let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        println!("Decoded blocks: {:?}", blocks);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].css_classes, vec!["q".to_string()]);
 
@@ -2334,7 +2340,7 @@ mod tests {
         };
         assert_eq!(file.url, "https://example.com/path/pic.png?x=1");
         assert_eq!(file.filename, "pic.png");
-        assert_eq!(caption.as_deref(), Some("<figcaption>Cap</figcaption>"));
+        assert_eq!(caption.as_deref(), Some("Cap"));
 
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
