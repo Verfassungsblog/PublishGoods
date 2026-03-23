@@ -63,13 +63,13 @@ fn main() {
     let res3 = std::process::Command::new("tsc")
         .args(&[
             "--module",
-            "system",
+            "es6",
             "--lib",
             "es2015,dom,dom.Iterable",
             "--target",
             "es6",
-            "--outFile",
-            "static/js/general.js",
+            "--outDir",
+            "static/js",
             "typescript_old/General.ts",
         ])
         .output()
@@ -82,13 +82,13 @@ fn main() {
     let res2 = std::process::Command::new("tsc")
         .args(&[
             "--module",
-            "system",
+            "es6",
             "--lib",
             "es2015,dom,dom.Iterable",
             "--target",
             "es6",
-            "--outFile",
-            "static/js/persons.js",
+            "--outDir",
+            "static/js",
             "typescript_old/Persons.ts",
         ])
         .output()
