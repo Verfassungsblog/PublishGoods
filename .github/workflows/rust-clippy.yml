@@ -29,7 +29,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af #@v1
         with:
@@ -40,7 +39,8 @@ jobs:
 
       - name: Install required cargo
         run: cargo install clippy-sarif sarif-fmt
-
+      - name: Setup Typescript and handlebars
+        run: npm install -g handlebars typescript webpack webpack-cli && cd typescript && npm install
       - name: Run rust-clippy
         run:
           cargo clippy
