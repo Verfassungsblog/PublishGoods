@@ -40,7 +40,7 @@ jobs:
       - name: Install required cargo
         run: cargo install clippy-sarif sarif-fmt
       - name: Setup Typescript and handlebars
-        run: npm install -g handlebars typescript webpack webpack-cli && cd typescript && npm install
+        run: npm install -g handlebars typescript@5.9.3 webpack webpack-cli && cd typescript && npm install
       - name: Run rust-clippy
         run:
           cargo clippy
