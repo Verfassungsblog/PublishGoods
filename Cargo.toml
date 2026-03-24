@@ -1,7 +1,7 @@
 [package]
 name = "Verfassungsbooks"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Keanu Dölle <kd@verfassungsblog.de>"]
 repository = "https://github.com/Verfassungsblog/verfassungsbooks"
 license = "MIT"
@@ -41,7 +41,7 @@ html_parser = "0.7.0"
 url = "2.5.0"
 async-recursion = "1.1.0"
 tokio-rustls = "0.26.0"
-zip = "4.1.0"
+zip = "8.4.0"
 log = "0.4"
 env_logger = "0.11"
 lingua = { version = "1.7.1", optional = true }

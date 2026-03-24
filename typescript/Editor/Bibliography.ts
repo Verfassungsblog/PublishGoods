@@ -216,10 +216,14 @@ function add_sidebar_listeners() {
             const id = node.getAttribute('data-id');
             if (id) {
                 e.dataTransfer?.setData('text/plain', id);
-                node.classList.add('dragging');
-                // Mark the root as drag-active so the top-level dropzone becomes visible
-                const root = document.querySelector('#bibliography-tree-root');
-                root?.classList.add('drag-active');
+                // Use setTimeout to avoid immediate dragend in Chromium-based browsers
+                // caused by synchronous DOM/layout changes during dragstart
+                setTimeout(() => {
+                    node.classList.add('dragging');
+                    // Mark the root as drag-active so the top-level dropzone becomes visible
+                    const root = document.querySelector('#bibliography-tree-root');
+                    root?.classList.add('drag-active');
+                }, 0);
             }
         }
     }, { signal });

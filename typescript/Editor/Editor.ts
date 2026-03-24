@@ -107,7 +107,11 @@ export async function init() {
             section.addEventListener("click", navigateToSection);
         }
         // Set project name
-        project_name.innerText = data.metadata.title;
+        if(data.metadata && data.metadata.title){
+            project_name.innerText = data.metadata.title;
+        }else{
+            project_name.innerText = "New Project";
+        }
         project_name.addEventListener("click", init);
         // Show project metadata & settings
         await show_project_metadata_settings(data);

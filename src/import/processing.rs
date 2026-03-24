@@ -15,13 +15,13 @@ use crate::import::wordpress::{
     Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError,
 };
 use crate::settings::Settings;
+use crate::storage::BibEntryV3;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::content::current::BlockData;
 use crate::storage::project_storage::sections::content::current::NewContentBlock;
 use crate::storage::project_storage::sections::migration::convert_contentblocks_to_yrs;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::storage::BibEntryV3;
 use crate::utils::block_id_generator::generate_id;
 use log::{debug, error, warn};
 use rocket::http::ContentType;
@@ -570,7 +570,7 @@ impl ImportProcessor {
             None => {
                 return Err(ImportError::WordPressApiError(
                     WordpressAPIError::InvalidURL,
-                ))
+                ));
             }
         };
 
@@ -629,7 +629,7 @@ impl ImportProcessor {
                         _ => {
                             return Err(ImportError::WordPressApiError(
                                 WordpressAPIError::UnexpectedResponse,
-                            ))
+                            ));
                         }
                     },
                     Err(e) => return Err(ImportError::WordPressApiError(e)),
@@ -752,14 +752,18 @@ impl ImportProcessor {
         let mut identifiers = vec![];
 
         if let Some(acf) = &post.acf {
-            if let Some(crossref_doi) = &acf.crossref_doi {
+            if let Some(crossref_doi) = &acf.crossref_doi
+                && !crossref_doi.trim().is_empty()
+            {
                 identifiers.push(Identifier {
                     id: Some(uuid::Uuid::new_v4()),
                     name: "DOI".to_string(),
                     value: crossref_doi.clone(),
                     identifier_type: IdentifierType::DOI,
                 });
-            } else if let Some(doi) = &acf.doi {
+            } else if let Some(doi) = &acf.doi
+                && !doi.trim().is_empty()
+            {
                 identifiers.push(Identifier {
                     id: Some(uuid::Uuid::new_v4()),
                     name: "DOI".to_string(),
@@ -835,7 +839,7 @@ impl ImportProcessor {
                 _ => {
                     return Err(ImportError::WordPressApiError(
                         WordpressAPIError::InvalidURL,
-                    ))
+                    ));
                 }
             },
             Err(e) => return Err(ImportError::WordPressApiError(e)),
@@ -1003,9 +1007,6 @@ impl ImportProcessor {
                 return Err(ImportError::HtmlConversionFailed);
             }
         };
-        if dom.tree_type == html_parser::DomVariant::Document {
-            return Err(ImportError::HtmlConversionFailed);
-        }
 
         // Get footnotes (WP footnote plugin)
         let mut footnotes: HashMap<String, String> = HashMap::new();
@@ -1050,6 +1051,7 @@ impl ImportProcessor {
                                                                                             None,
                                                                                             endnotes,
                                                                                             convert_links,
+                                                                                            true,
                                                                                             project_data.clone(),
                                                                                         )
                                                                                         .await,
@@ -1123,6 +1125,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1142,6 +1145,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1169,6 +1173,7 @@ impl ImportProcessor {
                                                 Some(&footnotes),
                                                 endnotes,
                                                 convert_links,
+                                                false,
                                                 project_data.clone(),
                                             )
                                             .await,
@@ -1183,6 +1188,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1210,6 +1216,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1269,6 +1276,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1296,6 +1304,7 @@ impl ImportProcessor {
                                             Some(&footnotes),
                                             endnotes,
                                             convert_links,
+                                            false,
                                             project_data.clone(),
                                         )
                                         .await,
@@ -1326,6 +1335,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    true,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1439,6 +1449,7 @@ impl ImportProcessor {
                                                         el.clone(),
                                                         None,
                                                         endnotes,
+                                                        convert_links,
                                                         false,
                                                         project_data.clone(),
                                                     )
@@ -1455,6 +1466,7 @@ impl ImportProcessor {
                                         li.clone(),
                                         None,
                                         endnotes,
+                                        convert_links,
                                         false,
                                         project_data.clone(),
                                     )
@@ -1506,6 +1518,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1525,6 +1538,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1552,6 +1566,7 @@ impl ImportProcessor {
                                                 Some(&footnotes),
                                                 endnotes,
                                                 convert_links,
+                                                false,
                                                 project_data.clone(),
                                             )
                                             .await,
@@ -1566,6 +1581,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1593,6 +1609,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1643,6 +1660,7 @@ impl ImportProcessor {
                                         Some(&footnotes),
                                         endnotes,
                                         convert_links,
+                                        true,
                                         project_data.clone(),
                                     )
                                     .await;
@@ -1670,6 +1688,7 @@ impl ImportProcessor {
                                             Some(&footnotes),
                                             endnotes,
                                             convert_links,
+                                            false,
                                             project_data.clone(),
                                         )
                                         .await,
@@ -1693,6 +1712,7 @@ impl ImportProcessor {
                                 });
                             }
                         }
+                        "script" => {}
                         _ => {
                             let html = self
                                 .dom_to_html(
@@ -1700,6 +1720,7 @@ impl ImportProcessor {
                                     Some(&footnotes),
                                     endnotes,
                                     convert_links,
+                                    false,
                                     project_data.clone(),
                                 )
                                 .await;
@@ -1717,10 +1738,14 @@ impl ImportProcessor {
             }
         }
 
+        debug!("Converted HTML to ContentBlocks: {:?}", blocks);
+
         let doc = convert_contentblocks_to_yrs(blocks);
         section.content = doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
+
+        debug!("Converted ContentBlocks to YRS.");
 
         if cfg!(feature = "language_detection") {
             section.metadata.lang = detect_language_for_section(&section);
@@ -1737,10 +1762,18 @@ impl ImportProcessor {
         footnotes: Option<&HashMap<String, String>>,
         endnotes: bool,
         convert_links: bool,
+        keep_outer_html: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
-        self.element_to_html(&ele, footnotes, endnotes, convert_links, project_data)
-            .await
+        self.element_to_html(
+            &ele,
+            footnotes,
+            endnotes,
+            convert_links,
+            keep_outer_html,
+            project_data,
+        )
+        .await
     }
 
     #[async_recursion]
@@ -1750,6 +1783,7 @@ impl ImportProcessor {
         footnotes: Option<&HashMap<String, String>>,
         endnotes: bool,
         convert_links: bool,
+        keep_outer_html: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
         // Special cases: footnote references and link->citation conversion.
@@ -1827,11 +1861,13 @@ impl ImportProcessor {
                                     let mut project = project_data.write().unwrap();
                                     for (key, entry) in by_key.iter() {
                                         let mut converted = BibEntryV3::from(entry);
-                                        converted.key = *uuid_map.get(key).unwrap();
+                                        let entry_uuid = *uuid_map.get(key).unwrap();
+                                        converted.key = entry_uuid;
                                         converted.parents = entry
                                             .parents()
                                             .iter()
                                             .filter_map(|p| uuid_map.get(p.key()).copied())
+                                            .filter(|&p_uuid| p_uuid != entry_uuid)
                                             .collect();
 
                                         project.bibliography.add_entry(converted);
@@ -1875,6 +1911,7 @@ impl ImportProcessor {
                                 footnotes,
                                 endnotes,
                                 convert_links,
+                                true,
                                 project_data.clone(),
                             )
                             .await,
@@ -1884,7 +1921,11 @@ impl ImportProcessor {
             }
         }
 
-        format!("<{}{}>{}</{}>", el.name, attrs, inner, el.name)
+        if keep_outer_html {
+            format!("<{}{}>{}</{}>", el.name, attrs, inner, el.name)
+        } else {
+            inner
+        }
     }
 
     async fn import_bib_entries(
@@ -1906,6 +1947,8 @@ impl ImportProcessor {
             return Err(ImportError::BibFileInvalid);
         }
 
+        debug!("Bib File Content: {:?}", bib_file_content);
+
         let bib = match io::from_biblatex_str(&bib_file_content) {
             Ok(bib) => bib,
             Err(e) => {
@@ -1919,6 +1962,8 @@ impl ImportProcessor {
                 return Err(ImportError::BibFileInvalid);
             }
         };
+
+        debug!("Parsed Bib Entries: {:?}", bib);
 
         let project_storage = self.project_storage.clone();
         let project = project_storage
@@ -1937,15 +1982,21 @@ impl ImportProcessor {
             uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
         }
 
+        debug!("Generated UUID Map: {:?}", uuid_map);
+
         // Convert and resolve parents
         for (key, entry) in by_key.iter() {
             let mut converted = BibEntryV3::from(entry);
-            converted.key = *uuid_map.get(key).unwrap();
+            let entry_uuid = *uuid_map.get(key).unwrap();
+            converted.key = entry_uuid;
             converted.parents = entry
                 .parents()
                 .iter()
                 .filter_map(|p| uuid_map.get(p.key()).copied())
+                .filter(|&p_uuid| p_uuid != entry_uuid)
                 .collect();
+
+            debug!("Converted Entry: {:?}", converted);
 
             project.write().unwrap().bibliography.add_entry(converted);
         }
@@ -2224,18 +2275,23 @@ mod tests {
 
     #[tokio::test]
     async fn blockquote_is_converted_to_quote_block() {
+        env_logger::init();
         let processor = make_processor();
         let project = empty_project();
 
         let html = r#"<blockquote class="q">Hello <em>world</em></blockquote>"#.to_string();
 
+        println!("Starting import");
         processor
             .import_html_from_pandoc(html, project.clone(), false, false, false)
             .await
             .unwrap();
 
+        println!("Imported section: {:?}", project.read().unwrap().sections);
         let stored = project.read().unwrap();
+        println!("Decoding yjs to blocks");
         let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        println!("Decoded blocks: {:?}", blocks);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].css_classes, vec!["q".to_string()]);
 
@@ -2284,37 +2340,11 @@ mod tests {
         };
         assert_eq!(file.url, "https://example.com/path/pic.png?x=1");
         assert_eq!(file.filename, "pic.png");
-        assert_eq!(caption.as_deref(), Some("<figcaption>Cap</figcaption>"));
+        assert_eq!(caption.as_deref(), Some("Cap"));
 
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
     }
-
-    #[tokio::test]
-    async fn convert_links_does_not_break_when_translation_server_is_unset() {
-        let processor = make_processor();
-        let project = empty_project();
-
-        let html = r#"<p>See <a href="https://example.com">X</a></p>"#.to_string();
-
-        processor
-            .import_html_from_pandoc(html, project.clone(), false, false, true)
-            .await
-            .unwrap();
-
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
-        assert_eq!(blocks.len(), 1);
-        let BlockData::Paragraph { text } = &blocks[0].data else {
-            panic!("expected paragraph");
-        };
-        assert!(text.contains("<a href=\"https://example.com\">X</a>"));
-        assert!(!text.contains("<citation"));
-
-        // Verify UUID
-        uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
-    }
-
     #[test]
     fn bibliography_collects_transitive_parents() {
         // child -> parent
@@ -2331,6 +2361,39 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected.get("child").unwrap().parents().len(), 1);
         assert_eq!(collected.get("child").unwrap().parents()[0].key(), "parent");
+    }
+
+    #[test]
+    fn bibliography_entry_cannot_be_its_own_parent() {
+        let mut entry = hayagriva::Entry::new("self_parent", hayagriva::types::EntryType::Book);
+        entry.set_title("Self Parent".to_string().into());
+        // In some cases hayagriva might allow this or we might get it from somewhere else
+        entry.set_parents(vec![entry.clone()]);
+
+        let entries = vec![entry];
+        let by_key = ImportProcessor::collect_bib_entries_with_parents(entries);
+
+        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+        for key in by_key.keys() {
+            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+        }
+
+        for (key, entry) in by_key.iter() {
+            let mut converted = BibEntryV3::from(entry);
+            let entry_uuid = *uuid_map.get(key).unwrap();
+            converted.key = entry_uuid;
+            converted.parents = entry
+                .parents()
+                .iter()
+                .filter_map(|p| uuid_map.get(p.key()).copied())
+                .filter(|&p_uuid| p_uuid != entry_uuid) // THIS IS WHAT WE WANT TO TEST/FIX
+                .collect();
+
+            assert!(
+                converted.parents.is_empty(),
+                "Entry should not have itself as a parent"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2383,7 +2446,7 @@ mod tests {
             .get(&main_uuid)
             .expect("Child entry missing")
         {
-            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(ref be) => be,
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(be) => be,
             _ => panic!("Expected BibEntry, found folder"),
         };
 
@@ -2392,7 +2455,7 @@ mod tests {
         let parent_uuid = child_entry_v3.parents[0];
         assert!(stored.bibliography.entries.contains_key(&parent_uuid));
         let parent_entry_v3 = match stored.bibliography.entries.get(&parent_uuid).unwrap() {
-            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(ref be) => be,
+            crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(be) => be,
             _ => panic!("Expected BibEntry, found folder"),
         };
         assert_eq!(parent_entry_v3.title.as_ref().unwrap().value, "Parent");

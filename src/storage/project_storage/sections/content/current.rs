@@ -1,49 +1,62 @@
 use crate::projects::api::UploadedImage;
+use crate::storage::project_storage::sections::content::current::NewContentBlockConversionError::UnknownBlockType;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
+use std::any::Any;
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 use vb_exchange::projects::BlockType;
+use yrs::types::AsPrelim;
 use yrs::types::array::Array;
 use yrs::types::map::Map;
 use yrs::updates::decoder::Decode as _;
-use yrs::{types::map::MapRef, Doc, MapPrelim, ReadTxn, Transact, Transaction};
-
-pub struct MapRefWithTransaction<'a, 'b> {
-    pub map_ref: MapRef,
-    pub txn: &'a Transaction<'b>,
-}
+use yrs::{Doc, GetString, In, MapPrelim, Out, ReadTxn, Transact, Transaction, types::map::MapRef};
 
 /// Decodes a yrs update into a Vec of NewContentBlock's
-pub fn decode_yjs_content(content: &[u8]) -> Result<Vec<NewContentBlock>, String> {
+pub fn decode_yjs_content(
+    content: &[u8],
+) -> Result<Vec<NewContentBlock>, NewContentBlockConversionError> {
     if content.is_empty() {
         return Ok(vec![]);
     }
 
+    debug!("Decoding Yrs content with length: {}", content.len());
+
     let doc = Doc::new();
     {
         let mut txn = doc.transact_mut();
-        if let Ok(update) = yrs::Update::decode_v1(content) {
-            if txn.apply_update(update).is_err() {
-                return Err("Could not apply update to yrs doc".to_string());
-            }
-        } else {
-            return Err("Could not decode yrs update".to_string());
-        }
+        let update = yrs::Update::decode_v1(content)
+            .map_err(|err| NewContentBlockConversionError::YrsDocError(err.to_string()))?;
+        txn.apply_update(update)
+            .map_err(|err| NewContentBlockConversionError::YrsDocError(err.to_string()))?;
     }
 
-    let blocks_array = doc.get_or_insert_array("blocks");
-    let txn = doc.transact();
+    debug!("Decoded Yrs content into yrs doc");
 
+    debug!("Got transaction, decoding blocks array");
+    let blocks_array = doc.get_or_insert_array("blocks");
+
+    let txn = doc.try_transact().unwrap();
+    debug!("Got blocks array, decoding into content blocks");
+    let blocks = decode_yjs_to_content_blocks(blocks_array, txn)?;
+
+    Ok(blocks)
+}
+
+pub fn decode_yjs_to_content_blocks(
+    blocks_array: yrs::ArrayRef,
+    transaction: Transaction,
+) -> Result<Vec<NewContentBlock>, NewContentBlockConversionError> {
     let mut blocks = Vec::new();
 
-    for block_val in blocks_array.iter(&txn) {
-        if let Ok(block_map) = block_val.cast::<MapRef>() {
-            let map_ref_with_txn = MapRefWithTransaction {
-                map_ref: block_map,
-                txn: &txn,
-            };
+    debug!("Converting Yrs blocks array to Rust types");
+    let blocks_array = convert_yrs_out_to_rust_types(&Out::YArray(blocks_array), &transaction);
 
-            if let Ok(block) = NewContentBlock::try_from(map_ref_with_txn) {
-                blocks.push(block);
+    if let YrsAnyOwned::Array(blocks_array) = blocks_array {
+        for block in blocks_array {
+            if let YrsAnyOwned::Map(block_map) = block {
+                blocks.push(NewContentBlock::try_from(block_map)?);
             }
         }
     }
@@ -51,90 +64,219 @@ pub fn decode_yjs_content(content: &[u8]) -> Result<Vec<NewContentBlock>, String
     Ok(blocks)
 }
 
-impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
-    type Error = String;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum YrsAnyOwned {
+    Null,
+    Undefined,
+    Bool(bool),
+    Number(f64),
+    BigInt(i64),
+    String(String),
+    Buffer(Vec<u8>),
+    Array(Vec<YrsAnyOwned>),
+    Map(HashMap<String, YrsAnyOwned>),
+}
 
-    fn try_from(value: MapRefWithTransaction<'a, 'b>) -> Result<Self, Self::Error> {
-        let id = value
-            .map_ref
-            .get(value.txn, "id")
-            .ok_or("Missing field 'id'")?
-            .to_string(value.txn);
+impl YrsAnyOwned {
+    pub fn to_string(self) -> Option<String> {
+        match self {
+            YrsAnyOwned::String(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn to_map(self) -> Option<HashMap<String, YrsAnyOwned>> {
+        match self {
+            YrsAnyOwned::Map(map) => Some(map),
+            _ => None,
+        }
+    }
 
-        let block_type_str = value
-            .map_ref
-            .get(value.txn, "type")
-            .ok_or("Missing field 'type'")?
-            .to_string(value.txn);
+    pub fn to_vec(self) -> Option<Vec<YrsAnyOwned>> {
+        match self {
+            YrsAnyOwned::Array(vec) => Some(vec),
+            _ => None,
+        }
+    }
 
-        let data_ref = value
-            .map_ref
-            .get(value.txn, "data")
-            .ok_or("Missing field 'data'")?
-            .cast::<MapRef>()
-            .map_err(|_| "Field 'data' is not a MapRef")?;
+    pub fn to_number(self) -> Option<f64> {
+        match self {
+            YrsAnyOwned::Number(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    pub fn to_bool(self) -> Option<bool> {
+        match self {
+            YrsAnyOwned::Bool(b) => Some(b),
+            _ => None,
+        }
+    }
+}
+
+impl From<&yrs::Any> for YrsAnyOwned {
+    fn from(value: &yrs::Any) -> Self {
+        match value {
+            yrs::Any::Null => YrsAnyOwned::Null,
+            yrs::Any::Undefined => YrsAnyOwned::Undefined,
+            yrs::Any::Bool(val) => YrsAnyOwned::Bool(*val),
+            yrs::Any::Number(val) => YrsAnyOwned::Number(*val),
+            yrs::Any::BigInt(val) => YrsAnyOwned::BigInt(*val),
+            yrs::Any::String(val) => YrsAnyOwned::String(val.to_string()),
+            yrs::Any::Buffer(val) => YrsAnyOwned::Buffer(val.to_vec()),
+            yrs::Any::Array(val) => {
+                YrsAnyOwned::Array(val.into_iter().map(|v| YrsAnyOwned::from(v)).collect())
+            }
+            yrs::Any::Map(val) => {
+                let mut res = HashMap::new();
+                for (key, val) in val.iter() {
+                    res.insert(key.to_string(), YrsAnyOwned::from(val));
+                }
+                YrsAnyOwned::Map(res)
+            }
+        }
+    }
+}
+
+fn convert_yrs_out_to_rust_types(input: &Out, transaction: &Transaction) -> YrsAnyOwned {
+    println!("convert_yrs_out_to_rust_types: {:?}", input);
+    match input {
+        Out::Any(any) => YrsAnyOwned::from(any),
+        Out::YText(ytext) => YrsAnyOwned::String(ytext.get_string(transaction)),
+        Out::YArray(yarray) => YrsAnyOwned::Array(
+            yarray
+                .iter(transaction)
+                .map(|mut item| convert_yrs_out_to_rust_types(&mut item, transaction))
+                .collect(),
+        ),
+        Out::YMap(ymap) => YrsAnyOwned::Map(
+            ymap.iter(transaction)
+                .map(|(key, mut val)| {
+                    (
+                        key.to_string(),
+                        convert_yrs_out_to_rust_types(&mut val, transaction),
+                    )
+                })
+                .collect(),
+        ),
+        Out::YXmlElement(yxmle) => YrsAnyOwned::String(yxmle.get_string(transaction)),
+        Out::YXmlFragment(yxmlf) => YrsAnyOwned::String(yxmlf.get_string(transaction)),
+        Out::YXmlText(yxmlt) => YrsAnyOwned::String(yxmlt.get_string(transaction)),
+        _ => YrsAnyOwned::Undefined,
+    }
+}
+
+#[derive(Debug)]
+pub enum NewContentBlockConversionError {
+    MissingFieldOrInvalidType(String),
+    UnknownBlockType(String),
+    YrsDocError(String),
+}
+
+impl Display for NewContentBlockConversionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{:?}", self))
+    }
+}
+
+impl From<yrs::error::Error> for NewContentBlockConversionError {
+    fn from(err: yrs::error::Error) -> Self {
+        NewContentBlockConversionError::YrsDocError(err.to_string())
+    }
+}
+
+impl TryFrom<HashMap<String, YrsAnyOwned>> for NewContentBlock {
+    type Error = NewContentBlockConversionError;
+
+    fn try_from(mut block: HashMap<String, YrsAnyOwned>) -> Result<Self, Self::Error> {
+        let id = block
+            .remove("id")
+            .and_then(|v| v.to_string())
+            .ok_or_else(|| {
+                NewContentBlockConversionError::MissingFieldOrInvalidType(String::from("id"))
+            })?;
+
+        let block_type = block
+            .remove("type")
+            .and_then(|v| v.to_string())
+            .ok_or_else(|| {
+                NewContentBlockConversionError::MissingFieldOrInvalidType(String::from("type"))
+            })?;
+
+        let mut data = block
+            .remove("data")
+            .and_then(|v| v.to_map())
+            .ok_or_else(|| {
+                NewContentBlockConversionError::MissingFieldOrInvalidType(String::from("data"))
+            })?;
 
         let mut css_classes = Vec::new();
-        if let Some(tunes_val) = value.map_ref.get(value.txn, "tunes") {
-            if let Ok(tunes) = tunes_val.cast::<MapRef>() {
-                // Prefer singular key (correct plugin name), but support legacy plural key for backward compatibility
-                let style_key = if tunes.get(value.txn, "block_style_tune").is_some() {
-                    "block_style_tune"
-                } else {
-                    "block_style_tunes"
-                };
 
-                if let Some(style_tunes_val) = tunes.get(value.txn, style_key) {
-                    if let Ok(style_tunes) = style_tunes_val.cast::<MapRef>() {
-                        if let Some(css_classes_str) = style_tunes.get(value.txn, "css_classes") {
-                            let classes = css_classes_str.to_string(value.txn);
-                            if !classes.is_empty() {
-                                css_classes = classes.split(" ").map(|s| s.to_string()).collect();
-                            }
-                        }
-                    }
+        if let Some(YrsAnyOwned::Map(tunes)) = block.remove("tunes") {
+            let style_key = if tunes.contains_key("block_style_tune") {
+                "block_style_tune"
+            } else {
+                "block_style_tunes"
+            };
+            if let Some(YrsAnyOwned::Map(style_tunes)) = tunes.get(style_key) {
+                if let Some(YrsAnyOwned::String(classes)) = style_tunes.get("css_classes") {
+                    css_classes = classes.split(" ").map(|s| s.to_string()).collect();
                 }
             }
         }
 
-        match block_type_str.as_str() {
+        match block_type.as_str() {
             "paragraph" => {
-                if let Some(text_val) = data_ref.get(value.txn, "text") {
+                if let Some(text_val) = data.remove("text") {
                     Ok(NewContentBlock {
                         id,
                         block_type: BlockType::Paragraph,
                         data: BlockData::Paragraph {
-                            text: text_val.to_string(value.txn),
+                            text: text_val.to_string().ok_or_else(|| {
+                                NewContentBlockConversionError::MissingFieldOrInvalidType(
+                                    String::from("paragraph.text"),
+                                )
+                            })?,
                         },
                         css_classes,
                         revision_id: None,
                     })
-                } else if let Some(html_val) = data_ref.get(value.txn, "html") {
+                } else if let Some(html_val) = data.remove("html") {
                     Ok(NewContentBlock {
                         id,
                         block_type: BlockType::Raw,
                         data: BlockData::Raw {
-                            html: html_val.to_string(value.txn),
+                            html: html_val.to_string().ok_or_else(|| {
+                                NewContentBlockConversionError::MissingFieldOrInvalidType(
+                                    String::from("raw.html"),
+                                )
+                            })?,
                         },
                         css_classes,
                         revision_id: None,
                     })
                 } else {
-                    Err("Missing 'text' or 'html' in paragraph/raw block".to_string())
+                    Err(NewContentBlockConversionError::MissingFieldOrInvalidType(
+                        String::from("text or html"),
+                    ))
                 }
             }
             "header" => {
-                let text = data_ref
-                    .get(value.txn, "text")
-                    .ok_or("Missing field 'text' in header block")?
-                    .to_string(value.txn);
-                let level = match data_ref
-                    .get(value.txn, "level")
-                    .ok_or("Missing field 'level' in header block")?
-                {
-                    yrs::Out::Any(yrs::Any::Number(v)) => v as u8,
-                    yrs::Out::Any(yrs::Any::BigInt(v)) => v as u8,
-                    _ => return Err("Field 'level' is not an integer".to_string()),
+                let text = data
+                    .remove("text")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "header.text",
+                        ))
+                    })?;
+
+                let level = match data.remove("level").and_then(|v| v.to_number()) {
+                    Some(v) => v as u8,
+                    None => {
+                        return Err(NewContentBlockConversionError::MissingFieldOrInvalidType(
+                            String::from("header.level"),
+                        ));
+                    }
                 };
 
                 Ok(NewContentBlock {
@@ -146,20 +288,29 @@ impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
                 })
             }
             "list" => {
-                let style = data_ref
-                    .get(value.txn, "style")
-                    .ok_or("Missing field 'style' in list block")?
-                    .to_string(value.txn);
-                let items_val = data_ref
-                    .get(value.txn, "items")
-                    .ok_or("Missing field 'items' in list block")?;
-                let items_array = items_val
-                    .cast::<yrs::types::array::ArrayRef>()
-                    .map_err(|_| "Field 'items' is not an ArrayRef")?;
+                let style = data
+                    .remove("style")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "list.style",
+                        ))
+                    })?;
+
+                let items_array =
+                    data.remove("items")
+                        .and_then(|v| v.to_vec())
+                        .ok_or_else(|| {
+                            NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                                "list.items",
+                            ))
+                        })?;
 
                 let mut items = Vec::new();
-                for item in items_array.iter(value.txn) {
-                    items.push(item.to_string(value.txn));
+                for item in items_array {
+                    if let Some(input) = item.to_string() {
+                        items.push(input);
+                    }
                 }
 
                 Ok(NewContentBlock {
@@ -171,18 +322,30 @@ impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
                 })
             }
             "quote" => {
-                let text = data_ref
-                    .get(value.txn, "text")
-                    .ok_or("Missing field 'text' in quote block")?
-                    .to_string(value.txn);
-                let caption = data_ref
-                    .get(value.txn, "caption")
-                    .ok_or("Missing field 'caption' in quote block")?
-                    .to_string(value.txn);
-                let alignment = data_ref
-                    .get(value.txn, "alignment")
-                    .ok_or("Missing field 'alignment' in quote block")?
-                    .to_string(value.txn);
+                let text = data
+                    .remove("text")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "quote.text",
+                        ))
+                    })?;
+                let caption = data
+                    .remove("caption")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "quote.caption",
+                        ))
+                    })?;
+                let alignment = data
+                    .remove("alignment")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "quote.alignment",
+                        ))
+                    })?;
 
                 Ok(NewContentBlock {
                     id,
@@ -197,38 +360,47 @@ impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
                 })
             }
             "image" => {
-                let file_ref = data_ref
-                    .get(value.txn, "file")
-                    .ok_or("Missing field 'file' in image block")?
-                    .cast::<MapRef>()
-                    .map_err(|_| "Field 'file' is not a MapRef")?;
+                let mut file_ref =
+                    data.remove("file")
+                        .and_then(|v| v.to_map())
+                        .ok_or_else(|| {
+                            NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                                "image.file",
+                            ))
+                        })?;
 
                 let url = file_ref
-                    .get(value.txn, "url")
-                    .ok_or("Missing field 'url' in image file")?
-                    .to_string(value.txn);
+                    .remove("url")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "image.file.url",
+                        ))
+                    })?;
                 let filename = file_ref
-                    .get(value.txn, "filename")
-                    .ok_or("Missing field 'filename' in image file")?
-                    .to_string(value.txn);
+                    .remove("filename")
+                    .and_then(|v| v.to_string())
+                    .ok_or_else(|| {
+                        NewContentBlockConversionError::MissingFieldOrInvalidType(String::from(
+                            "image.file.filename",
+                        ))
+                    })?;
 
                 let file = UploadedImage { url, filename };
 
-                let caption = data_ref
-                    .get(value.txn, "caption")
-                    .map(|v| v.to_string(value.txn));
-                let with_border = match data_ref.get(value.txn, "withBorder") {
-                    Some(yrs::Out::Any(yrs::Any::Bool(v))) => v,
-                    _ => false,
-                };
-                let with_background = match data_ref.get(value.txn, "withBackground") {
-                    Some(yrs::Out::Any(yrs::Any::Bool(v))) => v,
-                    _ => false,
-                };
-                let stretched = match data_ref.get(value.txn, "stretched") {
-                    Some(yrs::Out::Any(yrs::Any::Bool(v))) => v,
-                    _ => false,
-                };
+                let caption = data.remove("caption").and_then(|v| v.to_string());
+                let with_border: bool = data
+                    .remove("withBorder")
+                    .and_then(|v| v.to_bool())
+                    .unwrap_or(false);
+                let with_background: bool = data
+                    .remove("withBackground")
+                    .and_then(|v| v.to_bool())
+                    .unwrap_or(false);
+                let stretched: bool = data
+                    .remove("stretched")
+                    .and_then(|v| v.to_bool())
+                    .unwrap_or(false);
 
                 Ok(NewContentBlock {
                     id,
@@ -244,7 +416,7 @@ impl<'a, 'b> TryFrom<MapRefWithTransaction<'a, 'b>> for NewContentBlock {
                     revision_id: None,
                 })
             }
-            _ => Err(format!("Unknown block type: {}", block_type_str)),
+            _ => Err(UnknownBlockType(block_type)),
         }
     }
 }
@@ -338,6 +510,7 @@ impl From<NewContentBlock> for yrs::MapPrelim {
             }
         }
         if !value.css_classes.is_empty() {
+            println!("Found css classes: {:?}", value.css_classes);
             let block_style_tune: Vec<(String, yrs::In)> = vec![(
                 "css_classes".to_string(),
                 value.css_classes.join(" ").into(),
@@ -349,6 +522,7 @@ impl From<NewContentBlock> for yrs::MapPrelim {
             map.push(("tunes".to_string(), MapPrelim::from_iter(tunes_data).into()));
         }
 
+        debug!("NewContentBlock got converted to MapPrelim: {:?}", map);
         MapPrelim::from_iter(map)
     }
 }
@@ -897,6 +1071,47 @@ mod tests {
     }
 
     #[test]
+    fn test_css_classes_any() {
+        use yrs::types::map::Map;
+        let doc = Doc::new();
+        let map_ref = doc.get_or_insert_map("block");
+        let mut txn = doc.transact_mut();
+
+        map_ref.insert(&mut txn, "id", "test-id");
+        map_ref.insert(&mut txn, "type", "paragraph");
+        let data = map_ref.insert(
+            &mut txn,
+            "data",
+            yrs::MapPrelim::from_iter(Vec::<(String, yrs::In)>::new()),
+        );
+        data.insert(&mut txn, "text", "Some text");
+
+        // Construct tunes as Out::Any(Any::Map)
+        let mut style_tune_map = std::collections::HashMap::new();
+        style_tune_map.insert(
+            "css_classes".to_string(),
+            yrs::Any::String("class-any-1 class-any-2".into()),
+        );
+
+        let mut tunes_map = std::collections::HashMap::new();
+        tunes_map.insert(
+            "block_style_tune".to_string(),
+            yrs::Any::Map(style_tune_map.into()),
+        );
+
+        map_ref.insert(&mut txn, "tunes", yrs::Any::Map(tunes_map.into()));
+        drop(txn);
+
+        let txn = doc.transact();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref.clone()), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
+        assert_eq!(
+            converted_block.css_classes,
+            vec!["class-any-1".to_string(), "class-any-2".to_string()]
+        );
+    }
+
+    #[test]
     fn test_raw_conversion() {
         let block = NewContentBlock {
             id: uuid::Uuid::new_v4().to_string(),
@@ -946,12 +1161,8 @@ mod tests {
         let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
-        let map_ref_with_txn = MapRefWithTransaction {
-            map_ref: map_ref.clone(),
-            txn: &txn,
-        };
-
-        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref.clone()), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
         assert_eq!(block, converted_block);
     }
 
@@ -972,12 +1183,8 @@ mod tests {
         let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
-        let map_ref_with_txn = MapRefWithTransaction {
-            map_ref: map_ref.clone(),
-            txn: &txn,
-        };
-
-        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref.clone()), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
         assert_eq!(block, converted_block);
     }
 
@@ -999,12 +1206,8 @@ mod tests {
         let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
 
-        let map_ref_with_txn = MapRefWithTransaction {
-            map_ref: map_ref.clone(),
-            txn: &txn,
-        };
-
-        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref.clone()), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
         assert_eq!(block, converted_block);
     }
 
@@ -1025,8 +1228,8 @@ mod tests {
         let doc = Doc::new();
         let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
-        let map_ref_with_txn = MapRefWithTransaction { map_ref, txn: &txn };
-        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
         assert_eq!(block, converted_block);
     }
 
@@ -1052,8 +1255,8 @@ mod tests {
         let doc = Doc::new();
         let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
-        let map_ref_with_txn = MapRefWithTransaction { map_ref, txn: &txn };
-        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
         assert_eq!(block, converted_block);
     }
 
@@ -1072,8 +1275,8 @@ mod tests {
         let doc = Doc::new();
         let map_ref = setup_y_map(&doc, block.clone());
         let txn = doc.transact();
-        let map_ref_with_txn = MapRefWithTransaction { map_ref, txn: &txn };
-        let converted_block = NewContentBlock::try_from(map_ref_with_txn).unwrap();
+        let block_any = convert_yrs_out_to_rust_types(&Out::YMap(map_ref), &txn);
+        let converted_block = NewContentBlock::try_from(block_any.to_map().unwrap()).unwrap();
         assert_eq!(block, converted_block);
     }
 
