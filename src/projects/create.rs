@@ -1,14 +1,14 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::data_storage::current::{ProjectListEntry, ProjectListProject};
+use crate::storage::ProjectTemplateV2;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::data_storage::current::{ProjectListEntry, ProjectListProject};
 use crate::storage::project_storage::current::Bibliography;
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::storage::ProjectTemplateV2;
 use chrono::Utc;
+use rocket::State;
 use rocket::http::Status;
 use rocket::response::Redirect;
-use rocket::State;
 use rocket_dyn_templates::Template;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -97,5 +97,9 @@ pub async fn process_create_project(
             name: project_data.name,
             last_interaction: Utc::now().naive_utc(),
         }));
+    if let Err(e) = data_storage.save_to_disk(settings).await {
+        eprintln!("Couldn't save project list to disk: {:?}", e);
+        return Err(Status::InternalServerError);
+    }
     Ok(Redirect::to("/"))
 }

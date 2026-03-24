@@ -1,5 +1,6 @@
 use crate::projects::api::DeprecatedApiError;
 use crate::settings::Settings;
+use crate::storage::User;
 use crate::storage::data_storage::current::DataStorageError;
 use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
 use rocket::http::{ContentType, Status};

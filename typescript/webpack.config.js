@@ -11,7 +11,7 @@ module.exports = {
         export: { import: './Export.ts', dependOn: 'vendor' },
         vendor: ['yjs', 'pdfjs-dist', 'handlebars', '@editorjs/editorjs'],
     },
-    devtool: 'inline-source-map',
+    devtool: false,
     module: {
         rules: [
             {

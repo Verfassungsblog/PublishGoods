@@ -28,7 +28,7 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
     );
 
     match detected_lang {
-        Some(lang) => language_to_bcp47(lang).map(|lang| lang),
+        Some(lang) => language_to_bcp47(lang),
         None => None,
     }
 }
@@ -85,7 +85,7 @@ pub fn detect_language_for_section(section: &Section) -> Option<language::Langua
     let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&content_to_analyze);
     match detected_lang {
-        Some(lang) => language_to_bcp47(lang).map(|lang| lang),
+        Some(lang) => language_to_bcp47(lang),
         None => None,
     }
 }

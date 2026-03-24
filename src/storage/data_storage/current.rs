@@ -244,15 +244,16 @@ impl DataStorage {
         let cpy = self.data.clone();
         let path = format!("{}/data.{}.bincode", settings.data_path, CURRENT_VERSION);
 
-        tokio::task::spawn_blocking(move || {
+        let res = tokio::task::spawn_blocking(move || {
             let mut file = std::fs::File::create(path)?;
 
             bincode::encode_into_std_write(cpy, &mut file, bincode::config::standard())?;
             Ok::<(), DataStorageError>(())
         })
-        .await??;
-
+        .await;
         self.remove_file_lock();
+        res??;
+
         Ok(())
     }
 
@@ -269,20 +270,21 @@ impl DataStorage {
         // 1. Get all project IDs from disk (blocking IO)
         let projects_on_disk: Vec<Uuid> = tokio::task::spawn_blocking(move || {
             let mut projects = Vec::new();
-            if let Ok(dir) = std::fs::read_dir(path) {
-                for entry in dir {
-                    if let Ok(entry) = entry
-                        && let Some(project_id) = entry.path().file_name()
-                        && let Some(project_id) = project_id.to_str()
-                        && let Ok(uuid) = uuid::Uuid::parse_str(project_id)
-                    {
-                        projects.push(uuid);
-                    }
+            let dir = std::fs::read_dir(path)?;
+
+            for entry in dir {
+                if let Ok(entry) = entry
+                    && let Some(project_id) = entry.path().file_name()
+                    && let Some(project_id) = project_id.to_str()
+                    && let Ok(uuid) = uuid::Uuid::parse_str(project_id)
+                {
+                    projects.push(uuid);
                 }
             }
-            projects
+
+            Ok::<Vec<Uuid>, DataStorageError>(projects)
         })
-        .await?;
+        .await??;
 
         // 2. Find projects that are on disk but not in the list
         let mut new_projects = Vec::new();

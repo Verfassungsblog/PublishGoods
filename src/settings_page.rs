@@ -119,7 +119,14 @@ pub mod api {
 
         //Check email is changed + email is already in use
         if let Some(new_email) = new_user.email.clone()
-            && new_email != data.login_data.get(&id).unwrap().read().unwrap().email
+            && new_email
+                != data
+                    .login_data
+                    .get(&id)
+                    .ok_or(ApiErrorType::ResourceNotFound("user".to_string()))?
+                    .read()
+                    .unwrap()
+                    .email
             && data
                 .login_data
                 .iter()
@@ -144,9 +151,10 @@ pub mod api {
     pub async fn delete_user(
         id: String,
         session: Session,
+        settings: &State<Settings>,
         data_storage: &State<Arc<DataStorage>>,
     ) -> APIResult<()> {
-        let data_storage = data_storage;
+        let data_storage = Arc::clone(data_storage);
         // Parse id or return error
         let id = uuid::Uuid::parse_str(&id)?;
 
@@ -155,7 +163,10 @@ pub mod api {
         }
 
         match data_storage.data.login_data.remove(&id) {
-            Some(_) => Ok(APIResponse::from(())),
+            Some(_) => {
+                data_storage.save_to_disk(&settings).await?;
+                Ok(APIResponse::from(()))
+            }
             None => Err(ApiErrorType::ResourceNotFound("user".to_string()).into()),
         }
     }
