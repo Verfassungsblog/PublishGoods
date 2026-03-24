@@ -1,20 +1,17 @@
 use crate::session::session_guard::Session;
-use crate::storage::data_storage::DataStorage;
 use crate::storage::User;
+use crate::storage::data_storage::DataStorage;
 use rocket::State;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
 
 #[get("/settings")]
 pub async fn settings_page(_session: Session, data_storage: &State<Arc<DataStorage>>) -> Template {
-    let data_storage = data_storage;
     let users: Vec<User> = data_storage
         .data
-        .read()
-        .unwrap()
         .login_data
         .iter()
-        .map(|x| x.1.read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
     Template::render("settings", users)
 }
@@ -23,13 +20,13 @@ pub mod api {
     use crate::projects::api::Patch;
     use crate::session::session_guard::Session;
     use crate::settings::Settings;
-    use crate::storage::data_storage::DataStorage;
     use crate::storage::User;
+    use crate::storage::data_storage::DataStorage;
     use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
     use argon2::password_hash::rand_core::OsRng;
     use argon2::{Argon2, PasswordHasher};
-    use rocket::serde::json::Json;
     use rocket::State;
+    use rocket::serde::json::Json;
     use std::sync::Arc;
 
     #[derive(serde::Deserialize)]
@@ -53,11 +50,9 @@ pub mod api {
         // Check if user with this email already exists
         if data_storage
             .data
-            .read()
-            .unwrap()
             .login_data
             .iter()
-            .any(|x| x.1.read().unwrap().email == new_user.email)
+            .any(|x| x.value().read().unwrap().email == new_user.email)
         {
             return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
         }
@@ -93,7 +88,7 @@ pub mod api {
             if let Some(password) = patch.password {
                 let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
                 let password_hash = Argon2::default()
-                    .hash_password(&password.as_bytes(), &salt)
+                    .hash_password(password.as_bytes(), &salt)
                     .unwrap()
                     .to_string();
                 new_user.password_hash = password_hash;
@@ -120,21 +115,24 @@ pub mod api {
         let id = uuid::Uuid::parse_str(&id)?;
 
         let new_user = new_user.into_inner();
-        let data_storage = data_storage;
-
-        let mut data = data_storage.data.write().unwrap();
+        let data = Arc::clone(data_storage).data.clone();
 
         //Check email is changed + email is already in use
-        if let Some(new_email) = new_user.email.clone() {
-            if new_email != data.login_data.get(&id).unwrap().read().unwrap().email {
-                if data
+        if let Some(new_email) = new_user.email.clone()
+            && new_email
+                != data
                     .login_data
-                    .iter()
-                    .any(|x| x.1.read().unwrap().email == new_email)
-                {
-                    return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
-                }
-            }
+                    .get(&id)
+                    .ok_or(ApiErrorType::ResourceNotFound("user".to_string()))?
+                    .read()
+                    .unwrap()
+                    .email
+            && data
+                .login_data
+                .iter()
+                .any(|x| x.value().read().unwrap().email == new_email)
+        {
+            return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
         }
 
         match data.login_data.get_mut(&id) {
@@ -153,8 +151,10 @@ pub mod api {
     pub async fn delete_user(
         id: String,
         session: Session,
+        settings: &State<Settings>,
         data_storage: &State<Arc<DataStorage>>,
     ) -> APIResult<()> {
+        let data_storage = Arc::clone(data_storage);
         // Parse id or return error
         let id = uuid::Uuid::parse_str(&id)?;
 
@@ -162,11 +162,11 @@ pub mod api {
             return Err(ApiErrorType::BadRequest("Cannot delete own user".to_string()).into());
         }
 
-        let data_storage = data_storage;
-        let mut data = data_storage.data.write().unwrap();
-
-        match data.login_data.remove(&id) {
-            Some(_) => Ok(APIResponse::from(())),
+        match data_storage.data.login_data.remove(&id) {
+            Some(_) => {
+                data_storage.save_to_disk(&settings).await?;
+                Ok(APIResponse::from(()))
+            }
             None => Err(ApiErrorType::ResourceNotFound("user".to_string()).into()),
         }
     }

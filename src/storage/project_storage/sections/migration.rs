@@ -181,7 +181,7 @@ impl From<SectionV3> for SectionV4 {
             sub_sections: value
                 .sub_sections
                 .into_iter()
-                .map(|s| SectionV4::from(s))
+                .map(SectionV4::from)
                 .collect(),
             children: value.children,
             visible_in_toc: value.visible_in_toc,
@@ -237,7 +237,7 @@ impl From<SectionV4> for SectionV5 {
             sub_sections: value
                 .sub_sections
                 .into_iter()
-                .map(|s| SectionV5::from(s))
+                .map(SectionV5::from)
                 .collect(),
             children: value.children,
             visible_in_toc: value.visible_in_toc,
@@ -393,7 +393,7 @@ impl From<SectionMetadataV1> for SectionMetadataV2 {
             identifiers: value.identifiers,
             published: value.published,
             last_changed: value.last_changed,
-            lang: value.lang.map(|l| l.into()),
+            lang: value.lang,
         }
     }
 }
@@ -476,7 +476,7 @@ impl From<SectionMetadataV4> for SectionMetadataV5 {
                     combined_override.push_str(&subtitle_override);
                 } else if let Some(subtitle) = &value.subtitle {
                     combined_override.push_str(": ");
-                    combined_override.push_str(&subtitle);
+                    combined_override.push_str(subtitle);
                 }
                 Some(combined_override)
             };
@@ -484,12 +484,12 @@ impl From<SectionMetadataV4> for SectionMetadataV5 {
         let authors = value
             .authors
             .into_iter()
-            .map(|x| PersonUuidOrString::PersonUuid(x))
+            .map(PersonUuidOrString::PersonUuid)
             .collect();
         let editors = value
             .editors
             .into_iter()
-            .map(|x| PersonUuidOrString::PersonUuid(x))
+            .map(PersonUuidOrString::PersonUuid)
             .collect();
 
         SectionMetadataV5 {
@@ -527,20 +527,20 @@ pub struct SectionMetadataV3 {
     pub lang: Option<OldLanguage>,
 }
 
-impl Into<SectionMetadataV4> for SectionMetadataV3 {
-    fn into(self) -> SectionMetadataV4 {
+impl From<SectionMetadataV3> for SectionMetadataV4 {
+    fn from(val: SectionMetadataV3) -> Self {
         SectionMetadataV4 {
-            title: self.title,
-            toc_title_override: self.toc_title_override,
-            subtitle: self.subtitle,
-            toc_subtitle_override: self.toc_subtitle_override,
-            authors: self.authors,
-            editors: self.editors,
-            web_url: self.web_url,
-            identifiers: self.identifiers,
-            published: self.published,
-            last_changed: self.last_changed,
-            lang: self.lang.map(|l| l.into()),
+            title: val.title,
+            toc_title_override: val.toc_title_override,
+            subtitle: val.subtitle,
+            toc_subtitle_override: val.toc_subtitle_override,
+            authors: val.authors,
+            editors: val.editors,
+            web_url: val.web_url,
+            identifiers: val.identifiers,
+            published: val.published,
+            last_changed: val.last_changed,
+            lang: val.lang.map(|l| l.into()),
         }
     }
 }
@@ -550,8 +550,8 @@ mod tests {
     use super::*;
     use crate::storage::project_storage::sections::content::current::BlockData;
     use vb_exchange::projects::BlockType;
-    use yrs::updates::decoder::Decode;
     use yrs::Map;
+    use yrs::updates::decoder::Decode;
 
     #[test]
     fn test_section_v5_to_v6_migration() {

@@ -8,11 +8,11 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
+use rocket::State;
 use rocket::form::Form;
 use rocket::fs::TempFile;
 use rocket::http::ContentType;
 use rocket::serde::json::Json;
-use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -243,7 +243,7 @@ pub async fn get_wordpress_categories(
                 WordpressAPIError::UnexpectedResponse => {
                     Err(ApiErrorType::InternalServerError.into())
                 }
-            }
+            };
         }
     };
 
@@ -380,11 +380,8 @@ pub async fn poll_import_status(
 ) -> APIResult<ImportStatus> {
     let id = Uuid::parse_str(&id)?;
     // Try to find job with id in archive
-    match import_processor.job_archive.read().unwrap().get(&id) {
-        Some(status) => {
-            return Ok(APIResponse::from(status.clone()));
-        }
-        None => (),
+    if let Some(status) = import_processor.job_archive.read().unwrap().get(&id) {
+        return Ok(APIResponse::from(status.clone()));
     }
     let job_queue = import_processor.job_queue.read().unwrap();
     // Job not in archive yet, try to find it in job queue

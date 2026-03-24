@@ -71,10 +71,10 @@ trait HeaderValueAsUsize {
 }
 impl HeaderValueAsUsize for HeaderValue {
     fn try_into_usize(&self) -> Option<usize> {
-        if let Ok(val) = self.to_str() {
-            if let Ok(val) = val.parse::<usize>() {
-                return Some(val);
-            }
+        if let Ok(val) = self.to_str()
+            && let Ok(val) = val.parse::<usize>()
+        {
+            return Some(val);
         }
 
         None
@@ -259,29 +259,29 @@ impl WordpressAPI {
         if let Some(slug) = slug {
             query.push(("slug".to_string(), slug));
         }
-        if let Some(categories) = categories {
-            if !categories.is_empty() {
-                query.push((
-                    "categories".to_string(),
-                    categories
-                        .iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<String>>()
-                        .join(","),
-                ));
-            }
+        if let Some(categories) = categories
+            && !categories.is_empty()
+        {
+            query.push((
+                "categories".to_string(),
+                categories
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","),
+            ));
         }
-        if let Some(categories_exclude) = categories_exclude {
-            if !categories_exclude.is_empty() {
-                query.push((
-                    "categories_exclude".to_string(),
-                    categories_exclude
-                        .iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<String>>()
-                        .join(","),
-                ));
-            }
+        if let Some(categories_exclude) = categories_exclude
+            && !categories_exclude.is_empty()
+        {
+            query.push((
+                "categories_exclude".to_string(),
+                categories_exclude
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","),
+            ));
         }
         debug!("Query is: {:?}", query);
         let request = request.query(&query);
@@ -492,7 +492,7 @@ impl WordpressAPI {
             },
             Err(e) => {
                 eprintln!("Error fetching categories: {}", e);
-                return Err(WordpressAPIError::ReqwestError);
+                Err(WordpressAPIError::ReqwestError)
             }
         }
     }
@@ -636,7 +636,7 @@ impl HierarchicalCategory {
             if category.parent == self.id {
                 self.children.push(categories.remove(i).into());
             } else {
-                i = i + 1;
+                i += 1;
             }
         }
 

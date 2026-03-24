@@ -18,9 +18,9 @@ impl CslData {
 }
 
 pub fn load_locales(settings: &Settings) -> Vec<Locale> {
-    let mut files = std::fs::read_dir(format!("{}/csl_locales", settings.data_path)).unwrap();
+    let files = std::fs::read_dir(format!("{}/csl_locales", settings.data_path)).unwrap();
     let mut locales = Vec::new();
-    while let Some(file) = files.next() {
+    for file in files {
         let file = file.unwrap();
         let content = std::fs::read_to_string(file.path()).unwrap();
         let locale = LocaleFile::from_xml(&content).unwrap().into();
@@ -33,8 +33,8 @@ pub fn load_locales(settings: &Settings) -> Vec<Locale> {
 pub fn load_styles(settings: &Settings) -> HashMap<String, IndependentStyle> {
     let mut styles = HashMap::new();
 
-    let mut files = std::fs::read_dir(format!("{}/csl_styles", settings.data_path)).unwrap();
-    while let Some(file) = files.next() {
+    let files = std::fs::read_dir(format!("{}/csl_styles", settings.data_path)).unwrap();
+    for file in files {
         let file = file.unwrap();
         let content = std::fs::read_to_string(file.path()).unwrap();
         let fname = file.file_name().clone().to_string_lossy().to_string();
@@ -104,7 +104,7 @@ pub async fn list_available_styles(settings: &Settings) -> Result<Vec<String>, A
         }
     }
 
-    Ok(available_styles.into())
+    Ok(available_styles)
 }
 
 /// Asynchronously retrieves a list of available CSL (Citation Style Language) locales.
@@ -167,5 +167,5 @@ pub async fn list_available_locales(settings: &Settings) -> Result<Vec<String>, 
         }
     }
 
-    Ok(available_locales.into())
+    Ok(available_locales)
 }

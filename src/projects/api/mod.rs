@@ -1,16 +1,16 @@
 use crate::data_storage::DataStorage;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::project_storage::sections::Section;
-use crate::storage::project_storage::{ProjectStorage, ProjectStorageError};
 use crate::storage::ProjectTemplateV2;
-use crate::utils::api_helpers::{APIResponse, APIResult, ApiError, ApiErrorType};
+use crate::storage::project_storage::ProjectStorage;
+use crate::storage::project_storage::sections::Section;
+use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use bincode::{Decode, Encode};
+use rocket::State;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
 use rocket::serde::json::Json;
-use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -100,10 +100,7 @@ where
 {
     fn patch(&mut self, patch: Option<P>) -> Option<T> {
         match self {
-            None => match patch {
-                None => None,
-                Some(patch) => Some(T::default().patch(patch)),
-            },
+            None => patch.map(|patch| T::default().patch(patch)),
             Some(mself) => match patch {
                 Some(patch) => Some(mself.patch(patch)),
                 None => Some(mself.clone()),
@@ -151,7 +148,7 @@ pub async fn add_content(
 
     // Check if Section or Toc, generate uuid if section
     let mut content = content.into_inner();
-    if let None = content.id {
+    if content.id.is_none() {
         content.id = Some(uuid::Uuid::new_v4());
     }
 
@@ -334,7 +331,7 @@ pub async fn upload_to_project(
             success: 1,
             file: Some(UploadedImage {
                 url: format!("/api/projects/{}/uploads/{}", project_id, filename),
-                filename: filename,
+                filename,
             }),
         }),
         Err(e) => {
@@ -404,7 +401,7 @@ pub async fn get_project_template(
 
     let project = project.read().unwrap();
 
-    Ok(project.template_id.clone().into())
+    Ok(project.template_id.into())
 }
 
 /// Set project's template to the specified template_id
@@ -439,12 +436,9 @@ pub async fn list_templates(
 
     let templates: Vec<ProjectTemplateV2> = data_storage
         .data
-        .read()
-        .unwrap()
         .templates
-        .clone()
         .iter()
-        .map(|x| x.1.read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
 
     Ok(templates.into())

@@ -2,16 +2,13 @@ use crate::projects::api::UploadedImage;
 use crate::storage::project_storage::sections::content::current::NewContentBlockConversionError::UnknownBlockType;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
-use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::Arc;
 use vb_exchange::projects::BlockType;
-use yrs::types::AsPrelim;
 use yrs::types::array::Array;
 use yrs::types::map::Map;
 use yrs::updates::decoder::Decode as _;
-use yrs::{Doc, GetString, In, MapPrelim, Out, ReadTxn, Transact, Transaction, types::map::MapRef};
+use yrs::{Doc, GetString, MapPrelim, Out, ReadTxn, Transact, Transaction};
 
 /// Decodes a yrs update into a Vec of NewContentBlock's
 pub fn decode_yjs_content(
@@ -123,9 +120,7 @@ impl From<&yrs::Any> for YrsAnyOwned {
             yrs::Any::BigInt(val) => YrsAnyOwned::BigInt(*val),
             yrs::Any::String(val) => YrsAnyOwned::String(val.to_string()),
             yrs::Any::Buffer(val) => YrsAnyOwned::Buffer(val.to_vec()),
-            yrs::Any::Array(val) => {
-                YrsAnyOwned::Array(val.into_iter().map(|v| YrsAnyOwned::from(v)).collect())
-            }
+            yrs::Any::Array(val) => YrsAnyOwned::Array(val.iter().map(YrsAnyOwned::from).collect()),
             yrs::Any::Map(val) => {
                 let mut res = HashMap::new();
                 for (key, val) in val.iter() {
@@ -145,15 +140,15 @@ fn convert_yrs_out_to_rust_types(input: &Out, transaction: &Transaction) -> YrsA
         Out::YArray(yarray) => YrsAnyOwned::Array(
             yarray
                 .iter(transaction)
-                .map(|mut item| convert_yrs_out_to_rust_types(&mut item, transaction))
+                .map(|item| convert_yrs_out_to_rust_types(&item, transaction))
                 .collect(),
         ),
         Out::YMap(ymap) => YrsAnyOwned::Map(
             ymap.iter(transaction)
-                .map(|(key, mut val)| {
+                .map(|(key, val)| {
                     (
                         key.to_string(),
-                        convert_yrs_out_to_rust_types(&mut val, transaction),
+                        convert_yrs_out_to_rust_types(&val, transaction),
                     )
                 })
                 .collect(),
@@ -217,10 +212,10 @@ impl TryFrom<HashMap<String, YrsAnyOwned>> for NewContentBlock {
             } else {
                 "block_style_tunes"
             };
-            if let Some(YrsAnyOwned::Map(style_tunes)) = tunes.get(style_key) {
-                if let Some(YrsAnyOwned::String(classes)) = style_tunes.get("css_classes") {
-                    css_classes = classes.split(" ").map(|s| s.to_string()).collect();
-                }
+            if let Some(YrsAnyOwned::Map(style_tunes)) = tunes.get(style_key)
+                && let Some(YrsAnyOwned::String(classes)) = style_tunes.get("css_classes")
+            {
+                css_classes = classes.split(" ").map(|s| s.to_string()).collect();
             }
         }
 
@@ -701,7 +696,7 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
         let mut tunes = BlockTuneEditorJSFormat {
             block_style_tune: None,
         };
-        if value.css_classes.len() > 0 {
+        if !value.css_classes.is_empty() {
             tunes.block_style_tune = Some(BlockStyleTuneEditorJS {
                 css_classes: value.css_classes.join(" "),
             });

@@ -1,13 +1,13 @@
 use crate::session::session_storage::SessionStorage;
 use crate::storage::data_storage::DataStorage;
 use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier},
     Argon2,
+    password_hash::{PasswordHash, PasswordVerifier},
 };
+use rocket::State;
 use rocket::form::Form;
 use rocket::http::CookieJar;
 use rocket::response::Redirect;
-use rocket::State;
 use rocket_dyn_templates::Template;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -84,10 +84,9 @@ pub fn process_login_form(
                         .write()
                         .unwrap()
                         .login_attempts = Vec::new();
-                    let session =
-                        session_storage.generate_session(user.email.clone(), user.id.clone());
+                    let session = session_storage.generate_session(user.email.clone(), user.id);
                     cookies.add_private(("session", session.id.clone()));
-                    return Redirect::to("/");
+                    Redirect::to("/")
                 }
                 Err(_) => {
                     data_storage
@@ -142,8 +141,8 @@ pub struct LoginForm {
 
 #[test]
 pub fn generate_hash() {
-    use argon2::password_hash::rand_core::OsRng;
     use argon2::PasswordHasher;
+    use argon2::password_hash::rand_core::OsRng;
     let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
     let password = b"123456";
     let argon2 = Argon2::default();

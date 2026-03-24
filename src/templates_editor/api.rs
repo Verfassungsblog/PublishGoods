@@ -1,12 +1,12 @@
 use crate::session::session_guard::Session;
-use crate::storage::data_storage::DataStorage;
 use crate::storage::ProjectTemplateV2;
-use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
+use crate::storage::data_storage::DataStorage;
+use crate::utils::api_helpers::{APIResult, ApiErrorType};
+use rocket::State;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
 use rocket::serde::json::Json;
-use rocket::State;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -34,11 +34,9 @@ pub async fn get_template(
         }
     };
 
-    let data_storage = data_storage;
-
     // Get template from data storage
-    let lock = data_storage.data.read().unwrap();
-    let template = lock.templates.get(&template_id);
+    let data_storage = data_storage;
+    let template = data_storage.data.templates.get(&template_id);
     template.map_or_else(
         || Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
         |template| Ok(template.clone().read().unwrap().clone().into()),
@@ -72,8 +70,8 @@ pub async fn update_template(
     let data_storage = data_storage;
 
     // Check if template exists, otherwise return 404
-    let lock = data_storage.data.read().unwrap();
-    if !lock.templates.contains_key(&template_id) {
+    let data_storage = data_storage;
+    if !data_storage.data.templates.contains_key(&template_id) {
         return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
@@ -86,7 +84,13 @@ pub async fn update_template(
         .into());
     }
 
-    *lock.templates.get(&template_id).unwrap().write().unwrap() = template;
+    *data_storage
+        .data
+        .templates
+        .get_mut(&template_id)
+        .unwrap()
+        .write()
+        .unwrap() = template;
 
     Ok(().into())
 }
@@ -284,11 +288,11 @@ pub async fn create_file_asset(
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
                 return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
-            return Ok(().into());
+            Ok(().into())
         }
         Err(e) => {
             eprintln!("Error copying file: {}", e);
-            return Err(ApiErrorType::InternalServerError.into());
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -322,7 +326,7 @@ pub async fn delete_assets(
     let base_path = base_path_raw.to_str().unwrap();
 
     for path in &paths.paths {
-        let path = match safe_path_combine(&base_path, &path) {
+        let path = match safe_path_combine(base_path, path) {
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error deleting asset, invalid path.");
@@ -456,11 +460,7 @@ fn get_assets_recursive(
         let path = entry.path();
 
         let path_to_asset = match path_to_asset {
-            Some(path) => format!(
-                "{}/{}",
-                path,
-                entry.file_name().to_string_lossy().to_string()
-            ),
+            Some(path) => format!("{}/{}", path, entry.file_name().to_string_lossy()),
             None => entry.file_name().to_string_lossy().to_string(),
         };
 
@@ -603,7 +603,7 @@ pub async fn move_asset(
     let base_path = format!("data/templates/{}/assets", template_id);
     let base_path = Path::new(&base_path).canonicalize().unwrap();
 
-    let old_path = match safe_path_combine(&base_path.to_str().unwrap(), &asset.old_path) {
+    let old_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.old_path) {
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
@@ -611,7 +611,7 @@ pub async fn move_asset(
         }
     };
 
-    let new_path = match safe_path_combine(&base_path.to_str().unwrap(), &asset.new_path) {
+    let new_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.new_path) {
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
@@ -662,7 +662,7 @@ pub async fn add_export_format(
     let base_path = format!("data/templates/{}/formats", template_id);
     let base_path = Path::new(&base_path).canonicalize().unwrap();
 
-    let new_path = match safe_path_combine(&base_path.to_str().unwrap(), &format.slug) {
+    let new_path = match safe_path_combine(base_path.to_str().unwrap(), &format.slug) {
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error creating export Format, invalid slug.");
@@ -679,8 +679,7 @@ pub async fn add_export_format(
 
     let template_exists;
     {
-        let lock = data_storage.data.read().unwrap();
-        template_exists = match lock.templates.get(&template_id) {
+        template_exists = match data_storage.data.templates.get(&template_id) {
             Some(template) => {
                 template
                     .write()
@@ -743,15 +742,9 @@ pub async fn update_export_format_metadata(
     };
 
     // Get template
-    let template_entry = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
+    let template_entry = match data_storage.data.templates.get(&template_id) {
         None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
-        Some(template) => Arc::clone(template),
+        Some(template) => Arc::clone(template.value()),
     };
 
     // Move files on disk if slug changed
@@ -759,14 +752,14 @@ pub async fn update_export_format_metadata(
         let base_path = format!("data/templates/{}/formats", template_id);
         let base_path = Path::new(&base_path).canonicalize().unwrap();
 
-        let old_path = match safe_path_combine(&base_path.to_str().unwrap(), &slug) {
+        let old_path = match safe_path_combine(base_path.to_str().unwrap(), &slug) {
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error moving export Format, invalid slug.");
                 return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
             }
         };
-        let new_path = match safe_path_combine(&base_path.to_str().unwrap(), &data.slug) {
+        let new_path = match safe_path_combine(base_path.to_str().unwrap(), &data.slug) {
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error moving export Format, invalid slug.");
@@ -840,11 +833,10 @@ pub async fn delete_export_format(
     let slug = sanitize_path(&slug);
 
     let template = {
-        let templates_guard = data_storage.data.read().unwrap();
-        let templates = &templates_guard.templates;
+        let templates = &data_storage.data.templates;
         // This scope ensures that we drop the lock as soon as we finish using it
         match templates.get(&template_id) {
-            Some(template) => template.clone(),
+            Some(template) => Arc::clone(template.value()),
             None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
         }
     };
@@ -876,7 +868,9 @@ pub async fn delete_export_format(
                     }
                 },
                 Err(_) => {
-                    eprintln!("Couldn't delete physical folder for export format. Couldn't create safe_path");
+                    eprintln!(
+                        "Couldn't delete physical folder for export format. Couldn't create safe_path"
+                    );
                     Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into())
                 }
             }
@@ -1050,11 +1044,11 @@ pub async fn create_file_asset_for_export_format(
             if let Err(()) = data_storage.update_template_version_id(template_id).await {
                 return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
             }
-            return Ok(().into());
+            Ok(().into())
         }
         Err(e) => {
             eprintln!("Error copying file: {}", e);
-            return Err(ApiErrorType::InternalServerError.into());
+            Err(ApiErrorType::InternalServerError.into())
         }
     }
 }
@@ -1089,7 +1083,7 @@ pub async fn delete_assets_for_export_format(
     let base_path = base_path_raw.to_str().unwrap();
 
     for path in &paths.paths {
-        let path = match safe_path_combine(&base_path, &path) {
+        let path = match safe_path_combine(base_path, path) {
             Ok(path) => path,
             Err(_) => {
                 eprintln!("Error deleting asset, invalid path.");
@@ -1267,7 +1261,7 @@ pub async fn move_asset_for_export_format(
     let base_path = format!("data/templates/{}/formats/{}", template_id, slug);
     let base_path = Path::new(&base_path).canonicalize().unwrap();
 
-    let old_path = match safe_path_combine(&base_path.to_str().unwrap(), &asset.old_path) {
+    let old_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.old_path) {
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
@@ -1275,7 +1269,7 @@ pub async fn move_asset_for_export_format(
         }
     };
 
-    let new_path = match safe_path_combine(&base_path.to_str().unwrap(), &asset.new_path) {
+    let new_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.new_path) {
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error moving asset, invalid path.");
@@ -1332,14 +1326,8 @@ pub async fn create_export_step(
     let slug = sanitize_path(&slug);
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1360,7 +1348,7 @@ pub async fn create_export_step(
         return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
-    return Ok(step.into());
+    Ok(step.into())
 }
 
 #[derive(serde::Deserialize)]
@@ -1404,14 +1392,8 @@ pub async fn move_export_step(
     let move_after = movedata.move_after;
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1432,7 +1414,7 @@ pub async fn move_export_step(
             let step_index = match step_index {
                 Some(index) => index,
                 None => {
-                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into())
+                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
                 }
             };
             let step = export_format.export_steps.remove(step_index);
@@ -1447,12 +1429,12 @@ pub async fn move_export_step(
                         None => {
                             return Err(
                                 ApiErrorType::ResourceNotFound("export_step".to_string()).into()
-                            )
+                            );
                         }
                         Some(index) => index + 1,
                     }
                 }
-                None => 0 as usize,
+                None => 0_usize,
             };
             export_format.export_steps.insert(new_index, step);
         }
@@ -1461,7 +1443,7 @@ pub async fn move_export_step(
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
         return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    return Ok(().into());
+    Ok(().into())
 }
 
 /// PUT /api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>
@@ -1490,14 +1472,8 @@ pub async fn update_export_step(
     let slug = sanitize_path(&slug);
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1537,14 +1513,14 @@ pub async fn update_export_step(
             {
                 Some(id) => id,
                 None => {
-                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into())
+                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
                 }
             };
 
             match export_format.export_steps.get_mut(index) {
                 Some(old_step) => *old_step = step,
                 None => {
-                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into())
+                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
                 }
             }
         }
@@ -1583,14 +1559,8 @@ pub async fn delete_export_step(
     let slug = sanitize_path(&slug);
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1611,7 +1581,7 @@ pub async fn delete_export_step(
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
         return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    return Ok(().into());
+    Ok(().into())
 }
 
 #[get("/api/templates/<template_id>/export_formats/<slug>/export_steps")]
@@ -1633,14 +1603,8 @@ pub async fn get_export_steps(
     let slug = sanitize_path(&slug);
 
     let data_storage = data_storage;
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1657,5 +1621,5 @@ pub async fn get_export_steps(
     if let Err(()) = data_storage.update_template_version_id(template_id).await {
         return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
-    return Ok(export_steps.into());
+    Ok(export_steps.into())
 }

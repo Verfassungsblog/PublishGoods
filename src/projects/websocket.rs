@@ -12,6 +12,7 @@ use rocket::futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Error;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use yrs::StateVector;
@@ -74,7 +75,7 @@ impl WebsocketManager {
         let binary_update = project_lock
             .read()
             .unwrap()
-            .get_section(&document_id)
+            .get_section(document_id)
             .map(|x| x.content.clone());
 
         drop(project_lock); // release lock
@@ -104,10 +105,10 @@ impl WebsocketManager {
         let doc_state = DocumentState {
             broadcast_tx: tx,
             save_requester: save_requester.clone(),
-            active_clients: client_id.map(|x| vec![x.clone()]).unwrap_or_default(),
+            active_clients: client_id.map(|x| vec![*x]).unwrap_or_default(),
             doc: ydoc,
         };
-        self.documents.insert(document_id.clone(), doc_state);
+        self.documents.insert(*document_id, doc_state);
         Some(())
     }
 
@@ -123,11 +124,11 @@ impl WebsocketManager {
         match self.get_document(document_id) {
             Some(doc) => Some(doc),
             None => {
-                if let Some(_) = self
+                return if let Some(_) = self
                     .load_document_from_storage(project_id, document_id, client_id)
                     .await
                 {
-                    return self.get_document(document_id);
+                    self.get_document(document_id)
                 } else {
                     // new document
                     let (tx, _) = broadcast::channel(100);
@@ -142,7 +143,7 @@ impl WebsocketManager {
 
                     let mut active_clients = vec![];
                     if let Some(client_id) = client_id {
-                        active_clients.push(client_id.clone());
+                        active_clients.push(*client_id);
                     }
                     let doc_state = DocumentState {
                         broadcast_tx: tx,
@@ -150,10 +151,9 @@ impl WebsocketManager {
                         active_clients,
                         doc: Doc::new(),
                     };
-                    self.documents.insert(document_id.clone(), doc_state);
-                    return self.get_document(document_id);
-                }
-                None
+                    self.documents.insert(*document_id, doc_state);
+                    self.get_document(document_id)
+                };
             }
         }
     }
@@ -187,8 +187,8 @@ impl WebsocketManager {
         document_id: &uuid::Uuid,
         save_requester: Arc<tokio::sync::Notify>,
     ) {
-        let project_id = project_id.clone();
-        let document_id = document_id.clone();
+        let project_id = *project_id;
+        let document_id = *document_id;
         let documents = Arc::clone(&self.documents);
         let project_storage = Arc::clone(&self.project_storage);
         let settings = Arc::clone(&self.settings);
@@ -281,12 +281,16 @@ impl DocumentState {
         let binary_update = self.doc.transact().encode_diff_v1(&StateVector::default());
 
         let project_lock = project_storage
-            .get_project(project_id, &settings)
+            .get_project(project_id, settings)
             .await
             .map_err(|_| ())?;
 
         {
             let mut project_write = project_lock.write().map_err(|_| ())?;
+            project_write.last_interaction = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
             if let Some(section) = project_write.get_section_mut(document_id) {
                 section.content = binary_update;
             } else {
@@ -295,8 +299,9 @@ impl DocumentState {
         }
 
         project_storage
-            .save_project_to_disk(project_id, &settings)
-            .await?;
+            .save_project_to_disk(project_id, settings)
+            .await
+            .map_err(|_| ())?;
 
         Ok(())
     }
@@ -357,10 +362,10 @@ impl From<serde_json::Error> for WebsocketDecodeEncodeError {
     }
 }
 
-impl Into<Vec<u8>> for WebsocketMessage {
-    fn into(self) -> Vec<u8> {
+impl From<WebsocketMessage> for Vec<u8> {
+    fn from(val: WebsocketMessage) -> Self {
         let mut res = Vec::new();
-        match self {
+        match val {
             WebsocketMessage::CONNECT(msg) => {
                 res.push(10);
                 res.extend(serde_json::to_vec(&msg).unwrap());
@@ -405,7 +410,7 @@ impl Into<Vec<u8>> for WebsocketMessage {
 impl TryFrom<Vec<u8>> for WebsocketMessage {
     type Error = WebsocketDecodeEncodeError;
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        let identifier_byte = match value.get(0) {
+        let identifier_byte = match value.first() {
             Some(byte) => byte,
             None => return Err(WebsocketDecodeEncodeError::EmptyMessage),
         };
@@ -615,8 +620,8 @@ pub async fn websocket<'a>(
 
         // Cleanup on disconnect
         //todo: send remove cursor message to all clients
-        if let Some(doc_id) = document_id {
-            if let Some(mut state) = websocket_manager.documents.get_mut(&doc_id) {
+        if let Some(doc_id) = document_id
+            && let Some(mut state) = websocket_manager.documents.get_mut(&doc_id) {
                 state.active_clients.retain(|&id| id != client_id);
                 if state.active_clients.is_empty() {
                     let state_to_save = state.clone();
@@ -640,7 +645,6 @@ pub async fn websocket<'a>(
                     }
                 }
             }
-        }
 
         Ok(())
     }))
@@ -688,7 +692,7 @@ async fn handle_client_msg(
                         });
                     }
                 };
-                if let Some(state) = websocket_manager.get_document_mut(&doc_id) {
+                if let Some(state) = websocket_manager.get_document_mut(doc_id) {
                     let binary_update = state.doc.transact().encode_diff_v1(&statevec);
                     return Ok(vec![WebsocketMessage::DOCUPDATE(binary_update)]);
                 }

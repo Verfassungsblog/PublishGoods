@@ -2,20 +2,20 @@ use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::ProjectStorage;
 use crate::storage::project_storage::current::{
-    get_section_by_path, get_section_by_path_mut, PersonUuidOrString,
+    PersonUuidOrString, get_section_by_path, get_section_by_path_mut,
 };
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
-use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use crate::utils::dedup::dedup_vec;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
+use rocket::State;
 use rocket::form::validate::Contains;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::State;
 use std::collections::HashMap;
 /// Contains API routes to view and modify sections inside a project
 use std::sync::Arc;
@@ -119,31 +119,28 @@ pub async fn get_section(
 
     let project_entry = project_storage.get_project(&project_id, settings).await?;
 
-    let project_read_guard = project_entry.read().unwrap();
+    let section = {
+        let project_read_guard = project_entry.read().unwrap();
 
-    let section = get_section_by_path(&project_read_guard, &path)?;
+        let section = get_section_by_path(&project_read_guard, &path)?;
 
-    let mut section = if expand_subsections {
-        section.clone()
-    } else {
-        section.clone_without_subsections()
+        if expand_subsections {
+            section.clone()
+        } else {
+            section.clone_without_subsections()
+        }
     };
-    drop(project_read_guard);
 
     // Check if all persons in section metadata are still valid
     let old_metadata = section.metadata.clone();
-    let valid_persons: Vec<uuid::Uuid> = {
-        let data_read_guard = data_storage.data.read().unwrap();
-        data_read_guard.persons.keys().cloned().collect()
-    };
 
     let mut metadata = section.metadata.clone();
     metadata.authors.retain_mut(|x| match x {
-        PersonUuidOrString::PersonUuid(id) => valid_persons.contains(id.clone()),
+        PersonUuidOrString::PersonUuid(id) => data_storage.person_exists(id),
         PersonUuidOrString::NameString(_) => true,
     });
     metadata.editors.retain_mut(|x| match x {
-        PersonUuidOrString::PersonUuid(id) => valid_persons.contains(id.clone()),
+        PersonUuidOrString::PersonUuid(id) => data_storage.person_exists(id),
         PersonUuidOrString::NameString(_) => true,
     });
 
@@ -152,82 +149,86 @@ pub async fn get_section(
         let mut project_write_guard = project_entry.write().unwrap();
         let mut_section = get_section_by_path_mut(&mut project_write_guard, &path)?;
         mut_section.metadata = metadata.clone();
-        section.metadata = metadata;
     }
 
-    let authors_expanded = if expand_authors {
-        let mut authors_detailed: Vec<PersonOrString> = Vec::new();
-        for person_or_string in section.metadata.authors.iter_mut() {
+    let mut authors_detailed: Vec<PersonOrString> = Vec::new();
+    if expand_authors {
+        for person_or_string in metadata.authors.iter() {
             match person_or_string {
-                PersonUuidOrString::PersonUuid(id) => match data_storage.get_person(&id) {
-                    Some(person) => authors_detailed
-                        .push(PersonOrString::Person(person.read().unwrap().clone())),
-                    None => {
-                        error!(
-                            "Couldn't extend author details, author_id {} not found.",
-                            id
-                        );
-                        return Err(ApiErrorType::ResourceNotFound(format!(
-                            "author with id {}",
-                            id
-                        ))
-                        .into());
+                PersonUuidOrString::PersonUuid(id) => {
+                    match data_storage.get_person_cloned(id).await {
+                        Ok(person) => authors_detailed.push(PersonOrString::Person(person)),
+                        Err(_) => {
+                            error!(
+                                "Couldn't extend author details, author_id {} not found.",
+                                id
+                            );
+                            return Err(ApiErrorType::ResourceNotFound(format!(
+                                "author with id {}",
+                                id
+                            ))
+                            .into());
+                        }
                     }
-                },
+                }
                 PersonUuidOrString::NameString(namestr) => {
                     authors_detailed.push(PersonOrString::NameString(namestr.clone()))
                 }
             }
         }
-
+    }
+    let authors_expanded = if expand_authors {
         Some(authors_detailed)
     } else {
         None
     };
-    let editors_expanded = if expand_editors {
-        let mut editors_detailed: Vec<PersonOrString> = Vec::new();
-        for person_or_string in section.metadata.editors.iter_mut() {
+
+    let mut editors_detailed: Vec<PersonOrString> = Vec::new();
+    if expand_editors {
+        for person_or_string in metadata.editors.iter() {
             match person_or_string {
-                PersonUuidOrString::PersonUuid(id) => match data_storage.get_person(&id) {
-                    Some(person) => editors_detailed
-                        .push(PersonOrString::Person(person.read().unwrap().clone())),
-                    None => {
-                        error!(
-                            "Couldn't extend author details, author_id {} not found.",
-                            id
-                        );
-                        return Err(ApiErrorType::ResourceNotFound(format!(
-                            "editor with id {}",
-                            id
-                        ))
-                        .into());
+                PersonUuidOrString::PersonUuid(id) => {
+                    match data_storage.get_person_cloned(id).await {
+                        Ok(person) => editors_detailed.push(PersonOrString::Person(person)),
+                        Err(_) => {
+                            error!(
+                                "Couldn't extend author details, author_id {} not found.",
+                                id
+                            );
+                            return Err(ApiErrorType::ResourceNotFound(format!(
+                                "editor with id {}",
+                                id
+                            ))
+                            .into());
+                        }
                     }
-                },
+                }
                 PersonUuidOrString::NameString(namestr) => {
                     editors_detailed.push(PersonOrString::NameString(namestr.clone()))
                 }
             }
         }
-
+    }
+    let editors_expanded = if expand_editors {
         Some(editors_detailed)
     } else {
         None
     };
 
     let metadata_res = APISectionMetadataResult {
-        title: section.metadata.title,
-        subtitle: section.metadata.subtitle,
-        authors: section.metadata.authors,
+        title: metadata.title,
+        subtitle: metadata.subtitle,
+        authors: metadata.authors,
         authors_expanded,
-        editors: section.metadata.editors,
+        editors: metadata.editors,
         editors_expanded,
-        web_url: section.metadata.web_url,
-        identifiers: section.metadata.identifiers,
-        published: section.metadata.published,
-        last_changed: section.metadata.last_changed,
-        lang: section.metadata.lang,
-        toc_title_subtitle_override: section.metadata.toc_title_subtitle_override,
-        custom_fields: section.metadata.custom_fields,
+        web_url: metadata.web_url,
+        identifiers: metadata.identifiers,
+        published: metadata.published,
+        last_changed: metadata.last_changed,
+        lang: metadata.lang,
+        toc_title_subtitle_override: metadata.toc_title_subtitle_override,
+        custom_fields: metadata.custom_fields,
     };
     let section_id = match section.id {
         Some(id) => id,
@@ -276,7 +277,7 @@ pub async fn update_section(
         path.push(uuid::Uuid::parse_str(part)?);
     }
 
-    if path.len() == 0 {
+    if path.is_empty() {
         println!("Couldn't parse content path: path is empty");
         return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
     }
@@ -293,23 +294,19 @@ pub async fn update_section(
     // Check if new section data is valid
     // Check authors
     for author in new_section_data.metadata.authors.iter() {
-        if let PersonUuidOrString::PersonUuid(id) = author {
-            if !data_storage.person_exists(id) {
-                return Err(
-                    ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into(),
-                );
-            }
+        if let PersonUuidOrString::PersonUuid(id) = author
+            && !data_storage.person_exists(id)
+        {
+            return Err(ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into());
         }
     }
 
     // Check editors
     for editor in new_section_data.metadata.editors.iter() {
-        if let PersonUuidOrString::PersonUuid(id) = editor {
-            if !data_storage.person_exists(id) {
-                return Err(
-                    ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into(),
-                );
-            }
+        if let PersonUuidOrString::PersonUuid(id) = editor
+            && !data_storage.person_exists(id)
+        {
+            return Err(ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into());
         }
     }
 

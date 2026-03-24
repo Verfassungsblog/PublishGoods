@@ -1,7 +1,7 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::project_storage::ProjectStorage;
-use crate::storage::ProjectListEntry;
+use crate::storage::data_storage::DataStorage;
+use crate::storage::data_storage::current::ProjectListEntry;
 use rocket::State;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
@@ -9,11 +9,20 @@ use std::sync::Arc;
 #[get("/")]
 pub async fn list_projects(
     _session: Session,
-    project_storage: &State<Arc<ProjectStorage>>,
+    data_storage: &State<Arc<DataStorage>>,
     settings: &State<Settings>,
 ) -> Template {
-    // Get all projects
-    let projects = project_storage.get_projects_list().await;
+    let mut projects = data_storage.data.projects.read().unwrap().entries.clone();
+    projects.sort_by(|b, a| match a {
+        ProjectListEntry::Folder(_) => std::cmp::Ordering::Greater,
+        ProjectListEntry::Project(project) => match b {
+            ProjectListEntry::Folder(_) => std::cmp::Ordering::Equal,
+            ProjectListEntry::Project(project_b) => {
+                project.last_interaction.cmp(&project_b.last_interaction)
+            }
+        },
+    });
+
     #[derive(serde::Serialize)]
     struct DashboardData<'a> {
         projects: Vec<ProjectListEntry>,

@@ -1,37 +1,37 @@
 use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::current::PersonUuidOrString;
-use crate::storage::project_storage::sections::content::current::{
-    decode_yjs_content, BlockData, NewContentBlock,
-};
-use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::ProjectData;
+use crate::storage::project_storage::current::PersonUuidOrString;
+use crate::storage::project_storage::sections::Section;
+use crate::storage::project_storage::sections::content::current::{
+    BlockData, NewContentBlock, decode_yjs_content,
+};
 use crate::utils::csl::CslData;
 use async_recursion::async_recursion;
-use base64::engine::general_purpose;
 use base64::Engine;
-use hayagriva::citationberg::LocaleCode;
+use base64::engine::general_purpose;
 use hayagriva::BibliographyDriver;
 use hayagriva::BibliographyRequest;
 use hayagriva::CitationItem;
 use hayagriva::CitationRequest;
+use hayagriva::citationberg::LocaleCode;
 use html5ever::tendril::{StrTendril, TendrilSink};
-use html5ever::{parse_document, parse_fragment, serialize, ParseOpts, QualName};
+use html5ever::{ParseOpts, QualName, parse_document, parse_fragment, serialize};
 use hyphenation::{Hyphenator, Load, Standard};
 use image::{DynamicImage, ImageOutputFormat};
 use language::Language;
 use markup5ever::interface::{NodeOrText, TreeSink};
-use markup5ever::{local_name, ns, Attribute};
+use markup5ever::{Attribute, local_name, ns};
 use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use vb_exchange::RenderingError;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::projects::{
     PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedLicense, PreparedMetadata,
     PreparedSection, PreparedSectionMetadata,
 };
-use vb_exchange::RenderingError;
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
 ///
@@ -65,6 +65,7 @@ pub async fn prepare_project(
     sections_to_include: Option<Vec<uuid::Uuid>>,
     project_id: &uuid::Uuid,
 ) -> Result<PreparedProject, RenderingError> {
+    let data_storage = Arc::clone(&data_storage);
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata {
@@ -81,12 +82,12 @@ pub async fn prepare_project(
     for author in metadata.authors.unwrap_or_default() {
         match author {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person_cloned(&id) {
-                    Some(person) => person,
-                    None => {
+                let person = match data_storage.get_person_cloned(&id).await {
+                    Ok(person) => person,
+                    Err(e) => {
                         eprintln!(
-                            "Author with id {} not found while rendering section for export!",
-                            id
+                            "Author with id {} not found while rendering section for export! {:?}",
+                            id, e
                         );
                         continue;
                     }
@@ -103,12 +104,12 @@ pub async fn prepare_project(
     for editor in metadata.editors.unwrap_or_default() {
         match editor {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person_cloned(&id) {
-                    Some(person) => person,
-                    None => {
+                let person = match data_storage.get_person_cloned(&id).await {
+                    Ok(person) => person,
+                    Err(e) => {
                         eprintln!(
-                            "Editor with id {} not found while rendering section for export!",
-                            id
+                            "Editor with id {} not found while rendering section for export! {:?}",
+                            id, e
                         );
                         continue;
                     }
@@ -121,11 +122,7 @@ pub async fn prepare_project(
         }
     }
 
-    let license = if let Some(license) = metadata.license {
-        Some(PreparedLicense::from(license))
-    } else {
-        None
-    };
+    let license = metadata.license.map(PreparedLicense::from);
 
     let mut data = vec![];
     for section in project_data.sections {
@@ -169,10 +166,7 @@ pub async fn prepare_project(
     authors.sort();
     editors.sort();
 
-    let published = match metadata.published {
-        Some(date) => Some(date.into()),
-        None => None,
-    };
+    let published = metadata.published.map(|date| date.into());
 
     let prepared_metadata = PreparedMetadata {
         title: metadata.title,
@@ -347,20 +341,17 @@ pub async fn render_section(
     project_id: &uuid::Uuid,
     add_soft_hyphens: bool,
 ) -> PreparedSection {
-    let published = match section.metadata.published {
-        Some(date) => Some(date.into()),
-        None => None,
-    };
+    let published = section.metadata.published.map(|date| date.into());
 
     let mut authors = vec![];
     for author in section.metadata.authors {
         let person = match author {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id) {
-                Some(person) => PersonOrString::Person(person),
-                None => {
+            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id).await {
+                Ok(person) => PersonOrString::Person(person),
+                Err(e) => {
                     eprintln!(
-                        "Author with id {} not found while rendering section for export!",
-                        id
+                        "Author with id {} not found while rendering section for export! {:?}",
+                        id, e
                     );
                     continue;
                 }
@@ -374,12 +365,12 @@ pub async fn render_section(
     let mut editors = vec![];
     for editor in section.metadata.editors {
         let person = match editor {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id) {
-                Some(person) => PersonOrString::Person(person),
-                None => {
+            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id).await {
+                Ok(person) => PersonOrString::Person(person),
+                Err(e) => {
                     eprintln!(
-                        "Editor with id {} not found while rendering section for export!",
-                        id
+                        "Editor with id {} not found while rendering section for export! {:?}",
+                        id, e
                     );
                     continue;
                 }
@@ -439,7 +430,7 @@ pub async fn render_section(
                 content_block,
                 &mut endnote_storage,
                 &dict,
-                &citation_bib,
+                citation_bib,
                 project_id,
                 add_soft_hyphens,
             )
@@ -453,7 +444,7 @@ pub async fn render_section(
             render_section(
                 sub_section,
                 data_storage.clone(),
-                &citation_bib,
+                citation_bib,
                 project_id,
                 add_soft_hyphens,
             )
@@ -608,10 +599,7 @@ fn get_hyphenation_dict(language: &Language) -> Option<Standard> {
         Language::CyGb => Some(hyphenation::Language::Welsh),
         _ => None,
     };
-    match lang {
-        Some(lang) => Some(Standard::from_embedded(lang).unwrap()),
-        None => None,
-    }
+    lang.map(|lang| Standard::from_embedded(lang).unwrap())
 }
 
 /// Hyphenates each word in the provided text using the given hyphenation dictionary,
@@ -646,7 +634,7 @@ pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String {
         let mut word_res = String::new();
         let mut iter = hyphenated.into_iter().segments().peekable();
         while let Some(segment) = iter.next() {
-            word_res.push_str(&segment);
+            word_res.push_str(segment);
             if iter.peek().is_some() {
                 word_res.push('\u{00ad}');
             }
@@ -695,7 +683,7 @@ pub async fn render_content_block(
     add_soft_hyphens: bool,
 ) -> PreparedContentBlock {
     let css_classes_raw = block.css_classes.join(" ");
-    let css_classes = if block.css_classes.len() > 0 {
+    let css_classes = if !block.css_classes.is_empty() {
         format!(" class='{}'", block.css_classes.join(" "))
     } else {
         String::new()
@@ -761,7 +749,28 @@ pub async fn render_content_block(
             caption,
             alignment,
         } => {
-            format!("<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>", block.id, alignment, css_classes_raw, render_text(text, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote), render_text(caption, endnote_storage, dict, citation_bib, add_soft_hyphens, CitationType::Endnote))
+            format!(
+                "<blockquote id='{}' class=\"align-{} {}\"><p>{}</p><footer>{}</footer></blockquote>",
+                block.id,
+                alignment,
+                css_classes_raw,
+                render_text(
+                    text,
+                    endnote_storage,
+                    dict,
+                    citation_bib,
+                    add_soft_hyphens,
+                    CitationType::Endnote
+                ),
+                render_text(
+                    caption,
+                    endnote_storage,
+                    dict,
+                    citation_bib,
+                    add_soft_hyphens,
+                    CitationType::Endnote
+                )
+            )
         }
         BlockData::Image {
             file,
@@ -880,7 +889,7 @@ pub fn render_text(
             &dom.document,
             &mut mutations,
             endnote_storage,
-            &citation_bib,
+            citation_bib,
             citations_as,
         );
 
@@ -955,10 +964,9 @@ pub fn render_text(
                     )
                     .from_utf8()
                     .read_from(&mut footnote.note_content.as_bytes())
+                        && let Some(reparent_handle) = fragment.document.children.borrow().first()
                     {
-                        if let Some(reparent_handle) = fragment.document.children.borrow().get(0) {
-                            fragment.reparent_children(&reparent_handle, &span_node);
-                        }
+                        fragment.reparent_children(reparent_handle, &span_node);
                     }
 
                     dom.remove_from_parent(&footnote.node)
@@ -995,11 +1003,11 @@ pub fn render_text(
                         vec![
                             Attribute {
                                 name: QualName::new(None, ns!(), local_name!("class")),
-                                value: StrTendril::from(format!("{}", custom_style.classes)),
+                                value: StrTendril::from(custom_style.classes.to_string()),
                             },
                             Attribute {
                                 name: QualName::new(None, ns!(), local_name!("style")),
-                                value: StrTendril::from(format!("{}", custom_style.inline_style)),
+                                value: StrTendril::from(custom_style.inline_style.to_string()),
                             },
                         ],
                         Default::default(),
@@ -1185,42 +1193,42 @@ fn find_replacements(
 }
 
 fn build_citation(prefix: String, citation: String, suffix: String) -> String {
-    if prefix != "" || suffix != "" {
+    if !prefix.is_empty() || !suffix.is_empty() {
         let mut citation_chars: Vec<char> = citation.chars().collect();
         let mut brackets_flag: Option<bool> = None;
         let mut dot_flag: Option<bool> = None;
         let mut prefix_option: Option<String> = None;
         let mut suffix_option: Option<String> = None;
 
-        if prefix != "" {
+        if !prefix.is_empty() {
             prefix_option = Some(prefix);
         }
-        if suffix != "" {
+        if !suffix.is_empty() {
             suffix_option = Some(suffix);
         }
 
-        if let (Some(first), Some(last)) = (citation_chars.first(), citation_chars.last()) {
-            if *first == '(' && *last == ')' {
-                brackets_flag = Some(true);
-                citation_chars.remove(0);
-                citation_chars.pop();
-            }
+        if let (Some(first), Some(last)) = (citation_chars.first(), citation_chars.last())
+            && *first == '('
+            && *last == ')'
+        {
+            brackets_flag = Some(true);
+            citation_chars.remove(0);
+            citation_chars.pop();
         }
 
-        if let Some(last) = citation_chars.last() {
-            if *last == '.' {
-                dot_flag = Some(true);
-                citation_chars.pop();
-            }
+        if let Some(last) = citation_chars.last()
+            && *last == '.'
+        {
+            dot_flag = Some(true);
+            citation_chars.pop();
         }
 
-        if let Some(suffix) = &mut suffix_option {
-            if let Some(first) = suffix.chars().next() {
-                if first.is_alphanumeric() {
-                    suffix.insert_str(0, "&nbsp;");
-                    suffix_option = Some(suffix.to_string());
-                }
-            }
+        if let Some(suffix) = &mut suffix_option
+            && let Some(first) = suffix.chars().next()
+            && first.is_alphanumeric()
+        {
+            suffix.insert_str(0, "&nbsp;");
+            suffix_option = Some(suffix.to_string());
         }
 
         if let Some(prefix) = &mut prefix_option {
@@ -1250,9 +1258,7 @@ fn build_citation(prefix: String, citation: String, suffix: String) -> String {
             final_citation_vec.push(")".to_string());
         }
 
-        let final_citation = final_citation_vec.concat();
-
-        final_citation
+        final_citation_vec.concat()
     } else {
         citation
     }

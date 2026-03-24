@@ -1,12 +1,12 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::project_storage::current::{BibEntryOrFolder, Bibliography};
 use crate::storage::project_storage::ProjectStorage;
+use crate::storage::project_storage::current::{BibEntryOrFolder, Bibliography};
 use crate::utils::api_helpers::{APIResult, ApiError, ApiErrorType};
 use hayagriva::types::EntryType;
+use rocket::State;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::State;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub async fn get_bibliography_tree(
     let project_lock = project_storage
         .get_project(&project_uuid, settings)
         .await
-        .map_err(|e| ApiError::from(e))?;
+        .map_err(ApiError::from)?;
     let project = project_lock
         .read()
         .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
@@ -61,9 +61,9 @@ pub async fn get_bibliography_tree(
     if let Some(root_ids) = by_parent.get(&None) {
         // Sort: folders first, then entries; both alphabetically by name (case-insensitive)
         let mut root_ids_sorted = root_ids.clone();
-        sort_ids_by_folder_then_name(&mut root_ids_sorted, &bibliography);
+        sort_ids_by_folder_then_name(&mut root_ids_sorted, bibliography);
         for id in root_ids_sorted {
-            tree.push(build_tree_node(id, &bibliography, &by_parent));
+            tree.push(build_tree_node(id, bibliography, &by_parent));
         }
     }
 
@@ -151,7 +151,7 @@ pub async fn get_bibliography_entry(
     let project_lock = project_storage
         .get_project(&project_uuid, settings)
         .await
-        .map_err(|e| ApiError::from(e))?;
+        .map_err(ApiError::from)?;
     let project = project_lock
         .read()
         .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
@@ -191,7 +191,7 @@ pub async fn search_bibliography_entries(
     let project_lock = project_storage
         .get_project(&project_uuid, settings)
         .await
-        .map_err(|e| ApiError::from(e))?;
+        .map_err(ApiError::from)?;
     let project = project_lock
         .read()
         .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
@@ -267,7 +267,7 @@ pub async fn post_bibliography_entry(
     let project_lock = project_storage
         .get_project(&project_uuid, settings)
         .await
-        .map_err(|e| ApiError::from(e))?;
+        .map_err(ApiError::from)?;
 
     let id = {
         let mut project = project_lock
@@ -313,7 +313,7 @@ pub async fn patch_bibliography_entry(
     let project_lock = project_storage
         .get_project(&project_uuid, settings)
         .await
-        .map_err(|e| ApiError::from(e))?;
+        .map_err(ApiError::from)?;
 
     {
         let mut project = project_lock
@@ -356,7 +356,7 @@ pub async fn delete_bibliography_entry(
     let project_lock = project_storage
         .get_project(&project_uuid, settings)
         .await
-        .map_err(|e| ApiError::from(e))?;
+        .map_err(ApiError::from)?;
 
     {
         let mut project = project_lock

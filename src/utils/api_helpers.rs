@@ -1,10 +1,10 @@
 use crate::projects::api::DeprecatedApiError;
 use crate::settings::Settings;
+use crate::storage::User;
 use crate::storage::data_storage::current::DataStorageError;
 use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
 use rocket::http::{ContentType, Status};
 use rocket::response::Responder;
-use rocket::serde::json::Json;
 use rocket::{Request, Response, State};
 use serde::Serialize;
 use std::io::{Cursor, Error, ErrorKind};
@@ -39,7 +39,7 @@ pub async fn get_project(
     settings: &State<Settings>,
     project_storage: Arc<ProjectStorage>,
 ) -> Result<Arc<RwLock<ProjectData>>, ApiError> {
-    match project_storage.get_project(&project_id, settings).await {
+    match project_storage.get_project(project_id, settings).await {
         Ok(project_entry) => Ok(project_entry.clone()),
         Err(e) => {
             eprintln!("Couldn't get project with id {}: {:?}", project_id, e);
@@ -178,7 +178,30 @@ impl From<ProjectStorageError> for ApiError {
 impl From<DataStorageError> for ApiError {
     fn from(value: DataStorageError) -> Self {
         match value {
-            DataStorageError::NotFound(detail) => ApiErrorType::ResourceNotFound(detail).into(),
+            DataStorageError::NotFound(detail) => {
+                debug!("DataStorageError NotFound: {:?}", detail);
+                ApiErrorType::ResourceNotFound(detail).into()
+            }
+            DataStorageError::TokioJoinError(err) => {
+                error!("DataStorageError TokioJoinError: {:?}", err);
+                ApiErrorType::InternalServerError.into()
+            }
+            DataStorageError::IOError(err) => {
+                error!("DataStorageError IOError: {:?}", err);
+                ApiErrorType::InternalServerError.into()
+            }
+            DataStorageError::CouldntAcquireLock => {
+                error!("DataStorageError CouldntAcquireLock");
+                ApiErrorType::InternalServerError.into()
+            }
+            DataStorageError::BincodeDecodeError(err) => {
+                error!("DataStorageError BincodeDecodeError: {:?}", err);
+                ApiErrorType::InternalServerError.into()
+            }
+            DataStorageError::BincodeEncodeError(err) => {
+                error!("DataStorageError BincodeEncodeError: {:?}", err);
+                ApiErrorType::InternalServerError.into()
+            }
         }
     }
 }
