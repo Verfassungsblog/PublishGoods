@@ -21,6 +21,8 @@ pub async fn download_rendering(
     settings: &State<Settings>,
     _session: Session,
 ) -> Result<NamedFile, Status> {
+    // Validate that id is a valid UUID to prevent path traversal
+    let id = uuid::Uuid::parse_str(&id).map_err(|_| Status::NotFound)?;
     let path = format!("{}/temp/{}/output.pdf", settings.data_path, id);
     let file = NamedFile::open(path).await.map_err(|_| Status::NotFound)?;
     Ok(file)
