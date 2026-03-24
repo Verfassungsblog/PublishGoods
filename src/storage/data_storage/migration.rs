@@ -1,7 +1,8 @@
-use crate::storage::data_storage::current::InnerDataStorageV3;
+use crate::storage::data_storage::current::InnerDataStorageV4;
 use crate::storage::data_storage::{DataStorageLoadError, InnerDataStorage, CURRENT_VERSION};
 use crate::storage::{ProjectTemplateV1, ProjectTemplateV2, User};
 use bincode::{Decode, Encode};
+use dashmap::DashMap;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -64,10 +65,22 @@ pub fn load_inner_data_storage(
                 &mut file,
                 bincode::config::standard(),
             )?)
-        }
+        };
+        version = 4;
+    }
+    let mut v4_data: Option<InnerDataStorageV4> = None;
+    if version == 4 {
+        v4_data = if let Some(v3_data) = v3_data {
+            Some(v3_data.into())
+        } else {
+            Some(bincode::decode_from_std_read::<InnerDataStorageV4, _, _>(
+                &mut file,
+                bincode::config::standard(),
+            )?)
+        };
     }
 
-    match v3_data {
+    match v4_data {
         None => Err(DataStorageLoadError::InvalidVersionNumber),
         Some(data) => Ok(data),
     }
@@ -93,6 +106,28 @@ pub struct InnerDataStorageV2 {
     pub persons: HashMap<uuid::Uuid, Arc<RwLock<PersonV1>>>,
     #[bincode(with_serde)]
     pub templates: HashMap<uuid::Uuid, Arc<RwLock<ProjectTemplateV2>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct InnerDataStorageV3 {
+    /// HashMap with users, id as HashMap keys
+    #[bincode(with_serde)]
+    pub login_data: HashMap<uuid::Uuid, Arc<RwLock<User>>>,
+    #[bincode(with_serde)]
+    pub persons: HashMap<uuid::Uuid, Arc<RwLock<PersonV2>>>,
+    #[bincode(with_serde)]
+    pub templates: HashMap<uuid::Uuid, Arc<RwLock<ProjectTemplateV2>>>,
+}
+
+impl From<InnerDataStorageV3> for InnerDataStorageV4 {
+    fn from(value: InnerDataStorageV3) -> Self {
+        InnerDataStorageV4 {
+            login_data: DashMap::from_iter(value.login_data.into_iter()),
+            persons: DashMap::from_iter(value.persons.into_iter()),
+            templates: DashMap::from_iter(value.templates.into_iter()),
+            projects: Default::default(),
+        }
+    }
 }
 
 impl From<InnerDataStorageV2> for InnerDataStorageV3 {

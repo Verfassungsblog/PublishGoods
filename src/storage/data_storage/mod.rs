@@ -1,18 +1,18 @@
 use bincode::error::DecodeError;
 use std::sync::atomic::AtomicBool;
-use std::sync::RwLock;
+use std::sync::Arc;
 
 pub mod current;
 pub mod migration;
 
-pub type InnerDataStorage = current::InnerDataStorageV3;
-static CURRENT_VERSION: u64 = 3;
+pub type InnerDataStorage = current::InnerDataStorageV4;
+static CURRENT_VERSION: u64 = 4;
 
 /// Storage for small data like users, passwords and login attempts
 ///
 /// This data is stored in memory permanently and doesn't get unloaded
 pub struct DataStorage {
-    pub data: RwLock<InnerDataStorage>,
+    pub data: Arc<InnerDataStorage>,
     file_locked: AtomicBool,
 }
 

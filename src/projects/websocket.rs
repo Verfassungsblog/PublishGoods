@@ -277,7 +277,8 @@ impl DocumentState {
 
         project_storage
             .save_project_to_disk(project_id, &settings)
-            .await?;
+            .await
+            .map_err(|_| ())?;
 
         Ok(())
     }

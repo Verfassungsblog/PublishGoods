@@ -115,12 +115,13 @@ async fn rocket() -> _ {
 
     info!("Loading data storage...");
     let data_storage = Arc::new(DataStorage::load_from_disk(&settings).await.unwrap());
-    info!("Loading project storage...");
-    let project_storage = Arc::new(ProjectStorage::new());
-    project_storage
-        .load_from_directory(&settings)
+    info!("Scanning project directory for removed/added projects");
+    data_storage
+        .scan_for_missing_or_deleted_projects(&settings)
         .await
         .unwrap();
+    info!("Loading project storage...");
+    let project_storage = Arc::new(ProjectStorage::new());
 
     info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings));

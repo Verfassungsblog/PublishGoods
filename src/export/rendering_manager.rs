@@ -171,12 +171,10 @@ impl RenderingManager {
         let template_version_id = match rendering_manager
             .data_storage
             .data
-            .read()
-            .unwrap()
             .templates
             .get(&template_id)
         {
-            Some(template) => template.read().unwrap().version.unwrap(),
+            Some(template) => template.read().unwrap().version.unwrap().clone(),
             None => return Err(RenderingError::TemplateNotFound),
         };
 
@@ -385,15 +383,13 @@ impl RenderingManager {
                         let export_formats: HashMap<String, ExportFormat> = match rendering_manager
                             .data_storage
                             .data
-                            .read()
-                            .unwrap()
                             .templates
                             .get(&req.template_id)
                         {
                             None => {
                                 error!(
                                     "Couldn't find template {} requested from rendering server.",
-                                    req.template_id
+                                    req.template_id.clone()
                                 );
                                 return Err(RenderingError::TemplateNotFound);
                             }

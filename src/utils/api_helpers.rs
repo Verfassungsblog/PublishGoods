@@ -177,8 +177,14 @@ impl From<ProjectStorageError> for ApiError {
 /// Convert data storage errors to the API error response format to enable usage of ? operator
 impl From<DataStorageError> for ApiError {
     fn from(value: DataStorageError) -> Self {
+        error!("DataStorageError: {:?}", value);
         match value {
             DataStorageError::NotFound(detail) => ApiErrorType::ResourceNotFound(detail).into(),
+            DataStorageError::TokioJoinError(_) => ApiErrorType::InternalServerError.into(),
+            DataStorageError::IOError(_) => ApiErrorType::InternalServerError.into(),
+            DataStorageError::CouldntAcquireLock => ApiErrorType::InternalServerError.into(),
+            DataStorageError::BincodeDecodeError(_) => ApiErrorType::InternalServerError.into(),
+            DataStorageError::BincodeEncodeError(_) => ApiErrorType::InternalServerError.into(),
         }
     }
 }

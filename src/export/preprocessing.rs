@@ -65,6 +65,7 @@ pub async fn prepare_project(
     sections_to_include: Option<Vec<uuid::Uuid>>,
     project_id: &uuid::Uuid,
 ) -> Result<PreparedProject, RenderingError> {
+    let data_storage = Arc::clone(&data_storage);
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata {
@@ -81,12 +82,12 @@ pub async fn prepare_project(
     for author in metadata.authors.unwrap_or_default() {
         match author {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person_cloned(&id) {
-                    Some(person) => person,
-                    None => {
+                let person = match data_storage.get_person_cloned(&id).await {
+                    Ok(person) => person,
+                    Err(e) => {
                         eprintln!(
-                            "Author with id {} not found while rendering section for export!",
-                            id
+                            "Author with id {} not found while rendering section for export! {:?}",
+                            id, e
                         );
                         continue;
                     }
@@ -103,12 +104,12 @@ pub async fn prepare_project(
     for editor in metadata.editors.unwrap_or_default() {
         match editor {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person_cloned(&id) {
-                    Some(person) => person,
-                    None => {
+                let person = match data_storage.get_person_cloned(&id).await {
+                    Ok(person) => person,
+                    Err(e) => {
                         eprintln!(
-                            "Editor with id {} not found while rendering section for export!",
-                            id
+                            "Editor with id {} not found while rendering section for export! {:?}",
+                            id, e
                         );
                         continue;
                     }
@@ -355,12 +356,12 @@ pub async fn render_section(
     let mut authors = vec![];
     for author in section.metadata.authors {
         let person = match author {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id) {
-                Some(person) => PersonOrString::Person(person),
-                None => {
+            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id).await {
+                Ok(person) => PersonOrString::Person(person),
+                Err(e) => {
                     eprintln!(
-                        "Author with id {} not found while rendering section for export!",
-                        id
+                        "Author with id {} not found while rendering section for export! {:?}",
+                        id, e
                     );
                     continue;
                 }
@@ -374,12 +375,12 @@ pub async fn render_section(
     let mut editors = vec![];
     for editor in section.metadata.editors {
         let person = match editor {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id) {
-                Some(person) => PersonOrString::Person(person),
-                None => {
+            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id).await {
+                Ok(person) => PersonOrString::Person(person),
+                Err(e) => {
                     eprintln!(
-                        "Editor with id {} not found while rendering section for export!",
-                        id
+                        "Editor with id {} not found while rendering section for export! {:?}",
+                        id, e
                     );
                     continue;
                 }

@@ -16,11 +16,9 @@ pub async fn list_templates(
     let data_storage = data_storage;
     let templates: Vec<ProjectTemplateV2> = data_storage
         .data
-        .read()
-        .unwrap()
         .templates
         .iter()
-        .map(|(_, template)| template.clone().read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
     Ok(rocket_dyn_templates::Template::render(
         "templates",
@@ -40,8 +38,8 @@ pub async fn get_template(
         Err(_) => return Err(Status::BadRequest),
     };
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage.data.read().unwrap().templates.get(&id) {
-        Some(template) => template.clone().read().unwrap().clone(),
+    let template = match data_storage.data.templates.get(&id) {
+        Some(template) => template.read().unwrap().clone(),
         None => return Err(Status::NotFound),
     };
     Ok(rocket_dyn_templates::Template::render(

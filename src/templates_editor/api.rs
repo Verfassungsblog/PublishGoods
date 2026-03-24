@@ -34,11 +34,9 @@ pub async fn get_template(
         }
     };
 
-    let data_storage = data_storage;
-
     // Get template from data storage
-    let lock = data_storage.data.read().unwrap();
-    let template = lock.templates.get(&template_id);
+    let data_storage = data_storage.clone();
+    let template = data_storage.data.templates.get(&template_id);
     template.map_or_else(
         || Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
         |template| Ok(template.clone().read().unwrap().clone().into()),
@@ -72,8 +70,8 @@ pub async fn update_template(
     let data_storage = data_storage;
 
     // Check if template exists, otherwise return 404
-    let lock = data_storage.data.read().unwrap();
-    if !lock.templates.contains_key(&template_id) {
+    let data_storage = data_storage.clone();
+    if !data_storage.data.templates.contains_key(&template_id) {
         return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
     }
 
@@ -86,7 +84,13 @@ pub async fn update_template(
         .into());
     }
 
-    *lock.templates.get(&template_id).unwrap().write().unwrap() = template;
+    *data_storage
+        .data
+        .templates
+        .get_mut(&template_id)
+        .unwrap()
+        .write()
+        .unwrap() = template;
 
     Ok(().into())
 }
@@ -679,8 +683,7 @@ pub async fn add_export_format(
 
     let template_exists;
     {
-        let lock = data_storage.data.read().unwrap();
-        template_exists = match lock.templates.get(&template_id) {
+        template_exists = match data_storage.data.templates.get(&template_id) {
             Some(template) => {
                 template
                     .write()
@@ -743,15 +746,9 @@ pub async fn update_export_format_metadata(
     };
 
     // Get template
-    let template_entry = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
+    let template_entry = match data_storage.data.templates.get(&template_id) {
         None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
-        Some(template) => Arc::clone(template),
+        Some(template) => Arc::clone(template.value()),
     };
 
     // Move files on disk if slug changed
@@ -840,11 +837,10 @@ pub async fn delete_export_format(
     let slug = sanitize_path(&slug);
 
     let template = {
-        let templates_guard = data_storage.data.read().unwrap();
-        let templates = &templates_guard.templates;
+        let templates = &data_storage.data.templates;
         // This scope ensures that we drop the lock as soon as we finish using it
         match templates.get(&template_id) {
-            Some(template) => template.clone(),
+            Some(template) => Arc::clone(template.value()),
             None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
         }
     };
@@ -1332,14 +1328,8 @@ pub async fn create_export_step(
     let slug = sanitize_path(&slug);
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1404,14 +1394,8 @@ pub async fn move_export_step(
     let move_after = movedata.move_after;
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1490,14 +1474,8 @@ pub async fn update_export_step(
     let slug = sanitize_path(&slug);
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1583,14 +1561,8 @@ pub async fn delete_export_step(
     let slug = sanitize_path(&slug);
 
     let data_storage = Arc::clone(data_storage);
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
@@ -1633,14 +1605,8 @@ pub async fn get_export_steps(
     let slug = sanitize_path(&slug);
 
     let data_storage = data_storage;
-    let template = match data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .get(&template_id)
-    {
-        Some(template) => template.clone(),
+    let template = match data_storage.data.templates.get(&template_id) {
+        Some(template) => Arc::clone(template.value()),
         None => {
             eprintln!("Couldn't find template");
             return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());

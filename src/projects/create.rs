@@ -1,9 +1,11 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::data_storage::current::{ProjectListEntry, ProjectListProject};
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::Bibliography;
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::storage::ProjectTemplateV2;
+use chrono::Utc;
 use rocket::http::Status;
 use rocket::response::Redirect;
 use rocket::State;
@@ -20,11 +22,9 @@ pub async fn show_create_project(
     // Get list of all templates
     let templates: Vec<ProjectTemplateV2> = data_storage
         .data
-        .read()
-        .unwrap()
         .templates
         .iter()
-        .map(|(_id, entry)| entry.clone().read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
 
     let mut data = BTreeMap::new();
@@ -64,13 +64,7 @@ pub async fn process_create_project(
     };
 
     //Check if template exists
-    if !data_storage
-        .data
-        .read()
-        .unwrap()
-        .templates
-        .contains_key(&template_id)
-    {
+    if !data_storage.data.templates.contains_key(&template_id) {
         return Err(Status::BadRequest);
     }
 
@@ -85,11 +79,23 @@ pub async fn process_create_project(
         bibliography: Bibliography::new(),
     };
 
-    match project_storage.insert_project(project_data, settings).await {
-        Ok(id) => {
-            println!("Successfully created new project with id {}", id);
-            Ok(Redirect::to("/"))
-        }
-        Err(_) => Err(Status::InternalServerError),
+    let project_id = uuid::Uuid::new_v4();
+    if let Err(e) = project_storage
+        .insert_project(project_id, project_data.clone(), settings)
+        .await
+    {
+        eprintln!("Couldn't insert project into project_storage: {:?}", e);
+        return Err(Status::InternalServerError);
     }
+    let project_list = &data_storage.data.projects;
+    project_list
+        .write()
+        .unwrap()
+        .entries
+        .push(ProjectListEntry::Project(ProjectListProject {
+            id: project_id,
+            name: project_data.name,
+            last_interaction: Utc::now().naive_utc(),
+        }));
+    Ok(Redirect::to("/"))
 }

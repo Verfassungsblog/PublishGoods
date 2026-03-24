@@ -33,11 +33,9 @@ pub fn list_persons(
 ) -> Template {
     let mut persons: Vec<Person> = data_storage
         .data
-        .read()
-        .unwrap()
         .persons
         .iter()
-        .map(|person| person.1.read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
 
     let offset = offset.unwrap_or_else(|| 0);

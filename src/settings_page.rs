@@ -7,14 +7,11 @@ use std::sync::Arc;
 
 #[get("/settings")]
 pub async fn settings_page(_session: Session, data_storage: &State<Arc<DataStorage>>) -> Template {
-    let data_storage = data_storage;
     let users: Vec<User> = data_storage
         .data
-        .read()
-        .unwrap()
         .login_data
         .iter()
-        .map(|x| x.1.read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
     Template::render("settings", users)
 }
@@ -53,11 +50,9 @@ pub mod api {
         // Check if user with this email already exists
         if data_storage
             .data
-            .read()
-            .unwrap()
             .login_data
             .iter()
-            .any(|x| x.1.read().unwrap().email == new_user.email)
+            .any(|x| x.value().read().unwrap().email == new_user.email)
         {
             return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
         }
@@ -122,7 +117,7 @@ pub mod api {
         let new_user = new_user.into_inner();
         let data_storage = data_storage;
 
-        let mut data = data_storage.data.write().unwrap();
+        let data = &data_storage.clone().data;
 
         //Check email is changed + email is already in use
         if let Some(new_email) = new_user.email.clone() {
@@ -130,7 +125,7 @@ pub mod api {
                 if data
                     .login_data
                     .iter()
-                    .any(|x| x.1.read().unwrap().email == new_email)
+                    .any(|x| x.value().read().unwrap().email == new_email)
                 {
                     return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
                 }
@@ -155,6 +150,7 @@ pub mod api {
         session: Session,
         data_storage: &State<Arc<DataStorage>>,
     ) -> APIResult<()> {
+        let data_storage = data_storage.clone();
         // Parse id or return error
         let id = uuid::Uuid::parse_str(&id)?;
 
@@ -162,10 +158,7 @@ pub mod api {
             return Err(ApiErrorType::BadRequest("Cannot delete own user".to_string()).into());
         }
 
-        let data_storage = data_storage;
-        let mut data = data_storage.data.write().unwrap();
-
-        match data.login_data.remove(&id) {
+        match data_storage.data.login_data.remove(&id) {
             Some(_) => Ok(APIResponse::from(())),
             None => Err(ApiErrorType::ResourceNotFound("user".to_string()).into()),
         }

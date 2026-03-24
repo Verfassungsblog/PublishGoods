@@ -439,12 +439,9 @@ pub async fn list_templates(
 
     let templates: Vec<ProjectTemplateV2> = data_storage
         .data
-        .read()
-        .unwrap()
         .templates
-        .clone()
         .iter()
-        .map(|x| x.1.read().unwrap().clone())
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
 
     Ok(templates.into())

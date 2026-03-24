@@ -69,8 +69,6 @@ pub fn create_person(
     // Insert into data storage
     data_storage
         .data
-        .write()
-        .unwrap()
         .persons
         .insert(person.id.unwrap(), Arc::new(RwLock::new(person.clone())));
 
@@ -112,8 +110,6 @@ pub fn update_person(
     // Insert into data storage
     data_storage
         .data
-        .write()
-        .unwrap()
         .persons
         .insert(person.id.unwrap(), Arc::new(RwLock::new(person.clone())));
 
@@ -132,7 +128,7 @@ pub fn get_person(
     let id = uuid::Uuid::parse_str(&id)?;
 
     // Get person from data storage
-    let person = match data_storage.data.read().unwrap().persons.get(&id) {
+    let person = match data_storage.data.persons.get(&id) {
         Some(person) => person.read().unwrap().clone(),
         None => {
             return Err(ApiErrorType::ResourceNotFound("person".to_string()).into());
@@ -171,11 +167,9 @@ pub fn search_persons(
     // Get all persons from data storage
     let persons: Vec<Person> = data_storage
         .data
-        .read()
-        .unwrap()
         .persons
-        .values()
-        .map(|person| person.read().unwrap().clone())
+        .iter()
+        .map(|x| x.value().read().unwrap().clone())
         .collect();
 
     let mut result: Vec<Person> = Vec::new();
@@ -232,7 +226,7 @@ pub fn delete_person(
     let id = uuid::Uuid::parse_str(&id)?;
 
     // Remove person from data storage
-    match data_storage.data.write().unwrap().persons.remove(&id) {
+    match data_storage.data.persons.remove(&id) {
         Some(_) => (),
         None => {
             return Err(ApiErrorType::ResourceNotFound("person".to_string()).into());

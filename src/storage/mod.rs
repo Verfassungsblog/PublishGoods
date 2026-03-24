@@ -106,12 +106,6 @@ pub trait SingleFileLock {
     }
 }
 
-#[derive(serde::Serialize)]
-pub struct ProjectListEntry {
-    id: uuid::Uuid,
-    name: String,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MyPersonsWithRoles {
     /// The persons.
@@ -1072,13 +1066,11 @@ pub async fn save_data_worker(
 
             // Save ProjectStorage to disk
             let mut projects_to_save = Vec::new();
-            for project_id in project_storage.projects.read().unwrap().keys() {
-                if let Some(project) = project_storage.projects.read().unwrap().get(project_id) {
-                    if let Some(project) = &project.data {
-                        if project.read().unwrap().last_interaction > last_save {
-                            projects_to_save.push(project_id.clone());
-                        }
-                    }
+            for entry in project_storage.projects.iter() {
+                let project_id = entry.key();
+                let project = entry.value();
+                if project.read().unwrap().last_interaction > last_save {
+                    projects_to_save.push(project_id.clone());
                 }
             }
             for project_id in projects_to_save {

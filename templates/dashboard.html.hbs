@@ -13,11 +13,16 @@
             </div>
         </div>
         {{#each projects}}
-        <div class="row list_row">
-            <div class="col d-flex align-content-center flex-wrap">
-                <a href="/projects/{{this.id}}">{{this.name}}</a>
-            </div>
-        </div>
+            {{#if Folder}}
+                Folders aren't supported yet.
+            {{/if}}
+            {{#if Project}}
+                <div class="row list_row">
+                    <div class="col d-flex align-content-center flex-wrap">
+                        <a href="/projects/{{Project.id}}">{{Project.name}}</a>
+                    </div>
+                </div>
+            {{/if}}
         {{/each}}
     </div>
 </div>

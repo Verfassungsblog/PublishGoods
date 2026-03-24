@@ -1,6 +1,9 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::data_storage::current::ProjectListEntry;
+use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
+use chrono::Utc;
 use rocket::http::Status;
 use rocket::State;
 use rocket_dyn_templates::Template;
@@ -12,6 +15,7 @@ pub async fn show_editor(
     _session: Session,
     settings: &State<Settings>,
     project_storage: &State<Arc<ProjectStorage>>,
+    data_storage: &State<Arc<DataStorage>>,
 ) -> Result<Template, Status> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
@@ -22,14 +26,24 @@ pub async fn show_editor(
     };
 
     let project_storage = Arc::clone(project_storage);
+    if !project_storage.has_project(&project_id, settings).await {
+        eprintln!("Couldn't get project with id {}", project_id);
+        return Err(Status::NotFound);
+    }
 
-    let _project_entry = match project_storage.get_project(&project_id, settings).await {
-        Ok(project_entry) => project_entry.clone(),
-        Err(_) => {
-            eprintln!("Couldn't get project with id {}", project_id);
-            return Err(Status::NotFound);
+    // Update last interaction time in project list
+    {
+        let mut project_list = data_storage.data.projects.write().unwrap();
+        if let Some(entry) = project_list
+            .entries
+            .iter_mut()
+            .find(|entry| *entry.id() == project_id)
+        {
+            if let ProjectListEntry::Project(project) = entry {
+                project.last_interaction = Utc::now().naive_utc();
+            }
         }
-    };
+    }
 
     Ok(Template::render("editor", project_id))
 }

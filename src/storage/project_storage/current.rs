@@ -3,17 +3,19 @@ use crate::storage::project_storage::migration::load_project_data;
 use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{
-    ProjectData, ProjectStorage, ProjectStorageEntry, ProjectStorageError, CURRENT_VERSION,
+    ProjectData, ProjectStorage, ProjectStorageError, CURRENT_VERSION,
 };
-use crate::storage::{BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges, ProjectListEntry};
+use crate::storage::{BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
+use dashmap::{DashMap, Entry};
 use hayagriva::types::{MaybeTyped, SerialNumber};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
@@ -25,15 +27,10 @@ use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 impl MultipleFileLocks for ProjectStorage {
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool> {
-        if let Some(entry) = self.file_locks.read().unwrap().get(uuid) {
-            return entry.clone();
+        match self.file_locks.entry(uuid.clone()) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => entry.insert(Arc::new(AtomicBool::new(false))).clone(),
         }
-        // Create new entry
-        self.file_locks
-            .write()
-            .unwrap()
-            .insert(uuid.clone(), Arc::new(AtomicBool::new(false)));
-        return self.file_locks.read().unwrap().get(uuid).unwrap().clone();
     }
 }
 
@@ -41,156 +38,9 @@ impl ProjectStorage {
     /// Creates a new empty [ProjectStorage]
     pub fn new() -> Self {
         ProjectStorage {
-            projects: RwLock::new(HashMap::new()),
+            projects: DashMap::new(),
             file_locks: Default::default(),
         }
-    }
-
-    /// Unloads all unused projects from memory
-    ///
-    /// Checks if projects last interaction time is older than project_cache_time defined in config
-    /// Saves the project to disk before unloading it
-    pub async fn unload_unused_projects(&mut self, settings: &Settings) -> Result<(), ()> {
-        let mut projects_to_unload = vec![];
-
-        for (uuid, project_data) in self.projects.read().unwrap().iter() {
-            if let Some(project) = &project_data.data {
-                let now = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                if Arc::strong_count(project) == 1
-                    && project.read().unwrap().last_interaction + settings.project_cache_time < now
-                {
-                    projects_to_unload.push(uuid.clone());
-                }
-            }
-        }
-
-        for project in projects_to_unload {
-            self.save_project_to_disk(&project, settings).await?;
-            self.unload_project(&project)?;
-        }
-
-        Ok(())
-    }
-
-    /// Unloads a project from memory
-    ///
-    /// Does not save the project to disk, use [ProjectStorage::save_project_to_disk] for that
-    fn unload_project(&self, uuid: &uuid::Uuid) -> Result<(), ()> {
-        match self.projects.write().unwrap().get_mut(uuid) {
-            Some(project) => {
-                project.data = None;
-                debug!("Unloaded project {} from memory.", uuid);
-                Ok(())
-            }
-            None => {
-                error!(
-                    "Requested to unload project {}, but project doesn't exists.",
-                    uuid
-                );
-                Err(())
-            }
-        }
-    }
-
-    /// Loads a list of all projects from the projects directory inside the data_path
-    /// Does not load the projects into memory
-    ///
-    /// # Returns
-    /// * `ProjectStorage` - [ProjectStorage] with all projects uuids and None as project data
-    pub async fn load_from_directory(&self, settings: &Settings) -> Result<(), ()> {
-        // Get all project uuids
-        let paths = match std::fs::read_dir(format!("{}/projects/", settings.data_path)) {
-            Ok(paths) => paths,
-            Err(e) => {
-                error!("io error while loading project directory: {}. Check that your data_path is set correctly and we have sufficient file permissions.", e);
-                return Err(());
-            }
-        };
-
-        for path in paths {
-            match path {
-                Ok(entry) => {
-                    // Skip non directory entries
-                    if !entry.path().is_dir() {
-                        continue;
-                    }
-                    match entry.file_name().to_str() {
-                        Some(uuid) => match uuid.parse::<uuid::Uuid>() {
-                            Ok(uuid) => {
-                                debug!("Loading project {}.", uuid);
-                                match self.load_project_into_memory(&uuid, settings).await {
-                                    Ok(_) => {
-                                        debug!("Successfully loaded project {} into memory.", uuid);
-                                        if let Err(_) = self.unload_project(&uuid) {
-                                            error!("error while unloading project {} after loading it into memory. Skipping project.", uuid);
-                                            continue;
-                                        }
-                                        debug!(
-                                            "Project storage now contains: {:?}",
-                                            self.projects.read().unwrap().keys()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        error!("error while loading project {} into memory: {:?}, Skipping project.", uuid, e);
-                                        continue;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("error while parsing project directory entry name into uuid: {}, Skipping project.", e);
-                                continue;
-                            }
-                        },
-                        None => {
-                            error!("error while parsing project directory entry: {:?}, Skipping project.", entry.file_name());
-                            continue;
-                        }
-                    };
-                }
-                Err(e) => {
-                    error!(
-                        "io error while loading project directory entry: {}, Skipping project.",
-                        e
-                    );
-                    continue;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Insert new project into [ProjectStorage]
-    ///
-    /// Also calls [ProjectStorage::save_project_to_disk] to save the project to disk
-    ///
-    /// # Arguments
-    /// * `project` - [OldProjectData] - Project to insert
-    ///
-    /// # Returns
-    /// * `Ok(uuid::Uuid)` - Project inserted successfully - returns the generated [uuid::Uuid] of the project
-    pub async fn insert_project(
-        &self,
-        mut project: ProjectData,
-        settings: &Settings,
-    ) -> Result<uuid::Uuid, ()> {
-        let uuid = uuid::Uuid::new_v4();
-
-        // Update last edited to current time, so the project doesn't get unloaded immediately
-        project.last_interaction = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let entry = ProjectStorageEntry {
-            name: project.name.clone(),
-            data: Some(Arc::new(RwLock::new(project))),
-        };
-        self.projects.write().unwrap().insert(uuid, entry);
-        self.save_project_to_disk(&uuid, settings).await?;
-        Ok(uuid)
     }
 
     async fn load_project_from_disk(
@@ -256,36 +106,17 @@ impl ProjectStorage {
         })
     }
 
-    async fn load_project_into_memory(
-        &self,
-        uuid: &uuid::Uuid,
-        settings: &Settings,
-    ) -> Result<(), ProjectStorageError> {
-        let project = self.load_project_from_disk(uuid, settings).await?;
-
-        println!("Loaded project, inserting into memory storage.");
-        if let Some(tproject) = self.projects.write().unwrap().get_mut(uuid) {
-            // Update last edited to current time, so the project doesn't get unloaded immediately
-            let mut project: ProjectData = project;
-            project.last_interaction = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            tproject.name = project.name.clone();
-            println!("Replacing project");
-            tproject.data.replace(Arc::new(RwLock::new(project)));
-            println!("Inserted project into memory storage.");
-            return Ok(());
+    pub async fn has_project(&self, uuid: &uuid::Uuid, settings: &Settings) -> bool {
+        match self.get_project(uuid, settings).await {
+            Ok(_) => true,
+            Err(e) => match e {
+                ProjectStorageError::ProjectNotFound => false,
+                _ => {
+                    error!("Error while checking if project exists: {:?}", e);
+                    false
+                }
+            },
         }
-
-        println!("Project not found in memory storage, creating new entry.");
-        let entry = ProjectStorageEntry {
-            name: project.name.clone(),
-            data: Some(Arc::new(RwLock::new(project))),
-        };
-        self.projects.write().unwrap().insert(uuid.clone(), entry);
-        println!("Created new entry in memory storage.");
-        Ok(())
     }
 
     pub async fn get_project(
@@ -293,58 +124,31 @@ impl ProjectStorage {
         uuid: &uuid::Uuid,
         settings: &Settings,
     ) -> Result<Arc<RwLock<ProjectData>>, ProjectStorageError> {
-        // Check if project exists
-        match self.projects.read().unwrap().get(uuid) {
-            Some(project) => {
-                if let Some(project) = &project.data {
-                    project.write().unwrap().last_interaction = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    return Ok(Arc::clone(project));
+        // Check if project is already in memory
+        match self.projects.entry(uuid.clone()) {
+            Entry::Occupied(entry) => {
+                let project = entry.get();
+                project.write().unwrap().last_interaction = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                return Ok(Arc::clone(project));
+            }
+            Entry::Vacant(entry) => {
+                // Try to load from disk
+                match self.load_project_from_disk(uuid, settings).await {
+                    Ok(project) => {
+                        let new_entry = entry.insert_entry(Arc::new(RwLock::new(project)));
+                        Ok(Arc::clone(new_entry.get()))
+                    }
+                    Err(e) => Err(e),
                 }
             }
-            None => return Err(ProjectStorageError::ProjectNotFound),
-        }
-
-        // Project doesn't exist in memory, try to load from disk
-        self.load_project_into_memory(uuid, settings).await?;
-
-        // Check if project exists
-        match self.projects.read().unwrap().get(uuid) {
-            Some(project) => {
-                match &project.data {
-                    None => {
-                        //Still no project in memory, couldn't load from disk
-                        Err(ProjectStorageError::ProjectNotFound)
-                    }
-                    Some(project) => {
-                        // Update last interaction time, so the project doesn't get unloaded immediately
-                        project.write().unwrap().last_interaction = SystemTime::now()
-                            .duration_since(SystemTime::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-                        Ok(Arc::clone(project))
-                    }
-                }
-            }
-            None => return Err(ProjectStorageError::ProjectNotFound),
         }
     }
 
-    pub async fn get_projects_list(&self) -> Vec<ProjectListEntry> {
-        self.projects
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(id, project)| ProjectListEntry {
-                id: *id,
-                name: project.name.clone(),
-            })
-            .collect()
-    }
-
-    /// Deletes a project from memory and disk permanently
+    /// Deletes a project from memory and disk permanently.
+    /// Does not delete the project entry from the project list!
     pub async fn delete_project(
         &self,
         project_id: &uuid::Uuid,
@@ -352,14 +156,10 @@ impl ProjectStorage {
     ) -> Result<(), ProjectStorageError> {
         debug!("Deleting project {}", project_id);
 
-        // Check if project exists:
-        if !self.projects.read().unwrap().contains_key(&project_id) {
-            warn!("Tried to delete non-existent project {}", project_id);
+        // Remove project from memory:
+        if let None = self.projects.remove(&project_id) {
             return Err(ProjectStorageError::ProjectNotFound);
         }
-
-        // Remove project from in-memory storage:
-        self.projects.write().unwrap().remove(&project_id);
 
         // Remove project from disk:
         let path = format!("{}/projects/{}", settings.data_path, project_id);
@@ -373,25 +173,24 @@ impl ProjectStorage {
     }
 
     pub async fn save_project_to_disk(
-        //todo: create as new file and move after saving
         &self,
-        uuid: &uuid::Uuid,
+        uuid: &Uuid,
         settings: &Settings,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ProjectStorageError> {
         // Get project
-        let project = match self.projects.read().unwrap().get(&uuid) {
-            Some(project) => match &project.data {
-                Some(project) => project.clone(),
-                None => return Err(()),
-            },
-            None => return Err(()),
-        };
+        let project = self
+            .projects
+            .get(uuid)
+            .ok_or(ProjectStorageError::ProjectNotFound)?
+            .value()
+            .clone();
+
         match fs::create_dir(format!("{}/projects/{}", settings.data_path, uuid)) {
             Ok(_) => {}
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::AlreadyExists {
                     eprintln!("io error while creating project directory: {}", e);
-                    return Err(());
+                    return Err(ProjectStorageError::IOError(e));
                 }
             }
         }
@@ -401,44 +200,39 @@ impl ProjectStorage {
             "{}/projects/{}/project.{}.bincode",
             settings.data_path, uuid, CURRENT_VERSION
         );
+        let path_temp = format!("{}.temp", &path);
 
-        match self.wait_for_file_lock(&uuid, settings).await {
-            Ok(_) => {}
-            Err(_) => {
-                eprintln!("error while saving project to disk: couldn't get file lock");
-                return Err(());
-            }
+        if let Err(_) = self.wait_for_file_lock(&uuid, settings).await {
+            eprintln!("error while saving project to disk: couldn't get file lock");
+            return Err(ProjectStorageError::CouldntAcquireLock);
         }
 
-        //TODO: do not use spawn_blocking, but use tokio fs functions
-        let res = rocket::tokio::task::spawn_blocking(move || {
-            let mut file = match std::fs::File::create(path) {
-                Ok(file) => file,
-                Err(e) => {
-                    eprintln!("io error while saving project to disk: {}", e);
-                    return Err(());
-                }
-            };
-            // Clone project data to avoid locking the project while saving
+        // We can't use tokio::fs because bincode doesn't support async I/O
+        rocket::tokio::task::spawn_blocking(move || {
+            let mut file = File::create(&path_temp)?;
             let pcopy = project.read().unwrap().clone();
-            match bincode::encode_into_std_write(&pcopy, &mut file, bincode::config::standard()) {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    eprintln!("bincode encode error while saving project to disk: {}", e);
-                    Err(())
-                }
-            }
+            bincode::encode_into_std_write(&pcopy, &mut file, bincode::config::standard())?;
+
+            // Move temp_file to final location
+            std::fs::rename(path_temp, path)?;
+            Ok::<(), ProjectStorageError>(())
         })
-        .await;
+        .await??;
 
         self.remove_file_lock(uuid);
-        match res {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                eprintln!("error while saving project to disk: {}", e);
-                Err(())
-            }
-        }
+        Ok(())
+    }
+
+    pub async fn insert_project(
+        &self,
+        uuid: Uuid,
+        project_data: ProjectData,
+        settings: &Settings,
+    ) -> Result<(), ProjectStorageError> {
+        self.projects
+            .insert(uuid, Arc::new(RwLock::new(project_data)));
+        self.save_project_to_disk(&uuid, settings).await?;
+        Ok(())
     }
 }
 
@@ -499,7 +293,7 @@ impl Bibliography {
 
         let mut parents: Vec<hayagriva::Entry> = vec![];
         for parent in &value.parents {
-            if let BibEntryOrFolder::BibEntry(parent_entry) = self.get_entry(parent)?.clone() {
+            if let BibEntryOrFolder::BibEntry(_) = self.get_entry(parent)?.clone() {
                 if let Some(parent) = self.get_entry_as_hayagriva(parent) {
                     // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
                     parents.push(parent);

@@ -157,11 +157,8 @@ pub async fn get_project(
         if parts.contains("template") {
             api_response.template_extended = Some(
                 data_storage
-                    .get_template(&api_response.template_id)?
-                    .clone()
-                    .read()
-                    .unwrap()
-                    .clone(),
+                    .get_template_cloned(&api_response.template_id)
+                    .await?,
             );
         }
         if parts.contains("metadata") {
@@ -177,12 +174,12 @@ pub async fn get_project(
                                     authors_extended.push(PersonOrString::NameString(name.clone()))
                                 }
                                 PersonUuidOrString::PersonUuid(uuid) => {
-                                    match data_storage.get_person_cloned(&uuid) {
-                                        Some(person) => {
+                                    match data_storage.get_person_cloned(&uuid).await {
+                                        Ok(person) => {
                                             authors_extended.push(PersonOrString::Person(person))
                                         }
-                                        None => {
-                                            warn!("Person with uuid used in project metadata, but no longer exists. Skipping.");
+                                        Err(e) => {
+                                            warn!("Person with uuid used in project metadata, but no longer exists. Skipping. {:?}", e);
                                         }
                                     }
                                 }
@@ -202,12 +199,12 @@ pub async fn get_project(
                                     editors_expanded.push(PersonOrString::NameString(name.clone()))
                                 }
                                 PersonUuidOrString::PersonUuid(uuid) => {
-                                    match data_storage.get_person_cloned(&uuid) {
-                                        Some(person) => {
+                                    match data_storage.get_person_cloned(&uuid).await {
+                                        Ok(person) => {
                                             editors_expanded.push(PersonOrString::Person(person))
                                         }
-                                        None => {
-                                            warn!("Person with uuid used in project metadata, but no longer exists. Skipping.");
+                                        Err(e) => {
+                                            warn!("Person with uuid used in project metadata, but no longer exists. Skipping. {:?}", e);
                                         }
                                     }
                                 }

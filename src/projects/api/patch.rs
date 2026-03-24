@@ -55,6 +55,14 @@ impl Patch<PatchProjectData, ProjectData> for ProjectData {
 
         if let Some(name) = patch.name {
             new.name = name;
+        } else {
+            if let Some(metadata) = &patch.metadata {
+                if let Some(metadata) = &metadata {
+                    if let Some(title) = &metadata.title {
+                        new.name = title.clone();
+                    }
+                }
+            }
         }
 
         if let Some(description) = patch.description {
@@ -396,13 +404,24 @@ pub async fn patch_project(
     project_storage: &State<Arc<ProjectStorage>>,
     data_storage: &State<Arc<DataStorage>>,
 ) -> APIResult<()> {
-    let project = project_storage
-        .get_project(&uuid::Uuid::parse_str(project_id)?, settings)
-        .await?
-        .clone();
+    let id = uuid::Uuid::parse_str(project_id)?;
+    let project = project_storage.get_project(&id, settings).await?.clone();
 
     let mut project_cpy = project.read().unwrap().clone();
     project_cpy = project_cpy.patch(patch.into_inner());
+
+    // Update the project in the data storage
+    let project_list = data_storage.data.projects.clone();
+    let read_lock = project_list.read().unwrap();
+
+    if let Some(project) = read_lock.get(&id) {
+        if project.name() != project_cpy.name {
+            drop(read_lock);
+            if let Some(project) = project_list.write().unwrap().get_mut(&id) {
+                project.set_name(project_cpy.name.clone());
+            }
+        }
+    }
 
     let mut project_state = project.write().unwrap();
     *project_state = project_cpy;

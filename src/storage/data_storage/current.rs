@@ -3,146 +3,150 @@ use crate::storage::data_storage::migration::load_inner_data_storage;
 use crate::storage::data_storage::{
     DataStorage, DataStorageLoadError, InnerDataStorage, CURRENT_VERSION,
 };
+use crate::storage::project_storage::ProjectStorage;
 pub(crate) use crate::storage::{ProjectTemplateV2, SingleFileLock, User};
 use bincode::{Decode, Encode};
+use chrono::Utc;
+use dashmap::DashMap;
 use rocket::serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
+use tokio::task::JoinError;
+use uuid::Uuid;
 use vb_exchange::projects::{Person, PersonV2};
 
+#[derive(Debug)]
 pub enum DataStorageError {
     /// Resource not found, contains resource type + id
     NotFound(String),
+    TokioJoinError(JoinError),
+    IOError(std::io::Error),
+    CouldntAcquireLock,
+    BincodeDecodeError(bincode::error::DecodeError),
+    BincodeEncodeError(bincode::error::EncodeError),
+}
+
+impl From<JoinError> for DataStorageError {
+    fn from(e: JoinError) -> Self {
+        DataStorageError::TokioJoinError(e)
+    }
+}
+
+impl From<std::io::Error> for DataStorageError {
+    fn from(e: std::io::Error) -> Self {
+        DataStorageError::IOError(e)
+    }
+}
+
+impl From<bincode::error::DecodeError> for DataStorageError {
+    fn from(e: bincode::error::DecodeError) -> Self {
+        DataStorageError::BincodeDecodeError(e)
+    }
+}
+
+impl From<bincode::error::EncodeError> for DataStorageError {
+    fn from(e: bincode::error::EncodeError) -> Self {
+        DataStorageError::BincodeEncodeError(e)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone, Default)]
+pub struct ProjectList {
+    pub entries: Vec<ProjectListEntry>,
+}
+
+impl ProjectList {
+    pub fn has(&self, id: &Uuid) -> bool {
+        self.entries.iter().any(|entry| entry.id() == id)
+    }
+    pub fn get(&self, id: &Uuid) -> Option<&ProjectListEntry> {
+        self.entries.iter().find(|entry| entry.id() == id)
+    }
+    pub fn get_mut(&mut self, id: &Uuid) -> Option<&mut ProjectListEntry> {
+        self.entries.iter_mut().find(|entry| entry.id() == id)
+    }
+    pub fn get_folder(&self, id: &Uuid) -> Option<&ProjectListFolder> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id() == id)
+            .and_then(|entry| match entry {
+                ProjectListEntry::Folder(folder) => Some(folder),
+                _ => None,
+            })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
-pub struct InnerDataStorageV3 {
-    /// HashMap with users, id as HashMap keys
+pub enum ProjectListEntry {
+    Folder(ProjectListFolder),
+    Project(ProjectListProject),
+}
+
+impl ProjectListEntry {
+    pub fn id(&self) -> &Uuid {
+        match self {
+            ProjectListEntry::Folder(folder) => &folder.id,
+            ProjectListEntry::Project(project) => &project.id,
+        }
+    }
+    pub fn name(&self) -> &str {
+        match self {
+            ProjectListEntry::Folder(folder) => &folder.name,
+            ProjectListEntry::Project(project) => &project.name,
+        }
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        match self {
+            ProjectListEntry::Folder(folder) => folder.name = name,
+            ProjectListEntry::Project(project) => project.name = name,
+        }
+    }
+    pub fn set_id(&mut self, id: Uuid) {
+        match self {
+            ProjectListEntry::Folder(folder) => folder.id = id,
+            ProjectListEntry::Project(project) => project.id = id,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectListProject {
     #[bincode(with_serde)]
-    pub login_data: HashMap<uuid::Uuid, Arc<RwLock<User>>>,
+    pub id: Uuid,
+    pub name: String,
     #[bincode(with_serde)]
-    pub persons: HashMap<uuid::Uuid, Arc<RwLock<PersonV2>>>,
+    pub last_interaction: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone)]
+pub struct ProjectListFolder {
     #[bincode(with_serde)]
-    pub templates: HashMap<uuid::Uuid, Arc<RwLock<ProjectTemplateV2>>>,
+    pub id: Uuid,
+    pub name: String,
+    pub children: Vec<ProjectListEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Encode, Decode, Clone, Default)]
+pub struct InnerDataStorageV4 {
+    #[bincode(with_serde)]
+    pub login_data: DashMap<Uuid, Arc<RwLock<User>>>,
+    #[bincode(with_serde)]
+    pub persons: DashMap<Uuid, Arc<RwLock<PersonV2>>>,
+    #[bincode(with_serde)]
+    pub templates: DashMap<Uuid, Arc<RwLock<ProjectTemplateV2>>>,
+    #[bincode(with_serde)]
+    pub projects: Arc<RwLock<ProjectList>>,
 }
 
 impl DataStorage {
     /// Creates a new empty [DataStorage]
     pub fn new() -> Self {
         DataStorage {
-            data: RwLock::new(InnerDataStorageV3 {
-                login_data: Default::default(),
-                persons: Default::default(),
-                templates: Default::default(),
-            }),
+            data: Arc::new(InnerDataStorageV4::default()),
             file_locked: Default::default(),
         }
-    }
-
-    pub async fn update_template_version_id(&self, template_id: uuid::Uuid) -> Result<(), ()> {
-        match self.data.read().unwrap().templates.get(&template_id) {
-            Some(template) => {
-                let template = template.clone();
-                template.write().unwrap().version = Some(uuid::Uuid::new_v4());
-                Ok(())
-            }
-            None => Err(()),
-        }
-    }
-
-    pub async fn insert_template(
-        &self,
-        template: ProjectTemplateV2,
-        settings: &Settings,
-    ) -> Result<(), ()> {
-        // Create template directory inside data if it doesn't exist
-        if !Path::new(&format!("{}/templates/{}", settings.data_path, template.id)).exists() {
-            if let Err(e) = tokio::fs::create_dir_all(&format!(
-                "{}/templates/{}/assets",
-                settings.data_path, template.id
-            ))
-            .await
-            {
-                eprintln!("error while creating template directory: {}", e);
-                return Err(());
-            }
-            if let Err(e) = tokio::fs::create_dir_all(&format!(
-                "{}/templates/{}/formats",
-                settings.data_path, template.id
-            ))
-            .await
-            {
-                eprintln!("error while creating template directory: {}", e);
-                return Err(());
-            }
-        }
-        self.data
-            .write()
-            .unwrap()
-            .templates
-            .insert(template.id.clone(), Arc::new(RwLock::new(template)));
-        self.save_to_disk(settings).await?;
-        Ok(())
-    }
-
-    /// inserts a new user into the [DataStorage]
-    pub async fn insert_user(&self, user: User, settings: &Settings) -> Result<(), ()> {
-        self.data
-            .write()
-            .unwrap()
-            .login_data
-            .insert(user.id.clone(), Arc::new(RwLock::new(user)));
-        self.save_to_disk(settings).await?;
-        Ok(())
-    }
-
-    /// returns a user from the [DataStorage] as [Arc<RwLock<User>>]
-    pub fn get_user(&self, email: &String) -> Result<Arc<RwLock<User>>, ()> {
-        let data = self.data.read().unwrap();
-        match data
-            .login_data
-            .values()
-            .find(|user| user.read().unwrap().email == *email)
-        {
-            Some(user) => Ok(Arc::clone(user)),
-            None => Err(()),
-        }
-    }
-
-    /// returns a template
-    pub fn get_template(
-        &self,
-        uuid: &uuid::Uuid,
-    ) -> Result<Arc<RwLock<ProjectTemplateV2>>, DataStorageError> {
-        match self.data.read().unwrap().templates.get(uuid) {
-            Some(template) => Ok(Arc::clone(template)),
-            None => Err(DataStorageError::NotFound(format!("template {}", uuid))),
-        }
-    }
-
-    /// Get person by id
-    /// Returns a [Person] as [Arc<RwLock<Person>>] if the person exists
-    pub fn get_person(&self, uuid: &uuid::Uuid) -> Option<Arc<RwLock<Person>>> {
-        match self.data.read().unwrap().persons.get(uuid) {
-            None => None,
-            Some(data) => Some(Arc::clone(data)),
-        }
-    }
-
-    /// Get person by id
-    /// Returns a [Person] as [Arc<RwLock<Person>>] if the person exists
-    pub fn get_person_cloned(&self, uuid: &uuid::Uuid) -> Option<Person> {
-        match self.data.read().unwrap().persons.get(uuid) {
-            None => None,
-            Some(data) => Some(data.read().unwrap().clone()),
-        }
-    }
-
-    /// Check if person exists
-    pub fn person_exists(&self, uuid: &uuid::Uuid) -> bool {
-        self.data.read().unwrap().persons.contains_key(uuid)
     }
 
     fn load_from_disk_blocking(
@@ -217,50 +221,180 @@ impl DataStorage {
         let res =
             tokio::task::spawn_blocking(move || Self::load_from_disk_blocking(&settings_cpy)).await;
 
-        data_storage.data = RwLock::new(res.unwrap()?);
+        data_storage.data = Arc::new(res.unwrap()?);
         Ok(data_storage)
     }
 
     /// Saves the [DataStorage] to disk
-    ///
-    /// Creates a whole copy of the [DataStorage] and saves it to disk
-    /// This may use a lot of memory, maybe change this in the future if it becomes a problem
-    pub async fn save_to_disk(&self, settings: &Settings) -> Result<(), ()> {
-        self.wait_for_file_lock(settings).await?;
+    pub async fn save_to_disk(&self, settings: &Settings) -> Result<(), DataStorageError> {
+        self.wait_for_file_lock(settings)
+            .await
+            .map_err(|_| DataStorageError::CouldntAcquireLock)?;
 
-        // Save login data
-        let cpy = self.data.read().unwrap().clone();
+        let cpy = self.data.clone();
         let path = format!("{}/data.{}.bincode", settings.data_path, CURRENT_VERSION);
 
-        match tokio::task::spawn_blocking(move || {
-            let mut file = match std::fs::File::create(path) {
-                Ok(file) => file,
-                Err(e) => {
-                    eprintln!("io error while saving data to disk: {}", e);
-                    return Err(());
-                }
-            };
+        tokio::task::spawn_blocking(move || {
+            let mut file = std::fs::File::create(path)?;
 
-            return match bincode::encode_into_std_write(cpy, &mut file, bincode::config::standard())
-            {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    eprintln!("bincode encode error while saving data to disk: {}", e);
-                    Err(())
-                }
-            };
+            bincode::encode_into_std_write(cpy, &mut file, bincode::config::standard())?;
+            Ok::<(), DataStorageError>(())
         })
-        .await
-        {
-            Ok(res) => res?,
-            Err(e) => {
-                eprintln!("error while saving data to disk: {}", e);
-                return Err(());
-            }
-        };
+        .await??;
 
         self.remove_file_lock();
         Ok(())
+    }
+
+    /// Scans the project directory for projects that are not in the project list and adds them and
+    /// for projects that are in the list but no longer exist
+    pub async fn scan_for_missing_or_deleted_projects(
+        &self,
+        settings: &Settings,
+    ) -> Result<(), DataStorageError> {
+        let path = format!("{}/projects", settings.data_path);
+        let project_list = self.data.projects.clone();
+        let settings_clone = settings.clone();
+
+        // 1. Get all project IDs from disk (blocking IO)
+        let projects_on_disk: Vec<Uuid> = tokio::task::spawn_blocking(move || {
+            let mut projects = Vec::new();
+            if let Ok(dir) = std::fs::read_dir(path) {
+                for entry in dir {
+                    if let Ok(entry) = entry {
+                        if let Some(project_id) = entry.path().file_name() {
+                            if let Some(project_id) = project_id.to_str() {
+                                if let Ok(uuid) = uuid::Uuid::parse_str(project_id) {
+                                    projects.push(uuid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            projects
+        })
+        .await?;
+
+        // 2. Find projects that are on disk but not in the list
+        let mut new_projects = Vec::new();
+        for uuid in &projects_on_disk {
+            let exists = {
+                let read_lock = project_list.read().unwrap();
+                read_lock.has(uuid)
+            };
+
+            if !exists {
+                // Get the project from disk to extract name
+                let project_storage = ProjectStorage::new();
+                if let Ok(project) = project_storage.get_project(uuid, &settings_clone).await {
+                    let project_name = project.read().unwrap().name.clone();
+                    new_projects.push(ProjectListProject {
+                        id: *uuid,
+                        name: project_name,
+                        last_interaction: Utc::now().naive_utc(),
+                    });
+                }
+            }
+        }
+
+        // 3. Update the project list
+        {
+            let mut write_lock = project_list.write().unwrap();
+
+            // Add new projects
+            for new_project in new_projects {
+                if !write_lock.has(&new_project.id) {
+                    write_lock
+                        .entries
+                        .push(ProjectListEntry::Project(new_project));
+                }
+            }
+
+            // Remove deleted projects
+            write_lock.entries.retain(|entry| {
+                match entry {
+                    // Only keep projects that also exist on disk
+                    ProjectListEntry::Project(project) => projects_on_disk.contains(&project.id),
+                    // Always keep folders
+                    ProjectListEntry::Folder(_) => true,
+                }
+            });
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_person_cloned(&self, id: &Uuid) -> Result<PersonV2, DataStorageError> {
+        Ok(self
+            .data
+            .persons
+            .get(id)
+            .ok_or(DataStorageError::NotFound("person".to_string()))?
+            .clone()
+            .read()
+            .unwrap()
+            .clone())
+    }
+
+    pub async fn get_template_cloned(
+        &self,
+        id: &Uuid,
+    ) -> Result<ProjectTemplateV2, DataStorageError> {
+        Ok(self
+            .data
+            .templates
+            .get(id)
+            .ok_or(DataStorageError::NotFound("template".to_string()))?
+            .clone()
+            .read()
+            .unwrap()
+            .clone())
+    }
+
+    pub async fn insert_user(
+        &self,
+        user: User,
+        settings: &Settings,
+    ) -> Result<(), DataStorageError> {
+        self.data
+            .login_data
+            .insert(user.id.clone(), Arc::new(RwLock::new(user)));
+        self.save_to_disk(settings).await
+    }
+
+    pub async fn update_template_version_id(&self, template_id: Uuid) -> Result<(), ()> {
+        if let Some(template) = self.data.templates.get(&template_id) {
+            let mut template = template.write().unwrap();
+            template.version = Some(Uuid::new_v4());
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn person_exists(&self, id: &Uuid) -> bool {
+        self.data.persons.contains_key(id)
+    }
+
+    pub async fn insert_template(
+        &self,
+        template: ProjectTemplateV2,
+        settings: &Settings,
+    ) -> Result<(), DataStorageError> {
+        self.data
+            .templates
+            .insert(template.id.clone(), Arc::new(RwLock::new(template)));
+        self.save_to_disk(settings).await
+    }
+
+    pub fn get_user(&self, email: &str) -> Result<Arc<RwLock<User>>, DataStorageError> {
+        self.data
+            .login_data
+            .iter()
+            .find(|x| x.value().read().unwrap().email == email)
+            .map(|x| Arc::clone(x.value()))
+            .ok_or(DataStorageError::NotFound("user".to_string()))
     }
 }
 
