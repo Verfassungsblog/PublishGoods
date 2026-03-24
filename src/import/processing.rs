@@ -180,7 +180,7 @@ impl ImportProcessor {
         self.job_archive
             .write()
             .unwrap()
-            .insert(job_id.clone(), new_status);
+            .insert(*job_id, new_status);
     }
 
     /// Starts the background import processor and returns a shared instance of the processor.
@@ -251,7 +251,7 @@ impl ImportProcessor {
                             .job_archive
                             .write()
                             .unwrap()
-                            .insert(job.id.clone(), status);
+                            .insert(job.id, status);
                         proc_clone
                             .process_job(job, proc_clone.project_storage.clone())
                             .await;
@@ -455,7 +455,7 @@ impl ImportProcessor {
             if page >= data.total_pages {
                 break;
             } else {
-                page = page + 1;
+                page += 1;
             }
         }
 
@@ -464,27 +464,21 @@ impl ImportProcessor {
 
         // Include Category Filter
         if let Some(include_categories) = job_data.include_categories {
-            posts = posts
-                .into_iter()
-                .filter(|post| {
-                    post.categories
-                        .iter()
-                        .any(|category| include_categories.contains(category))
-                })
-                .collect();
+            posts.retain(|post| {
+                post.categories
+                    .iter()
+                    .any(|category| include_categories.contains(category))
+            });
         }
 
         // Exclude Category Filter
         if let Some(exclude_categories) = job_data.exclude_categories {
-            posts = posts
-                .into_iter()
-                .filter(|post| {
-                    !post
-                        .categories
-                        .iter()
-                        .any(|category| exclude_categories.contains(category))
-                })
-                .collect();
+            posts.retain(|post| {
+                !post
+                    .categories
+                    .iter()
+                    .any(|category| exclude_categories.contains(category))
+            });
         }
 
         let number_of_posts = posts.len();
@@ -634,7 +628,7 @@ impl ImportProcessor {
                     },
                     Err(e) => return Err(ImportError::WordPressApiError(e)),
                 };
-                if new_posts.len() == 0 {
+                if new_posts.is_empty() {
                     break;
                 } else {
                     posts.append(&mut new_posts);
@@ -743,10 +737,7 @@ impl ImportProcessor {
     ) -> Result<(), ImportError> {
         let subtitle = match &post.acf {
             None => None,
-            Some(acf) => match &acf.subheadline {
-                None => None,
-                Some(subheadline) => Some(subheadline.clone()),
-            },
+            Some(acf) => acf.subheadline.clone(),
         };
 
         let mut identifiers = vec![];
@@ -1015,67 +1006,47 @@ impl ImportProcessor {
                 .classes
                 .contains(&"footnotes_reference_container".to_string()),
             _ => false,
-        }) {
-            if let Node::Element(div) = footnote_div {
-                if let Some(Node::Element(e)) = div.children.get(1) {
-                    if let Some(Node::Element(table)) = e.children.get(0) {
-                        if table.name == "table" {
-                            if let Some(Node::Element(tbody)) = table.children.get(1) {
-                                if tbody.name == "tbody" {
-                                    for row in &tbody.children {
-                                        if let Node::Element(tr) = row {
-                                            if let Some(Node::Element(th)) = tr.children.get(0) {
-                                                if let Some(Node::Element(a)) = th.children.get(0) {
-                                                    if a.classes
-                                                        .contains(&"footnote_backlink".to_string())
-                                                    {
-                                                        if let Some(id) = a.id.clone() {
-                                                            if let Some(Node::Element(td)) =
-                                                                tr.children.get(1)
-                                                            {
-                                                                if td.classes.contains(
-                                                                    &"footnote_plugin_text"
-                                                                        .to_string(),
-                                                                ) {
-                                                                    // The WP footnote plugin wraps the actual content in a
-                                                                    // `<td class="footnote_plugin_text">...</td>`.
-                                                                    // We only want to preserve the inner HTML, not the `td` tag.
-                                                                    let mut html = String::new();
-                                                                    for child in &td.children {
-                                                                        match child {
-                                                                            Node::Element(el) => {
-                                                                                html.push_str(
-                                                                                    &self
-                                                                                        .dom_to_html(
-                                                                                            el.clone(),
-                                                                                            None,
-                                                                                            endnotes,
-                                                                                            convert_links,
-                                                                                            true,
-                                                                                            project_data.clone(),
-                                                                                        )
-                                                                                        .await,
-                                                                                );
-                                                                            }
-                                                                            Node::Text(t) => {
-                                                                                html.push_str(t)
-                                                                            }
-                                                                            Node::Comment(_) => {}
-                                                                        }
-                                                                    }
-                                                                    footnotes.insert(id, html);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+        }) && let Node::Element(div) = footnote_div
+            && let Some(Node::Element(e)) = div.children.get(1)
+            && let Some(Node::Element(table)) = e.children.first()
+            && table.name == "table"
+            && let Some(Node::Element(tbody)) = table.children.get(1)
+            && tbody.name == "tbody"
+        {
+            for row in &tbody.children {
+                if let Node::Element(tr) = row
+                    && let Some(Node::Element(th)) = tr.children.first()
+                    && let Some(Node::Element(a)) = th.children.first()
+                    && a.classes.contains(&"footnote_backlink".to_string())
+                    && let Some(id) = a.id.clone()
+                    && let Some(Node::Element(td)) = tr.children.get(1)
+                    && td.classes.contains(&"footnote_plugin_text".to_string())
+                {
+                    // The WP footnote plugin wraps the actual content in a
+                    // `<td class="footnote_plugin_text">...</td>`.
+                    // We only want to preserve the inner HTML, not the `td` tag.
+                    let mut html = String::new();
+                    for child in &td.children {
+                        match child {
+                            Node::Element(el) => {
+                                html.push_str(
+                                    &self
+                                        .dom_to_html(
+                                            el.clone(),
+                                            None,
+                                            endnotes,
+                                            convert_links,
+                                            true,
+                                            project_data.clone(),
+                                        )
+                                        .await,
+                                );
                             }
+                            Node::Text(t) => html.push_str(t),
+                            Node::Comment(_) => {}
                         }
                     }
+                    footnotes.insert(id, html);
                 }
             }
         }
@@ -1165,20 +1136,20 @@ impl ImportProcessor {
                             };
                             let mut items: Vec<String> = vec![];
                             for child in &el.children {
-                                if let Node::Element(li) = child {
-                                    if li.name.to_lowercase() == "li" {
-                                        items.push(
-                                            self.dom_to_html(
-                                                li.clone(),
-                                                Some(&footnotes),
-                                                endnotes,
-                                                convert_links,
-                                                false,
-                                                project_data.clone(),
-                                            )
-                                            .await,
-                                        );
-                                    }
+                                if let Node::Element(li) = child
+                                    && li.name.to_lowercase() == "li"
+                                {
+                                    items.push(
+                                        self.dom_to_html(
+                                            li.clone(),
+                                            Some(&footnotes),
+                                            endnotes,
+                                            convert_links,
+                                            false,
+                                            project_data.clone(),
+                                        )
+                                        .await,
+                                    );
                                 }
                             }
                             if items.is_empty() {
@@ -1258,14 +1229,7 @@ impl ImportProcessor {
                                     }
                                     _ => None,
                                 });
-                                let caption = figcaption.map(|fc| {
-                                    // Keep caption as HTML string
-                                    // (use current footnote/link conversion rules)
-                                    // Note: if this fails, empty caption is fine.
-                                    //
-                                    // We can't await here, so handled below.
-                                    fc.clone()
-                                });
+                                let caption = figcaption.cloned();
                                 (src, caption)
                             };
 
@@ -1290,7 +1254,7 @@ impl ImportProcessor {
                             } else {
                                 let filename = src
                                     .split('/')
-                                    .last()
+                                    .next_back()
                                     .unwrap_or("image")
                                     .split('?')
                                     .next()
@@ -1411,70 +1375,67 @@ impl ImportProcessor {
         if let Some(aside) = dom.children.iter().find(|x| match x {
             Node::Element(el) => el.name == "aside" && el.id.as_deref() == Some("footnotes"),
             _ => false,
-        }) {
-            if let Node::Element(aside) = aside {
-                let ol = aside.children.iter().find(|node| match node {
-                    Node::Element(el) => el.name == "ol",
-                    _ => false,
-                });
-                if let Some(Node::Element(ol)) = ol {
-                    for node in ol.children.iter() {
-                        if let Node::Element(li) = node {
-                            let Some(id) = li.id.clone() else {
-                                continue;
-                            };
+        }) && let Node::Element(aside) = aside
+        {
+            let ol = aside.children.iter().find(|node| match node {
+                Node::Element(el) => el.name == "ol",
+                _ => false,
+            });
+            if let Some(Node::Element(ol)) = ol {
+                for node in ol.children.iter() {
+                    if let Node::Element(li) = node {
+                        let Some(id) = li.id.clone() else {
+                            continue;
+                        };
 
-                            // Prefer the first <p> inside the <li>
-                            let mut text = String::new();
-                            if let Some(Node::Element(p)) = li
-                                .children
-                                .iter()
-                                .find(|n| matches!(n, Node::Element(e) if e.name == "p"))
-                            {
-                                for child in &p.children {
-                                    match child {
-                                        Node::Text(t) => text.push_str(t),
-                                        Node::Element(el) => {
-                                            if el.name == "a" {
-                                                if let Some(Some(role)) = el.attributes.get("role")
-                                                {
-                                                    if role == "doc-backlink" {
-                                                        continue;
-                                                    }
-                                                }
-                                            }
-                                            text.push_str(
-                                                &self
-                                                    .dom_to_html(
-                                                        el.clone(),
-                                                        None,
-                                                        endnotes,
-                                                        convert_links,
-                                                        false,
-                                                        project_data.clone(),
-                                                    )
-                                                    .await,
-                                            );
+                        // Prefer the first <p> inside the <li>
+                        let mut text = String::new();
+                        if let Some(Node::Element(p)) = li
+                            .children
+                            .iter()
+                            .find(|n| matches!(n, Node::Element(e) if e.name == "p"))
+                        {
+                            for child in &p.children {
+                                match child {
+                                    Node::Text(t) => text.push_str(t),
+                                    Node::Element(el) => {
+                                        if el.name == "a"
+                                            && let Some(Some(role)) = el.attributes.get("role")
+                                            && role == "doc-backlink"
+                                        {
+                                            continue;
                                         }
-                                        Node::Comment(_) => {}
+                                        text.push_str(
+                                            &self
+                                                .dom_to_html(
+                                                    el.clone(),
+                                                    None,
+                                                    endnotes,
+                                                    convert_links,
+                                                    false,
+                                                    project_data.clone(),
+                                                )
+                                                .await,
+                                        );
                                     }
+                                    Node::Comment(_) => {}
                                 }
-                            } else {
-                                // Fallback: serialize full <li>
-                                text = self
-                                    .dom_to_html(
-                                        li.clone(),
-                                        None,
-                                        endnotes,
-                                        convert_links,
-                                        false,
-                                        project_data.clone(),
-                                    )
-                                    .await;
                             }
-
-                            footnotes.insert(id, text);
+                        } else {
+                            // Fallback: serialize full <li>
+                            text = self
+                                .dom_to_html(
+                                    li.clone(),
+                                    None,
+                                    endnotes,
+                                    convert_links,
+                                    false,
+                                    project_data.clone(),
+                                )
+                                .await;
                         }
+
+                        footnotes.insert(id, text);
                     }
                 }
             }
@@ -1558,20 +1519,20 @@ impl ImportProcessor {
                             };
                             let mut items: Vec<String> = vec![];
                             for child in &el.children {
-                                if let Node::Element(li) = child {
-                                    if li.name.to_lowercase() == "li" {
-                                        items.push(
-                                            self.dom_to_html(
-                                                li.clone(),
-                                                Some(&footnotes),
-                                                endnotes,
-                                                convert_links,
-                                                false,
-                                                project_data.clone(),
-                                            )
-                                            .await,
-                                        );
-                                    }
+                                if let Node::Element(li) = child
+                                    && li.name.to_lowercase() == "li"
+                                {
+                                    items.push(
+                                        self.dom_to_html(
+                                            li.clone(),
+                                            Some(&footnotes),
+                                            endnotes,
+                                            convert_links,
+                                            false,
+                                            project_data.clone(),
+                                        )
+                                        .await,
+                                    );
                                 }
                             }
                             if items.is_empty() {
@@ -1674,7 +1635,7 @@ impl ImportProcessor {
                             } else {
                                 let filename = src
                                     .split('/')
-                                    .last()
+                                    .next_back()
                                     .unwrap_or("image")
                                     .split('?')
                                     .next()
@@ -1789,98 +1750,84 @@ impl ImportProcessor {
         // Special cases: footnote references and link->citation conversion.
         if el.name == "a" {
             // Pandoc footnote references: <a role="doc-noteref"><sup>1</sup></a>
-            if let Some(Some(role)) = el.attributes.get("role") {
-                if role == "doc-noteref" {
-                    if let Some(Node::Element(sup)) = el.children.first() {
-                        if sup.name == "sup" {
-                            if let Some(Node::Text(num)) = sup.children.first() {
-                                if let Some(footnotes) = footnotes {
-                                    let num = num.trim().to_string();
-                                    if let Some(footnote) = footnotes.get(&format!("fn{}", num)) {
-                                        let content = footnote.replace('"', "'");
-                                        let note_type =
-                                            if endnotes { "endnote" } else { "footnote" };
-                                        return format!(
-                                            "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
-                                            note_type, content
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
+            if let Some(Some(role)) = el.attributes.get("role")
+                && role == "doc-noteref"
+                && let Some(Node::Element(sup)) = el.children.first()
+                && sup.name == "sup"
+                && let Some(Node::Text(num)) = sup.children.first()
+                && let Some(footnotes) = footnotes
+            {
+                let num = num.trim().to_string();
+                if let Some(footnote) = footnotes.get(&format!("fn{}", num)) {
+                    let content = footnote.replace('"', "'");
+                    let note_type = if endnotes { "endnote" } else { "footnote" };
+                    return format!(
+                        "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
+                        note_type, content
+                    );
                 }
             }
 
             // WordPress footnote plugin references
-            if let Some(Node::Element(sup)) = el.children.get(0) {
-                if sup
+            if let Some(Node::Element(sup)) = el.children.first()
+                && sup
                     .classes
                     .contains(&"footnote_plugin_tooltip_text".to_string())
+                && let Some(id) = sup.id.clone()
+            {
+                let footnote_id = id.replace("tooltip", "reference");
+                if let Some(footnotes) = footnotes
+                    && let Some(footnote) = footnotes.get(&footnote_id)
                 {
-                    if let Some(id) = sup.id.clone() {
-                        let footnote_id = id.replace("tooltip", "reference");
-                        if let Some(footnotes) = footnotes {
-                            if let Some(footnote) = footnotes.get(&footnote_id) {
-                                let content = footnote.replace('"', "'");
-                                let note_type = if endnotes { "endnote" } else { "footnote" };
-                                return format!(
-                                    "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
-                                    note_type, content
-                                );
-                            }
-                        }
-                    }
+                    let content = footnote.replace('"', "'");
+                    let note_type = if endnotes { "endnote" } else { "footnote" };
+                    return format!(
+                        "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
+                        note_type, content
+                    );
                 }
             }
 
             // Convert normal links to citations if enabled and resolvable via Zotero Translation Server.
-            if convert_links {
-                if let Some(Some(href)) = el.attributes.get("href") {
-                    // Skip internal anchors/mailto/etc.
-                    let href_lc = href.to_lowercase();
-                    let is_http = href_lc.starts_with("http://") || href_lc.starts_with("https://");
-                    if is_http {
-                        if let Some(entries) =
-                            link_converter::get_translation(href, &self.settings).await
-                        {
-                            if let Some(main_entry) = entries.first() {
-                                let main_key = main_entry.key().to_string();
-                                let by_key = Self::collect_bib_entries_with_parents(entries);
+            if convert_links && let Some(Some(href)) = el.attributes.get("href") {
+                // Skip internal anchors/mailto/etc.
+                let href_lc = href.to_lowercase();
+                let is_http = href_lc.starts_with("http://") || href_lc.starts_with("https://");
+                if is_http
+                    && let Some(entries) =
+                        link_converter::get_translation(href, &self.settings).await
+                    && let Some(main_entry) = entries.first()
+                {
+                    let main_key = main_entry.key().to_string();
+                    let by_key = Self::collect_bib_entries_with_parents(entries);
 
-                                // Build UUID mapping
-                                let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
-                                for key in by_key.keys() {
-                                    uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
-                                }
+                    // Build UUID mapping
+                    let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+                    for key in by_key.keys() {
+                        uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+                    }
 
-                                let main_uuid = *uuid_map.get(&main_key).unwrap();
+                    let main_uuid = *uuid_map.get(&main_key).unwrap();
 
-                                // Convert and resolve parents
-                                {
-                                    let mut project = project_data.write().unwrap();
-                                    for (key, entry) in by_key.iter() {
-                                        let mut converted = BibEntryV3::from(entry);
-                                        let entry_uuid = *uuid_map.get(key).unwrap();
-                                        converted.key = entry_uuid;
-                                        converted.parents = entry
-                                            .parents()
-                                            .iter()
-                                            .filter_map(|p| uuid_map.get(p.key()).copied())
-                                            .filter(|&p_uuid| p_uuid != entry_uuid)
-                                            .collect();
+                    // Convert and resolve parents
+                    {
+                        let mut project = project_data.write().unwrap();
+                        for (key, entry) in by_key.iter() {
+                            let mut converted = BibEntryV3::from(entry);
+                            let entry_uuid = *uuid_map.get(key).unwrap();
+                            converted.key = entry_uuid;
+                            converted.parents = entry
+                                .parents()
+                                .iter()
+                                .filter_map(|p| uuid_map.get(p.key()).copied())
+                                .filter(|&p_uuid| p_uuid != entry_uuid)
+                                .collect();
 
-                                        project.bibliography.add_entry(converted);
-                                    }
-                                }
-
-                                return format!(
-                                    "<citation data-key=\"{}\">C</citation>",
-                                    main_uuid
-                                );
-                            }
+                            project.bibliography.add_entry(converted);
                         }
                     }
+
+                    return format!("<citation data-key=\"{}\">C</citation>", main_uuid);
                 }
             }
         }
@@ -2020,7 +1967,7 @@ mod preprocess {
             .replace_all(&input, |caps: &regex::Captures| {
                 let key = &caps[2];
                 marks.push(key.to_string());
-                return format!("vb-cite-{}", marks.len() - 1);
+                format!("vb-cite-{}", marks.len() - 1)
             })
             .to_string();
 
@@ -2037,7 +1984,7 @@ mod postprocess {
         // Replace temporary citation marks with actual citations
         input = re
             .replace_all(&input, |caps: &regex::Captures| {
-                let num = match (&caps[1]).parse::<usize>() {
+                let num = match caps[1].parse::<usize>() {
                     Ok(num) => num,
                     Err(e) => {
                         warn!("Warning: couldn't parse vb-cite- citation number: {}", e);

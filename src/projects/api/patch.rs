@@ -9,8 +9,8 @@ use crate::utils::api_helpers::APIResult;
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
 use language::Language;
-use rocket::serde::json::Json;
 use rocket::State;
+use rocket::serde::json::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -55,14 +55,11 @@ impl Patch<PatchProjectData, ProjectData> for ProjectData {
 
         if let Some(name) = patch.name {
             new.name = name;
-        } else {
-            if let Some(metadata) = &patch.metadata {
-                if let Some(metadata) = &metadata {
-                    if let Some(title) = &metadata.title {
-                        new.name = title.clone();
-                    }
-                }
-            }
+        } else if let Some(metadata) = &patch.metadata
+            && let Some(metadata) = &metadata
+            && let Some(title) = &metadata.title
+        {
+            new.name = title.clone();
         }
 
         if let Some(description) = patch.description {
@@ -414,12 +411,12 @@ pub async fn patch_project(
     let project_list = data_storage.data.projects.clone();
     let read_lock = project_list.read().unwrap();
 
-    if let Some(project) = read_lock.get(&id) {
-        if project.name() != project_cpy.name {
-            drop(read_lock);
-            if let Some(project) = project_list.write().unwrap().get_mut(&id) {
-                project.set_name(project_cpy.name.clone());
-            }
+    if let Some(project) = read_lock.get(&id)
+        && project.name() != project_cpy.name
+    {
+        drop(read_lock);
+        if let Some(project) = project_list.write().unwrap().get_mut(&id) {
+            project.set_name(project_cpy.name.clone());
         }
     }
 

@@ -2,20 +2,20 @@ use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::project_storage::ProjectStorage;
 use crate::storage::project_storage::current::{
-    get_section_by_path, get_section_by_path_mut, PersonUuidOrString,
+    PersonUuidOrString, get_section_by_path, get_section_by_path_mut,
 };
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
-use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use crate::utils::dedup::dedup_vec;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
+use rocket::State;
 use rocket::form::validate::Contains;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::State;
 use std::collections::HashMap;
 /// Contains API routes to view and modify sections inside a project
 use std::sync::Arc;
@@ -156,7 +156,7 @@ pub async fn get_section(
         for person_or_string in metadata.authors.iter() {
             match person_or_string {
                 PersonUuidOrString::PersonUuid(id) => {
-                    match data_storage.get_person_cloned(&id).await {
+                    match data_storage.get_person_cloned(id).await {
                         Ok(person) => authors_detailed.push(PersonOrString::Person(person)),
                         Err(_) => {
                             error!(
@@ -188,7 +188,7 @@ pub async fn get_section(
         for person_or_string in metadata.editors.iter() {
             match person_or_string {
                 PersonUuidOrString::PersonUuid(id) => {
-                    match data_storage.get_person_cloned(&id).await {
+                    match data_storage.get_person_cloned(id).await {
                         Ok(person) => editors_detailed.push(PersonOrString::Person(person)),
                         Err(_) => {
                             error!(
@@ -277,7 +277,7 @@ pub async fn update_section(
         path.push(uuid::Uuid::parse_str(part)?);
     }
 
-    if path.len() == 0 {
+    if path.is_empty() {
         println!("Couldn't parse content path: path is empty");
         return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
     }
@@ -294,23 +294,19 @@ pub async fn update_section(
     // Check if new section data is valid
     // Check authors
     for author in new_section_data.metadata.authors.iter() {
-        if let PersonUuidOrString::PersonUuid(id) = author {
-            if !data_storage.person_exists(id) {
-                return Err(
-                    ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into(),
-                );
-            }
+        if let PersonUuidOrString::PersonUuid(id) = author
+            && !data_storage.person_exists(id)
+        {
+            return Err(ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into());
         }
     }
 
     // Check editors
     for editor in new_section_data.metadata.editors.iter() {
-        if let PersonUuidOrString::PersonUuid(id) = editor {
-            if !data_storage.person_exists(id) {
-                return Err(
-                    ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into(),
-                );
-            }
+        if let PersonUuidOrString::PersonUuid(id) = editor
+            && !data_storage.person_exists(id)
+        {
+            return Err(ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into());
         }
     }
 

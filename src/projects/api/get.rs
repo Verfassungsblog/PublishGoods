@@ -1,16 +1,16 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use crate::storage::ProjectTemplateV2;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::current::{Bibliography, PersonUuidOrString};
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::{ProjectMetadata, ProjectStorage};
-use crate::storage::ProjectTemplateV2;
 use crate::utils::api_helpers::{APIResponse, APIResult};
 use crate::utils::csl::{list_available_locales, list_available_styles};
 use chrono::NaiveDate;
 use language::Language;
-use rocket::form::validate::Contains;
 use rocket::State;
+use rocket::form::validate::Contains;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -164,54 +164,60 @@ pub async fn get_project(
         if parts.contains("metadata") {
             api_response.metadata = loaded_project.metadata.map(|md| md.into());
             if let Some(metadata) = &mut api_response.metadata {
-                if let Some(authors) = &metadata.authors {
-                    if parts.contains("metadata.authors") {
-                        let mut authors_extended: Vec<PersonOrString> = Vec::new();
+                if let Some(authors) = &metadata.authors
+                    && parts.contains("metadata.authors")
+                {
+                    let mut authors_extended: Vec<PersonOrString> = Vec::new();
 
-                        for author in authors {
-                            match author {
-                                PersonUuidOrString::NameString(name) => {
-                                    authors_extended.push(PersonOrString::NameString(name.clone()))
-                                }
-                                PersonUuidOrString::PersonUuid(uuid) => {
-                                    match data_storage.get_person_cloned(&uuid).await {
-                                        Ok(person) => {
-                                            authors_extended.push(PersonOrString::Person(person))
-                                        }
-                                        Err(e) => {
-                                            warn!("Person with uuid used in project metadata, but no longer exists. Skipping. {:?}", e);
-                                        }
+                    for author in authors {
+                        match author {
+                            PersonUuidOrString::NameString(name) => {
+                                authors_extended.push(PersonOrString::NameString(name.clone()))
+                            }
+                            PersonUuidOrString::PersonUuid(uuid) => {
+                                match data_storage.get_person_cloned(uuid).await {
+                                    Ok(person) => {
+                                        authors_extended.push(PersonOrString::Person(person))
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Person with uuid used in project metadata, but no longer exists. Skipping. {:?}",
+                                            e
+                                        );
                                     }
                                 }
                             }
                         }
-                        metadata.authors_expanded = Some(authors_extended);
                     }
+                    metadata.authors_expanded = Some(authors_extended);
                 }
 
-                if let Some(editors) = &metadata.editors {
-                    if parts.contains("metadata.editors") {
-                        let mut editors_expanded: Vec<PersonOrString> = Vec::new();
+                if let Some(editors) = &metadata.editors
+                    && parts.contains("metadata.editors")
+                {
+                    let mut editors_expanded: Vec<PersonOrString> = Vec::new();
 
-                        for editor in editors {
-                            match editor {
-                                PersonUuidOrString::NameString(name) => {
-                                    editors_expanded.push(PersonOrString::NameString(name.clone()))
-                                }
-                                PersonUuidOrString::PersonUuid(uuid) => {
-                                    match data_storage.get_person_cloned(&uuid).await {
-                                        Ok(person) => {
-                                            editors_expanded.push(PersonOrString::Person(person))
-                                        }
-                                        Err(e) => {
-                                            warn!("Person with uuid used in project metadata, but no longer exists. Skipping. {:?}", e);
-                                        }
+                    for editor in editors {
+                        match editor {
+                            PersonUuidOrString::NameString(name) => {
+                                editors_expanded.push(PersonOrString::NameString(name.clone()))
+                            }
+                            PersonUuidOrString::PersonUuid(uuid) => {
+                                match data_storage.get_person_cloned(uuid).await {
+                                    Ok(person) => {
+                                        editors_expanded.push(PersonOrString::Person(person))
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Person with uuid used in project metadata, but no longer exists. Skipping. {:?}",
+                                            e
+                                        );
                                     }
                                 }
                             }
                         }
-                        metadata.editors_expanded = Some(editors_expanded);
                     }
+                    metadata.editors_expanded = Some(editors_expanded);
                 }
             }
         }

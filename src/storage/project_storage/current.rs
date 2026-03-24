@@ -1,9 +1,9 @@
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
-use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::sections::Section;
+use crate::storage::project_storage::sections::current::SectionV6;
 use crate::storage::project_storage::{
-    ProjectData, ProjectStorage, ProjectStorageError, CURRENT_VERSION,
+    CURRENT_VERSION, ProjectData, ProjectStorage, ProjectStorageError,
 };
 use crate::storage::{BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
@@ -27,10 +27,16 @@ use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
 impl MultipleFileLocks for ProjectStorage {
     fn get_file_lock_entry(&self, uuid: &uuid::Uuid) -> Arc<AtomicBool> {
-        match self.file_locks.entry(uuid.clone()) {
+        match self.file_locks.entry(*uuid) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => entry.insert(Arc::new(AtomicBool::new(false))).clone(),
         }
+    }
+}
+
+impl Default for ProjectStorage {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -68,7 +74,10 @@ impl ProjectStorage {
                     let version = match parts[1].parse::<u64>() {
                         Ok(version) => version,
                         Err(e) => {
-                            error!("error while loading project into memory: couldn't parse version number: {}. Skipping file.", e);
+                            error!(
+                                "error while loading project into memory: couldn't parse version number: {}. Skipping file.",
+                                e
+                            );
                             continue;
                         }
                     };
@@ -125,14 +134,14 @@ impl ProjectStorage {
         settings: &Settings,
     ) -> Result<Arc<RwLock<ProjectData>>, ProjectStorageError> {
         // Check if project is already in memory
-        match self.projects.entry(uuid.clone()) {
+        match self.projects.entry(*uuid) {
             Entry::Occupied(entry) => {
                 let project = entry.get();
                 project.write().unwrap().last_interaction = SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap()
                     .as_secs();
-                return Ok(Arc::clone(project));
+                Ok(Arc::clone(project))
             }
             Entry::Vacant(entry) => {
                 // Try to load from disk
@@ -157,7 +166,7 @@ impl ProjectStorage {
         debug!("Deleting project {}", project_id);
 
         // Remove project from memory:
-        if let None = self.projects.remove(&project_id) {
+        if self.projects.remove(project_id).is_none() {
             return Err(ProjectStorageError::ProjectNotFound);
         }
 
@@ -202,7 +211,7 @@ impl ProjectStorage {
         );
         let path_temp = format!("{}.temp", &path);
 
-        if let Err(_) = self.wait_for_file_lock(&uuid, settings).await {
+        if let Err(_) = self.wait_for_file_lock(uuid, settings).await {
             eprintln!("error while saving project to disk: couldn't get file lock");
             return Err(ProjectStorageError::CouldntAcquireLock);
         }
@@ -269,6 +278,12 @@ pub struct BibFolder {
     pub parent: Option<Uuid>,
 }
 
+impl Default for Bibliography {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bibliography {
     pub fn new() -> Bibliography {
         Bibliography {
@@ -293,11 +308,11 @@ impl Bibliography {
 
         let mut parents: Vec<hayagriva::Entry> = vec![];
         for parent in &value.parents {
-            if let BibEntryOrFolder::BibEntry(_) = self.get_entry(parent)?.clone() {
-                if let Some(parent) = self.get_entry_as_hayagriva(parent) {
-                    // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
-                    parents.push(parent);
-                }
+            if let BibEntryOrFolder::BibEntry(_) = self.get_entry(parent)?.clone()
+                && let Some(parent) = self.get_entry_as_hayagriva(parent)
+            {
+                // Caution: this could recurse infinitely if there are circular references which must be circumvented in creation
+                parents.push(parent);
             }
         }
 
@@ -307,7 +322,7 @@ impl Bibliography {
             entry.set_title(title.into());
         }
 
-        if value.authors.len() > 0 {
+        if !value.authors.is_empty() {
             entry.set_authors(value.authors.iter().map(|x| x.clone().into()).collect())
         }
 
@@ -315,11 +330,11 @@ impl Bibliography {
             entry.set_date(date.into());
         }
 
-        if value.editors.len() > 0 {
+        if !value.editors.is_empty() {
             entry.set_editors(value.editors.iter().map(|x| x.clone().into()).collect());
         }
 
-        if value.affiliated.len() > 0 {
+        if !value.affiliated.is_empty() {
             entry.set_affiliated(value.affiliated.into_iter().map(|x| x.into()).collect());
         }
 
@@ -354,7 +369,7 @@ impl Bibliography {
         if let Some(page_range) = value.page_range {
             let npage_range: MaybeTyped<hayagriva::types::PageRanges> = match page_range {
                 MyMaybeTyped::Typed(t) => {
-                    let my_page_ranges: MyPageRanges = t.into();
+                    let my_page_ranges: MyPageRanges = t;
                     MaybeTyped::Typed(my_page_ranges.into())
                 }
                 MyMaybeTyped::String(s) => MaybeTyped::String(s),
@@ -498,8 +513,9 @@ impl ProjectDataV10 {
                 return Ok(());
             } else {
                 // Check if one of the children is the parent section
-                if let Some(_) =
-                    section.insert_child_section_as_child(parent_section_id, &section_to_insert)
+                if section
+                    .insert_child_section_as_child(parent_section_id, &section_to_insert)
+                    .is_some()
                 {
                     return Ok(());
                 }
@@ -524,8 +540,9 @@ impl ProjectDataV10 {
             }
             None => {
                 for section in &mut self.sections {
-                    if let Some(_) =
-                        section.insert_child_section_after(previous_element, &section_to_insert)
+                    if section
+                        .insert_child_section_after(previous_element, &section_to_insert)
+                        .is_some()
                     {
                         return Ok(());
                     }

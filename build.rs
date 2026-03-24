@@ -61,7 +61,7 @@ fn main() {
     // Compile typescript to javascript with tsc
 
     let res3 = std::process::Command::new("tsc")
-        .args(&[
+        .args([
             "--module",
             "system",
             "--lib",
@@ -76,11 +76,11 @@ fn main() {
         .expect("Failed to compile typescript to javascript with tsc");
 
     let res1 = std::process::Command::new("npm")
-        .args(&["--prefix", "typescript", "run", "build"])
+        .args(["--prefix", "typescript", "run", "build"])
         .output()
         .expect("Failed to compile typescript to javascript with npm run build");
     let res2 = std::process::Command::new("tsc")
-        .args(&[
+        .args([
             "--module",
             "system",
             "--lib",

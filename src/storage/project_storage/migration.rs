@@ -4,7 +4,7 @@ use crate::storage::project_storage::current::{
 use crate::storage::project_storage::sections::migration::{
     SectionOrTocV1, SectionOrTocV2, SectionOrTocV3, SectionOrTocV4, SectionOrTocV5, SectionV5,
 };
-use crate::storage::project_storage::{ProjectData, ProjectStorageError, CURRENT_VERSION};
+use crate::storage::project_storage::{CURRENT_VERSION, ProjectData, ProjectStorageError};
 use crate::storage::{BibEntryV2, BibEntryV3, MyPublisher, OldBibEntry};
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
@@ -358,7 +358,7 @@ impl From<ProjectDataV2> for ProjectDataV3 {
             bibliography: value
                 .bibliography
                 .iter()
-                .map(|(k, v)| (k.clone(), v.clone().into()))
+                .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
         }
     }
@@ -396,10 +396,7 @@ impl From<ProjectDataV3> for ProjectDataV4 {
 
 impl From<ProjectDataV4> for ProjectDataV5 {
     fn from(value: ProjectDataV4) -> Self {
-        let metadata: Option<ProjectMetadataV2> = match value.metadata {
-            Some(metadata) => Some(metadata.into()),
-            None => None,
-        };
+        let metadata: Option<ProjectMetadataV2> = value.metadata.map(|metadata| metadata.into());
 
         ProjectDataV5 {
             name: value.name,
@@ -407,7 +404,7 @@ impl From<ProjectDataV4> for ProjectDataV5 {
             template_id: value.template_id,
             last_interaction: value.last_interaction,
             metadata,
-            settings: value.settings.map(|s| s.into()),
+            settings: value.settings,
             sections: value
                 .sections
                 .iter()
@@ -420,10 +417,7 @@ impl From<ProjectDataV4> for ProjectDataV5 {
 
 impl From<ProjectDataV5> for ProjectDataV6 {
     fn from(value: ProjectDataV5) -> Self {
-        let settings = match value.settings {
-            Some(set) => Some(set.into()),
-            None => None,
-        };
+        let settings = value.settings.map(|set| set.into());
 
         ProjectDataV6 {
             name: value.name,
@@ -432,11 +426,7 @@ impl From<ProjectDataV5> for ProjectDataV6 {
             last_interaction: value.last_interaction,
             metadata: value.metadata,
             settings,
-            sections: value
-                .sections
-                .iter()
-                .map(|section| section.clone().into())
-                .collect(),
+            sections: value.sections.to_vec(),
             bibliography: value.bibliography,
         }
     }
@@ -717,13 +707,13 @@ impl From<ProjectMetadataV3> for ProjectMetadataV4 {
         let authors = value.authors.map(|authors| {
             authors
                 .into_iter()
-                .map(|a| PersonUuidOrString::PersonUuid(a))
+                .map(PersonUuidOrString::PersonUuid)
                 .collect()
         });
         let editors = value.editors.map(|editors| {
             editors
                 .into_iter()
-                .map(|e| PersonUuidOrString::PersonUuid(e))
+                .map(PersonUuidOrString::PersonUuid)
                 .collect()
         });
 

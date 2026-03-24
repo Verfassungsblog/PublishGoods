@@ -1,11 +1,11 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::data_storage::current::ProjectListEntry;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::data_storage::current::ProjectListEntry;
 use crate::storage::project_storage::ProjectStorage;
 use chrono::Utc;
-use rocket::http::Status;
 use rocket::State;
+use rocket::http::Status;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
 
@@ -38,10 +38,9 @@ pub async fn show_editor(
             .entries
             .iter_mut()
             .find(|entry| *entry.id() == project_id)
+            && let ProjectListEntry::Project(project) = entry
         {
-            if let ProjectListEntry::Project(project) = entry {
-                project.last_interaction = Utc::now().naive_utc();
-            }
+            project.last_interaction = Utc::now().naive_utc();
         }
     }
 

@@ -14,8 +14,8 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 use crate::storage::data_storage::DataStorage;
@@ -55,7 +55,10 @@ pub trait MultipleFileLocks {
         while self.create_file_lock(uuid).is_err() {
             time_waited += 10;
             if time_waited > settings.file_lock_timeout {
-                error!("error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.", time_waited);
+                error!(
+                    "error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.",
+                    time_waited
+                );
                 return Err(());
             }
 
@@ -95,7 +98,10 @@ pub trait SingleFileLock {
         while self.create_file_lock().is_err() {
             time_waited += 10;
             if time_waited > settings.file_lock_timeout {
-                eprintln!("error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.", time_waited);
+                eprintln!(
+                    "error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.",
+                    time_waited
+                );
                 return Err(());
             }
 
@@ -556,10 +562,7 @@ impl From<OldBibEntry> for BibEntryV2 {
 
 impl From<&hayagriva::Entry> for BibEntryV2 {
     fn from(value: &hayagriva::Entry) -> Self {
-        let title = match value.title() {
-            Some(title) => Some(title.clone().into()),
-            None => None,
-        };
+        let title = value.title().map(|title| title.clone().into());
         let publisher = match value.publisher() {
             Some(publisher) => {
                 let default_fs = FormatString::from_str("").unwrap();
@@ -571,39 +574,21 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             }
             None => None,
         };
-        let location = match value.location() {
-            Some(location) => Some(location.clone().into()),
-            None => None,
-        };
-        let organization = match value.organization() {
-            Some(organization) => Some(organization.clone().into()),
-            None => None,
-        };
-        let archive = match value.archive() {
-            Some(archive) => Some(archive.clone().into()),
-            None => None,
-        };
-        let archive_location = match value.archive_location() {
-            Some(archive_location) => Some(archive_location.clone().into()),
-            None => None,
-        };
-        let call_number = match value.call_number() {
-            Some(call_number) => Some(call_number.clone().into()),
-            None => None,
-        };
-        let note = match value.note() {
-            Some(note) => Some(note.clone().into()),
-            None => None,
-        };
-        let abstract_ = match value.abstract_() {
-            Some(abstract_) => Some(abstract_.clone().into()),
-            None => None,
-        };
+        let location = value.location().map(|location| location.clone().into());
+        let organization = value
+            .organization()
+            .map(|organization| organization.clone().into());
+        let archive = value.archive().map(|archive| archive.clone().into());
+        let archive_location = value
+            .archive_location()
+            .map(|archive_location| archive_location.clone().into());
+        let call_number = value
+            .call_number()
+            .map(|call_number| call_number.clone().into());
+        let note = value.note().map(|note| note.clone().into());
+        let abstract_ = value.abstract_().map(|abstract_| abstract_.clone().into());
         let annote = None;
-        let genre = match value.genre() {
-            Some(genre) => Some(genre.clone().into()),
-            None => None,
-        };
+        let genre = value.genre().map(|genre| genre.clone().into());
         let authors = match value.authors() {
             Some(authors) => authors.iter().map(|x| x.clone().into()).collect(),
             None => vec![],
@@ -613,23 +598,19 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             None => vec![],
         };
 
-        let serial_numbers = match value.serial_number() {
-            Some(serial_numbers) => Some(serial_numbers.0.clone()),
-            None => None,
-        };
+        let serial_numbers = value
+            .serial_number()
+            .map(|serial_numbers| serial_numbers.0.clone());
 
-        let issue = match value.issue() {
-            Some(issue) => Some(MyMaybeTyped::from_hayagriva(issue.clone())),
-            None => None,
-        };
-        let volume = match value.volume() {
-            Some(volume) => Some(MyMaybeTyped::from_hayagriva(volume.clone())),
-            None => None,
-        };
-        let edition = match value.edition() {
-            Some(edition) => Some(MyMaybeTyped::from_hayagriva(edition.clone())),
-            None => None,
-        };
+        let issue = value
+            .issue()
+            .map(|issue| MyMaybeTyped::from_hayagriva(issue.clone()));
+        let volume = value
+            .volume()
+            .map(|volume| MyMaybeTyped::from_hayagriva(volume.clone()));
+        let edition = value
+            .edition()
+            .map(|edition| MyMaybeTyped::from_hayagriva(edition.clone()));
         let page_range = match value.page_range() {
             Some(page_range) => match page_range {
                 MaybeTyped::Typed(t) => {
@@ -641,47 +622,34 @@ impl From<&hayagriva::Entry> for BibEntryV2 {
             },
             None => None,
         };
-        let volume_total = match value.volume_total() {
-            Some(volume_total) => Some(volume_total.clone().into()),
-            None => None,
-        };
-        let page_total = match value.page_total() {
-            Some(page_total) => Some(page_total.clone().into()),
-            None => None,
-        };
-        let url = match value.url() {
-            Some(url) => Some(url.clone().into()),
-            None => None,
-        };
-        let date = match value.date() {
-            Some(date) => Some(date.clone().into()),
-            None => None,
-        };
-        let language = match value.language() {
-            Some(language) => Some(language.to_string()),
-            None => None,
-        };
+        let volume_total = value
+            .volume_total()
+            .map(|volume_total| volume_total.clone().into());
+        let page_total = value
+            .page_total()
+            .map(|page_total| page_total.clone().into());
+        let url = value.url().map(|url| url.clone().into());
+        let date = value.date().map(|date| (*date).into());
+        let language = value.language().map(|language| language.to_string());
         let affiliated = match value.affiliated() {
             Some(affiliated) => affiliated.iter().map(|x| x.clone().into()).collect(),
             None => vec![],
         };
-        let time_range = match value.time_range() {
-            Some(time_range) => Some(MyMaybeTyped::from_hayagriva(time_range.clone())),
-            None => None,
-        };
-        let runtime = match value.runtime() {
-            Some(runtime) => Some(MyMaybeTyped::from_hayagriva(runtime.clone())),
-            None => None,
-        };
+        let time_range = value
+            .time_range()
+            .map(|time_range| MyMaybeTyped::from_hayagriva(time_range.clone()));
+        let runtime = value
+            .runtime()
+            .map(|runtime| MyMaybeTyped::from_hayagriva(runtime.clone()));
 
         let parents_arr = value.parents();
         let mut parents = vec![];
-        if parents_arr.len() > 0 {
+        if !parents_arr.is_empty() {
             parents = parents_arr.iter().map(|x| (&x.clone()).into()).collect();
         }
         BibEntryV2 {
             key: value.key().to_string(),
-            entry_type: value.entry_type().clone(),
+            entry_type: *value.entry_type(),
             title,
             authors,
             date,
@@ -773,7 +741,7 @@ impl From<&hayagriva::Entry> for BibEntryV3 {
             entry_type: *value.entry_type(),
             title,
             authors,
-            date: value.date().map(|d| d.clone().into()),
+            date: value.date().map(|d| (*d).into()),
             editors,
             affiliated: value
                 .affiliated()
@@ -814,7 +782,7 @@ impl From<BibEntryV2> for hayagriva::Entry {
             entry.set_title(title.into());
         }
 
-        if value.authors.len() > 0 {
+        if !value.authors.is_empty() {
             entry.set_authors(value.authors.iter().map(|x| x.clone().into()).collect())
         }
 
@@ -822,11 +790,11 @@ impl From<BibEntryV2> for hayagriva::Entry {
             entry.set_date(date.into());
         }
 
-        if value.editors.len() > 0 {
+        if !value.editors.is_empty() {
             entry.set_editors(value.editors.iter().map(|x| x.clone().into()).collect());
         }
 
-        if value.affiliated.len() > 0 {
+        if !value.affiliated.is_empty() {
             entry.set_affiliated(value.affiliated.into_iter().map(|x| x.into()).collect());
         }
 
@@ -923,15 +891,12 @@ impl From<BibEntryV2> for hayagriva::Entry {
             entry.set_genre(genre.into());
         }
 
-        if value.parents.len() > 0 {
+        if !value.parents.is_empty() {
             entry.set_parents(
                 value
                     .parents
                     .iter()
-                    .map(|x| {
-                        <BibEntryV2 as Clone>::clone(&(*(&<BibEntryV2 as Clone>::clone(&(*x)))))
-                            .into()
-                    })
+                    .map(|x| <BibEntryV2 as Clone>::clone(&<BibEntryV2 as Clone>::clone(x)).into())
                     .collect(),
             );
         }
@@ -1009,7 +974,7 @@ impl User {
     pub fn new(email: String, name: String, password: String) -> Self {
         let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
         let password_hash = Argon2::default()
-            .hash_password(&password.as_bytes(), &salt)
+            .hash_password(password.as_bytes(), &salt)
             .unwrap()
             .to_string();
 
@@ -1070,7 +1035,7 @@ pub async fn save_data_worker(
                 let project_id = entry.key();
                 let project = entry.value();
                 if project.read().unwrap().last_interaction > last_save {
-                    projects_to_save.push(project_id.clone());
+                    projects_to_save.push(*project_id);
                 }
             }
             for project_id in projects_to_save {
@@ -1102,10 +1067,7 @@ impl From<FormatString> for MyFormatString {
     fn from(format_string: FormatString) -> Self {
         MyFormatString {
             value: format_string.value.to_string(),
-            short: match format_string.short {
-                Some(short) => Some(short.to_string()),
-                None => None,
-            },
+            short: format_string.short.map(|short| short.to_string()),
         }
     }
 }
@@ -1477,14 +1439,8 @@ pub struct MyDate {
 impl From<Date> for MyDate {
     fn from(value: Date) -> Self {
         // Convert 0-based to 1-based
-        let month = match value.month {
-            Some(month) => Some(month + 1),
-            None => None,
-        };
-        let day = match value.day {
-            Some(day) => Some(day + 1),
-            None => None,
-        };
+        let month = value.month.map(|month| month + 1);
+        let day = value.day.map(|day| day + 1);
         MyDate {
             year: value.year,
             month,

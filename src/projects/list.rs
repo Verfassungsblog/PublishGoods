@@ -1,8 +1,7 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::data_storage::current::ProjectListEntry;
 use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::ProjectStorage;
+use crate::storage::data_storage::current::ProjectListEntry;
 use rocket::State;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
@@ -14,16 +13,14 @@ pub async fn list_projects(
     settings: &State<Settings>,
 ) -> Template {
     let mut projects = data_storage.data.projects.read().unwrap().entries.clone();
-    projects.sort_by(|b, a| {
-        return match a {
-            ProjectListEntry::Folder(_) => std::cmp::Ordering::Greater,
-            ProjectListEntry::Project(project) => match b {
-                ProjectListEntry::Folder(_) => std::cmp::Ordering::Equal,
-                ProjectListEntry::Project(project_b) => {
-                    project.last_interaction.cmp(&project_b.last_interaction)
-                }
-            },
-        };
+    projects.sort_by(|b, a| match a {
+        ProjectListEntry::Folder(_) => std::cmp::Ordering::Greater,
+        ProjectListEntry::Project(project) => match b {
+            ProjectListEntry::Folder(_) => std::cmp::Ordering::Equal,
+            ProjectListEntry::Project(project_b) => {
+                project.last_interaction.cmp(&project_b.last_interaction)
+            }
+        },
     });
 
     #[derive(serde::Serialize)]

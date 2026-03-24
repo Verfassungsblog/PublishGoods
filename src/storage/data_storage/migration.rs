@@ -1,5 +1,5 @@
 use crate::storage::data_storage::current::InnerDataStorageV4;
-use crate::storage::data_storage::{DataStorageLoadError, InnerDataStorage, CURRENT_VERSION};
+use crate::storage::data_storage::{CURRENT_VERSION, DataStorageLoadError, InnerDataStorage};
 use crate::storage::{ProjectTemplateV1, ProjectTemplateV2, User};
 use bincode::{Decode, Encode};
 use dashmap::DashMap;
@@ -40,7 +40,9 @@ pub fn load_inner_data_storage(
             )?;
             fs::create_dir_all(format!("{}/templates", path_to_data))?;
         }
-        warn!("Migrated DataStorage from v1, you need to migrate your templates manually! Your templates were moved to data/templates-old!");
+        warn!(
+            "Migrated DataStorage from v1, you need to migrate your templates manually! Your templates were moved to data/templates-old!"
+        );
 
         version = 2;
     }
@@ -122,9 +124,9 @@ pub struct InnerDataStorageV3 {
 impl From<InnerDataStorageV3> for InnerDataStorageV4 {
     fn from(value: InnerDataStorageV3) -> Self {
         InnerDataStorageV4 {
-            login_data: DashMap::from_iter(value.login_data.into_iter()),
-            persons: DashMap::from_iter(value.persons.into_iter()),
-            templates: DashMap::from_iter(value.templates.into_iter()),
+            login_data: DashMap::from_iter(value.login_data),
+            persons: DashMap::from_iter(value.persons),
+            templates: DashMap::from_iter(value.templates),
             projects: Default::default(),
         }
     }
@@ -151,7 +153,9 @@ impl From<InnerDataStorageV2> for InnerDataStorageV3 {
 
 impl From<InnerDataStorageV1> for InnerDataStorageV2 {
     fn from(value: InnerDataStorageV1) -> Self {
-        println!("Migrating data storage from V1 to V2. You have to migrate your templates manually. Your old templates where moved to data/templates-old"); // TODO: move
+        println!(
+            "Migrating data storage from V1 to V2. You have to migrate your templates manually. Your old templates where moved to data/templates-old"
+        ); // TODO: move
         InnerDataStorageV2 {
             login_data: value.login_data,
             persons: value.persons,

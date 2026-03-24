@@ -10,13 +10,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::rustls::ClientConfig;
+use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::{TlsConnector, TlsStream};
 use vb_exchange::export_formats::ExportFormat;
 use vb_exchange::{
-    read_message, send_message, CommunicationError, FilesOnMemoryOrHarddrive, Message,
-    RenderingError, RenderingRequest, RenderingStatus, TemplateContents, TemplateDataResult,
+    CommunicationError, FilesOnMemoryOrHarddrive, Message, RenderingError, RenderingRequest,
+    RenderingStatus, TemplateContents, TemplateDataResult, read_message, send_message,
 };
 
 #[derive(Default, Serialize, Deserialize)]
@@ -112,7 +112,7 @@ impl RenderingManager {
                             *status = RenderingStatus::PreparingOnLocal
                         }
 
-                        let request_id_cpy = request.request_id.clone();
+                        let request_id_cpy = request.request_id;
 
                         let rendering_manager_cpy2 = rendering_manager_cpy.clone();
 
@@ -174,7 +174,7 @@ impl RenderingManager {
             .templates
             .get(&template_id)
         {
-            Some(template) => template.read().unwrap().version.unwrap().clone(),
+            Some(template) => template.read().unwrap().version.unwrap(),
             None => return Err(RenderingError::TemplateNotFound),
         };
 
@@ -192,13 +192,13 @@ impl RenderingManager {
         // Check if upload directory exists:
         let upload_dir = PathBuf::from(format!("data/projects/{}/uploads", &request.project_id));
         let uploads = if upload_dir.exists() {
-            match vb_exchange::recursive_read_dir_async(PathBuf::from(upload_dir)).await {
+            match vb_exchange::recursive_read_dir_async(upload_dir).await {
                 Ok(uploads) => uploads,
                 Err(e) => {
                     return Err(RenderingError::Other(format!(
                         "IO Error packing uploaded files: {}",
                         e
-                    )))
+                    )));
                 }
             }
         } else {
@@ -258,7 +258,7 @@ impl RenderingManager {
                 .unwrap();
 
             debug!("Connection to Server.");
-            match Self::connect_to_server(rendering_manager.clone(), &export_server_data).await {
+            match Self::connect_to_server(rendering_manager.clone(), export_server_data).await {
                 Ok(res) => {
                     tls_stream = res;
                     break;
@@ -266,10 +266,13 @@ impl RenderingManager {
                 Err(e) => {
                     match e {
                         RenderingError::ConnectionToRenderingServerFailed => {
-                            error!("Warning: Couldn't connect to rendering server no. {}. Trying next available.", next_rendering_server+1);
+                            error!(
+                                "Warning: Couldn't connect to rendering server no. {}. Trying next available.",
+                                next_rendering_server + 1
+                            );
                             // Connection failed, try another server.
 
-                            next_rendering_server = next_rendering_server + 1;
+                            next_rendering_server += 1;
 
                             if next_rendering_server >= num_of_rendering_servers as u64 {
                                 next_rendering_server = 0;
@@ -311,19 +314,22 @@ impl RenderingManager {
                 }
             };
 
-        let domain: ServerName = export_server
-            .domain_name
-            .clone()
-            .try_into()
-            .expect(&format!(
-                "Warning: Invalid DNS name for export server: {}",
-                export_server.domain_name
-            ));
+        let domain: ServerName =
+            export_server
+                .domain_name
+                .clone()
+                .try_into()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Warning: Invalid DNS name for export server: {}",
+                        export_server.domain_name
+                    )
+                });
         match connector.connect(domain, stream).await {
             Ok(res) => Ok(res.into()),
             Err(e) => {
                 error!("Couldn't initiate tls stream: {}", e);
-                return Err(RenderingError::ConnectionToRenderingServerFailed);
+                Err(RenderingError::ConnectionToRenderingServerFailed)
             }
         }
     }
@@ -332,7 +338,7 @@ impl RenderingManager {
         request: RenderingRequest,
         rendering_manager: Arc<RenderingManager>,
     ) -> Result<(), RenderingError> {
-        let request_id = request.request_id.clone();
+        let request_id = request.request_id;
         if let Err(_) = send_message(&mut tls_stream, Message::RenderingRequest(request)).await {
             return Err(RenderingError::CommunicationError);
         }
@@ -452,7 +458,7 @@ impl RenderingManager {
                                                     .write()
                                                     .unwrap()
                                                     .insert(
-                                                        request_id.clone(),
+                                                        request_id,
                                                         RenderingStatus::SavedOnLocal(
                                                             res_path, res_dir,
                                                         ),
@@ -465,7 +471,7 @@ impl RenderingManager {
                                                     .write()
                                                     .unwrap()
                                                     .insert(
-                                                        request_id.clone(),
+                                                        request_id,
                                                         RenderingStatus::Failed(
                                                             RenderingError::Other(
                                                                 "IO Error".to_string(),
@@ -481,34 +487,31 @@ impl RenderingManager {
                                                 .write()
                                                 .unwrap()
                                                 .insert(
-                                                    request_id.clone(),
+                                                    request_id,
                                                     RenderingStatus::Failed(RenderingError::Other(
                                                         "Join Error".to_string(),
                                                     )),
                                                 );
                                         }
                                     }
-                                } else {
-                                    if let Some(file) = res.files.pop() {
-                                        let file_path = res_dir.join(file.name);
-                                        if let Err(e) =
-                                            tokio::fs::write(&file_path, file.content).await
-                                        {
-                                            error!("Couldn't save rendering result to file: {}", e);
-                                            return Err(RenderingError::Other(
-                                                "Couldn't save rendering output.".to_string(),
-                                            ));
-                                        }
-                                        rendering_manager.requests_archive.write().unwrap().insert(
-                                            request_id.clone(),
-                                            RenderingStatus::SavedOnLocal(file_path, res_dir),
-                                        );
-                                    } else {
-                                        rendering_manager.requests_archive.write().unwrap().insert(
-                                            request_id.clone(),
-                                            RenderingStatus::Failed(RenderingError::NoResultFiles),
-                                        );
+                                } else if let Some(file) = res.files.pop() {
+                                    let file_path = res_dir.join(file.name);
+                                    if let Err(e) = tokio::fs::write(&file_path, file.content).await
+                                    {
+                                        error!("Couldn't save rendering result to file: {}", e);
+                                        return Err(RenderingError::Other(
+                                            "Couldn't save rendering output.".to_string(),
+                                        ));
                                     }
+                                    rendering_manager.requests_archive.write().unwrap().insert(
+                                        request_id,
+                                        RenderingStatus::SavedOnLocal(file_path, res_dir),
+                                    );
+                                } else {
+                                    rendering_manager.requests_archive.write().unwrap().insert(
+                                        request_id,
+                                        RenderingStatus::Failed(RenderingError::NoResultFiles),
+                                    );
                                 }
                                 break;
                             }
@@ -518,7 +521,7 @@ impl RenderingManager {
                                     .requests_archive
                                     .write()
                                     .unwrap()
-                                    .insert(request_id.clone(), RenderingStatus::Failed(e.clone()));
+                                    .insert(request_id, RenderingStatus::Failed(e.clone()));
                                 return Err(e);
                             }
                             _ => {
@@ -527,7 +530,7 @@ impl RenderingManager {
                                     .requests_archive
                                     .write()
                                     .unwrap()
-                                    .insert(request_id.clone(), status);
+                                    .insert(request_id, status);
                             }
                         }
                     }

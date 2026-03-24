@@ -1,6 +1,6 @@
 use crate::import::wordpress::Post;
-use crate::storage::project_storage::sections::content::current::{decode_yjs_content, BlockData};
 use crate::storage::project_storage::sections::Section;
+use crate::storage::project_storage::sections::content::current::{BlockData, decode_yjs_content};
 use lingua::{Language, LanguageDetectorBuilder};
 use std::time::SystemTime;
 
@@ -28,10 +28,7 @@ pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
     );
 
     match detected_lang {
-        Some(lang) => match language_to_bcp47(lang) {
-            Some(lang) => Some(lang),
-            None => None,
-        },
+        Some(lang) => language_to_bcp47(lang).map(|lang| lang),
         None => None,
     }
 }
@@ -88,10 +85,7 @@ pub fn detect_language_for_section(section: &Section) -> Option<language::Langua
     let detector = LanguageDetectorBuilder::from_all_languages().build();
     let detected_lang = detector.detect_language_of(&content_to_analyze);
     match detected_lang {
-        Some(lang) => match language_to_bcp47(lang) {
-            Some(lang) => Some(lang),
-            None => None,
-        },
+        Some(lang) => language_to_bcp47(lang).map(|lang| lang),
         None => None,
     }
 }

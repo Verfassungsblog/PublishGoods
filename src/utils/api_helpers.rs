@@ -4,7 +4,6 @@ use crate::storage::data_storage::current::DataStorageError;
 use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
 use rocket::http::{ContentType, Status};
 use rocket::response::Responder;
-use rocket::serde::json::Json;
 use rocket::{Request, Response, State};
 use serde::Serialize;
 use std::io::{Cursor, Error, ErrorKind};
@@ -39,7 +38,7 @@ pub async fn get_project(
     settings: &State<Settings>,
     project_storage: Arc<ProjectStorage>,
 ) -> Result<Arc<RwLock<ProjectData>>, ApiError> {
-    match project_storage.get_project(&project_id, settings).await {
+    match project_storage.get_project(project_id, settings).await {
         Ok(project_entry) => Ok(project_entry.clone()),
         Err(e) => {
             eprintln!("Couldn't get project with id {}: {:?}", project_id, e);

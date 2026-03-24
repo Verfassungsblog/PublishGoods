@@ -14,8 +14,8 @@ use crate::projects::websocket::WebsocketManager;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
-use crate::storage::data_storage::current::User;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::data_storage::current::User;
 use crate::storage::project_storage::ProjectStorage;
 use crate::storage::{data_storage, save_data_worker};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
@@ -24,12 +24,12 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
-use rocket::response::Redirect;
 use rocket::Request;
+use rocket::response::Redirect;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
-use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::ClientConfig;
+use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
 
 pub mod cleaner;
@@ -66,7 +66,7 @@ async fn rocket() -> _ {
     if !std::path::Path::new(&format!("{}/projects", settings.data_path)).exists() {
         info!("Data directory does not exist, creating it...");
         std::fs::create_dir_all(format!("{}/projects", settings.data_path)).unwrap(); //Intentionally panic if directory creation fails
-                                                                                      //Create empty DataStorage
+        //Create empty DataStorage
         info!("Creating empty data storage...");
         let data_storage = data_storage::DataStorage::new();
         //Create new admin user
@@ -91,7 +91,7 @@ async fn rocket() -> _ {
             name: String::from("default"),
             email: String::from("default@default"),
             password_hash: Argon2::default()
-                .hash_password(&password.as_bytes(), &salt)
+                .hash_password(password.as_bytes(), &salt)
                 .unwrap()
                 .to_string(),
             locked_until: None,

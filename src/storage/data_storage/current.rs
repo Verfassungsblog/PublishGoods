@@ -1,7 +1,7 @@
 use crate::settings::Settings;
 use crate::storage::data_storage::migration::load_inner_data_storage;
 use crate::storage::data_storage::{
-    DataStorage, DataStorageLoadError, InnerDataStorage, CURRENT_VERSION,
+    CURRENT_VERSION, DataStorage, DataStorageLoadError, InnerDataStorage,
 };
 use crate::storage::project_storage::ProjectStorage;
 pub(crate) use crate::storage::{ProjectTemplateV2, SingleFileLock, User};
@@ -9,12 +9,11 @@ use bincode::{Decode, Encode};
 use chrono::Utc;
 use dashmap::DashMap;
 use rocket::serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use tokio::task::JoinError;
 use uuid::Uuid;
-use vb_exchange::projects::{Person, PersonV2};
+use vb_exchange::projects::PersonV2;
 
 #[derive(Debug)]
 pub enum DataStorageError {
@@ -140,6 +139,12 @@ pub struct InnerDataStorageV4 {
     pub projects: Arc<RwLock<ProjectList>>,
 }
 
+impl Default for DataStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataStorage {
     /// Creates a new empty [DataStorage]
     pub fn new() -> Self {
@@ -152,7 +157,7 @@ impl DataStorage {
     fn load_from_disk_blocking(
         settings: &Settings,
     ) -> Result<InnerDataStorage, DataStorageLoadError> {
-        let path = format!("{}", settings.data_path);
+        let path = settings.data_path.to_string();
         let files = std::fs::read_dir(&path)?;
 
         let mut file_versions: Vec<(u64, String)> = vec![];
@@ -161,28 +166,31 @@ impl DataStorage {
         for file in files {
             match file {
                 Ok(file) => {
-                    if let Ok(file_type) = file.file_type() {
-                        if file_type.is_file() {
-                            let fname = file.file_name().clone();
-                            let fname = fname.to_str().unwrap_or("");
-                            let parts: Vec<&str> = fname.split(".").collect();
+                    if let Ok(file_type) = file.file_type()
+                        && file_type.is_file()
+                    {
+                        let fname = file.file_name().clone();
+                        let fname = fname.to_str().unwrap_or("");
+                        let parts: Vec<&str> = fname.split(".").collect();
 
-                            // First part = "data"
-                            // Second part = version
-                            // Third part = "bincode"
+                        // First part = "data"
+                        // Second part = version
+                        // Third part = "bincode"
 
-                            if parts.len() == 3 && parts[0] == "data" {
-                                // parse version as usize
-                                let version = match parts[1].parse::<u64>() {
-                                    Ok(version) => version,
-                                    Err(e) => {
-                                        eprintln!("error while loading data_storage file into memory: couldn't parse version number: {}. Skipping file.", e);
-                                        continue;
-                                    }
-                                };
+                        if parts.len() == 3 && parts[0] == "data" {
+                            // parse version as usize
+                            let version = match parts[1].parse::<u64>() {
+                                Ok(version) => version,
+                                Err(e) => {
+                                    eprintln!(
+                                        "error while loading data_storage file into memory: couldn't parse version number: {}. Skipping file.",
+                                        e
+                                    );
+                                    continue;
+                                }
+                            };
 
-                                file_versions.push((version, fname.to_string()));
-                            }
+                            file_versions.push((version, fname.to_string()));
                         }
                     }
                 }
@@ -201,7 +209,9 @@ impl DataStorage {
 
         // Load the latest version of the data storage
         if file_versions.is_empty() {
-            error!("error while loading data storage into memory: no storage files found in data directory.");
+            error!(
+                "error while loading data storage into memory: no storage files found in data directory."
+            );
             return Err(DataStorageLoadError::DataStorageMissing);
         }
         let (version, file_path) = file_versions.last().unwrap();
@@ -261,14 +271,12 @@ impl DataStorage {
             let mut projects = Vec::new();
             if let Ok(dir) = std::fs::read_dir(path) {
                 for entry in dir {
-                    if let Ok(entry) = entry {
-                        if let Some(project_id) = entry.path().file_name() {
-                            if let Some(project_id) = project_id.to_str() {
-                                if let Ok(uuid) = uuid::Uuid::parse_str(project_id) {
-                                    projects.push(uuid);
-                                }
-                            }
-                        }
+                    if let Ok(entry) = entry
+                        && let Some(project_id) = entry.path().file_name()
+                        && let Some(project_id) = project_id.to_str()
+                        && let Ok(uuid) = uuid::Uuid::parse_str(project_id)
+                    {
+                        projects.push(uuid);
                     }
                 }
             }
@@ -359,7 +367,7 @@ impl DataStorage {
     ) -> Result<(), DataStorageError> {
         self.data
             .login_data
-            .insert(user.id.clone(), Arc::new(RwLock::new(user)));
+            .insert(user.id, Arc::new(RwLock::new(user)));
         self.save_to_disk(settings).await
     }
 
@@ -384,7 +392,7 @@ impl DataStorage {
     ) -> Result<(), DataStorageError> {
         self.data
             .templates
-            .insert(template.id.clone(), Arc::new(RwLock::new(template)));
+            .insert(template.id, Arc::new(RwLock::new(template)));
         self.save_to_disk(settings).await
     }
 

@@ -14,6 +14,12 @@ pub struct SessionStorage {
     sessions: RwLock<HashMap<String, Session>>,
 }
 
+impl Default for SessionStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionStorage {
     pub fn new() -> SessionStorage {
         SessionStorage {
@@ -28,7 +34,7 @@ impl SessionStorage {
     pub fn get_session(&self, id: String, refresh_valid_until: bool) -> Option<Session> {
         if self.sessions.read().unwrap().contains_key(&id) {
             let session = self.sessions.read().unwrap().get(&id).unwrap().clone();
-            return if SystemTime::now() > session.valid_until {
+            if SystemTime::now() > session.valid_until {
                 self.sessions.write().unwrap().remove(&id);
                 println!("Session {} expired.", id);
                 None
@@ -42,7 +48,7 @@ impl SessionStorage {
                         .valid_until = SystemTime::now().add(Duration::new(1800, 0));
                 }
                 Some(session)
-            };
+            }
         } else {
             println!("Session {} not found in SessionStorage.", id);
             None

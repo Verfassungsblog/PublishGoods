@@ -50,27 +50,25 @@ pub struct SectionMetadataV6 {
 
 impl Section {
     pub fn clone_without_content(&self) -> Section {
-        let new_section = Section {
-            id: self.id.clone(),
+        Section {
+            id: self.id,
             css_classes: self.css_classes.clone(),
             sub_sections: self.sub_sections.clone(),
             content: vec![],
-            visible_in_toc: self.visible_in_toc.clone(),
+            visible_in_toc: self.visible_in_toc,
             metadata: self.metadata.clone(),
-        };
-        new_section
+        }
     }
 
     pub fn clone_without_subsections(&self) -> Section {
-        let new_section = Section {
-            id: self.id.clone(),
+        Section {
+            id: self.id,
             css_classes: self.css_classes.clone(),
             sub_sections: Vec::new(),
             content: self.content.clone(),
-            visible_in_toc: self.visible_in_toc.clone(),
+            visible_in_toc: self.visible_in_toc,
             metadata: self.metadata.clone(),
-        };
-        new_section
+        }
     }
 
     pub fn truncate_content_recursive(&mut self) {
@@ -89,11 +87,11 @@ impl Section {
             if section.id == Some(*parent_section_id) {
                 section.sub_sections.push(new_section.clone());
                 return Some(());
-            } else {
-                match section.insert_child_section_as_child(parent_section_id, new_section) {
-                    Some(_) => return Some(()),
-                    None => {}
-                }
+            } else if section
+                .insert_child_section_as_child(parent_section_id, new_section)
+                .is_some()
+            {
+                return Some(());
             }
         }
         None
@@ -108,11 +106,11 @@ impl Section {
             if section.id == Some(*section_id) {
                 self.sub_sections.insert(i + 1, new_section.clone());
                 return Some(());
-            } else {
-                match section.insert_child_section_after(section_id, new_section) {
-                    Some(_) => return Some(()),
-                    None => {}
-                }
+            } else if section
+                .insert_child_section_after(section_id, new_section)
+                .is_some()
+            {
+                return Some(());
             }
         }
         None
@@ -123,11 +121,8 @@ impl Section {
         for (i, section) in self.sub_sections.iter_mut().enumerate() {
             if section.id == Some(*section_id) {
                 index = Some(i);
-            } else {
-                match section.remove_child_section(section_id) {
-                    Some(section) => return Some(section),
-                    None => {}
-                }
+            } else if let Some(section) = section.remove_child_section(section_id) {
+                return Some(section);
             }
         }
         match index {

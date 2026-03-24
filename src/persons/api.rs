@@ -2,8 +2,8 @@ use crate::session::session_guard::Session;
 use crate::storage::data_storage::DataStorage;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
 // removed duplicate import
-use rocket::serde::json::Json;
 use rocket::State;
+use rocket::serde::json::Json;
 use std::sync::{Arc, RwLock};
 use vb_exchange::projects::Person;
 
@@ -33,7 +33,7 @@ pub fn create_person(
     }
 
     if let Some(ref mut gnd) = person.gnd {
-        if let None = gnd.id {
+        if gnd.id.is_none() {
             gnd.id = Some(uuid::Uuid::new_v4());
         } else {
             eprintln!("Persons gnd already has a id");
@@ -44,7 +44,7 @@ pub fn create_person(
     };
 
     if let Some(ref mut orcid) = person.orcid {
-        if let None = orcid.id {
+        if orcid.id.is_none() {
             orcid.id = Some(uuid::Uuid::new_v4());
         } else {
             eprintln!("Persons orcid already has a id");
@@ -56,7 +56,7 @@ pub fn create_person(
     };
 
     if let Some(ref mut ror) = person.ror {
-        if let None = ror.id {
+        if ror.id.is_none() {
             ror.id = Some(uuid::Uuid::new_v4());
         } else {
             eprintln!("Persons ror already has a id");
@@ -159,10 +159,7 @@ pub fn search_persons(
     let query = query.to_lowercase();
 
     // Set limit to 10 if not given
-    let limit = match limit {
-        Some(limit) => limit,
-        None => 10,
-    };
+    let limit = limit.unwrap_or(10);
 
     // Get all persons from data storage
     let persons: Vec<Person> = data_storage
@@ -174,40 +171,40 @@ pub fn search_persons(
 
     let mut result: Vec<Person> = Vec::new();
 
-    let mut iter = persons.into_iter();
+    let iter = persons.into_iter();
 
     // Filter persons by query
-    while let Some(person) = iter.next() {
+    for person in iter {
         if result.len() >= limit {
             break;
         }
-        if let Some(first_names) = &person.first_names {
-            if first_names.to_lowercase().contains(&query) {
-                result.push(person);
-                continue;
-            }
+        if let Some(first_names) = &person.first_names
+            && first_names.to_lowercase().contains(&query)
+        {
+            result.push(person);
+            continue;
         }
         if person.last_names.to_lowercase().contains(&query) {
             result.push(person);
             continue;
         }
-        if let Some(orcid) = &person.orcid {
-            if orcid.value.to_lowercase().contains(&query) {
-                result.push(person);
-                continue;
-            }
+        if let Some(orcid) = &person.orcid
+            && orcid.value.to_lowercase().contains(&query)
+        {
+            result.push(person);
+            continue;
         }
-        if let Some(gnd) = &person.gnd {
-            if gnd.value.to_lowercase().contains(&query) {
-                result.push(person);
-                continue;
-            }
+        if let Some(gnd) = &person.gnd
+            && gnd.value.to_lowercase().contains(&query)
+        {
+            result.push(person);
+            continue;
         }
-        if let Some(ror) = &person.ror {
-            if ror.value.to_lowercase().contains(&query) {
-                result.push(person);
-                continue;
-            }
+        if let Some(ror) = &person.ror
+            && ror.value.to_lowercase().contains(&query)
+        {
+            result.push(person);
+            continue;
         }
     }
 
