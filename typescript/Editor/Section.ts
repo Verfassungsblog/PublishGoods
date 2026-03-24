@@ -670,6 +670,70 @@ function createEditorBinding(doc: any, editor: EditorJS) {
     const deepUpdateTimers = new Map<string, any>();
 
     /**
+     * Captures the current browser selection relative to a given container.
+     *
+     * Returns a path (indices of child nodes) to the focused text node and the character offset.
+     */
+    function captureSelection(container: HTMLElement): { path: number[], offset: number } | null {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return null;
+
+        const range = selection.getRangeAt(0);
+        const node = range.startContainer;
+
+        // Ensure the selection is actually inside our container
+        if (!container.contains(node)) return null;
+
+        const path: number[] = [];
+        let curr: Node | null = node;
+        while (curr && curr !== container) {
+            const parent = curr.parentNode;
+            if (!parent) break;
+            const index = Array.from(parent.childNodes).indexOf(curr as ChildNode);
+            path.unshift(index);
+            curr = parent;
+        }
+
+        return { path, offset: range.startOffset };
+    }
+
+    /**
+     * Restores the browser selection in a new container based on a previously captured path and offset.
+     */
+    function restoreSelection(container: HTMLElement, state: { path: number[], offset: number } | null) {
+        if (!state) return;
+
+        let curr: Node = container;
+        for (const index of state.path) {
+            if (curr.childNodes[index]) {
+                curr = curr.childNodes[index];
+            } else {
+                // Path no longer valid, fallback to end of the current node
+                break;
+            }
+        }
+
+        try {
+            const range = document.createRange();
+            const selection = window.getSelection();
+            if (!selection) return;
+
+            // If we reached a text node, set the offset. Otherwise, select the element itself.
+            if (curr.nodeType === Node.TEXT_NODE) {
+                const maxOffset = (curr as Text).length;
+                range.setStart(curr, Math.min(state.offset, maxOffset));
+            } else {
+                range.selectNodeContents(curr);
+            }
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } catch (e) {
+            console.warn('[SectionBinding] Failed to restore selection', e);
+        }
+    }
+
+    /**
      * Schedules an in-place update of a single EditorJS block from the latest Yjs state.
      *
      * Used for deep Yjs events (e.g. `Y.Text` changes inside `data`).
@@ -700,29 +764,41 @@ function createEditorBinding(doc: any, editor: EditorJS) {
                 return;
             }
 
+            const holder = blockApi.holder as HTMLElement;
+            const selectionState = holder ? captureSelection(holder) : null;
+
             try {
                 const maybePromise = (editor as any).blocks.update(editorId, normalized.data, normalized.tunes);
-                if (maybePromise && typeof maybePromise.catch === 'function') {
-                    maybePromise.catch((e: any) => {
+                
+                const onUpdateDone = () => {
+                    // Best-effort: keep uuid marker + mapping attached even if EditorJS re-created holder.
+                    setTimeout(() => {
+                        try {
+                            const byId = findEditorBlockApiById(editorId);
+                            if (byId?.holder && uuid) {
+                                byId.holder.setAttribute('data-y2-uuid', uuid);
+                                editorIdToUuid.set(editorId, uuid);
+                                
+                                if (selectionState) {
+                                    restoreSelection(byId.holder, selectionState);
+                                }
+                            }
+                        } catch {
+                            // ignore
+                        }
+                        NoteTool.add_all_show_note_settings_listeners();
+                        CitationTool.add_all_show_note_settings_listeners();
+                    }, 0);
+                };
+
+                if (maybePromise && typeof maybePromise.then === 'function') {
+                    maybePromise.then(onUpdateDone).catch((e: any) => {
                         console.error('startObserver: editor.blocks.update failed', e);
                         scheduleRerender('blocks.update failed');
                     });
+                } else {
+                    onUpdateDone();
                 }
-
-                // Best-effort: keep uuid marker + mapping attached even if EditorJS re-created holder.
-                setTimeout(() => {
-                    try {
-                        const byId = findEditorBlockApiById(editorId);
-                        if (byId?.holder && uuid) {
-                            byId.holder.setAttribute('data-y2-uuid', uuid);
-                            editorIdToUuid.set(editorId, uuid);
-                        }
-                    } catch {
-                        // ignore
-                    }
-                    NoteTool.add_all_show_note_settings_listeners();
-                    CitationTool.add_all_show_note_settings_listeners();
-                }, 0);
             } catch (e) {
                 console.error('startObserver: editor.blocks.update threw', e);
                 scheduleRerender('blocks.update threw');
