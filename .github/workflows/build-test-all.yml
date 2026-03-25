@@ -28,7 +28,7 @@ jobs:
     - name: Package artifact
       run: |
         mkdir packaged
-        cp target/release/Verfassungsbooks packaged/ 
+        cp target/release/PublishGoods packaged/ 
         mkdir packaged/config && mkdir packaged/data 
         cp -R data/csl_locales packaged/data/ 
         cp -R data/csl_styles packaged/data/ 
@@ -38,8 +38,8 @@ jobs:
         cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
-        tar -vczf ../verfassungsbooks-bundled.tar.gz *
+        tar -vczf ../publishgoods-bundled.tar.gz *
     - uses: actions/upload-artifact@v4
       with:
-        name: verfassungsbooks-server
-        path: verfassungsbooks-bundled.tar.gz
+        name: publishgoods-server
+        path: publishgoods-bundled.tar.gz

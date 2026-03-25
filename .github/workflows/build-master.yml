@@ -31,7 +31,7 @@ jobs:
     - name: Package artifact
       run: |
         mkdir packaged
-        cp target/release/Verfassungsbooks packaged/ 
+        cp target/release/PublishGoods packaged/ 
         mkdir packaged/config && mkdir packaged/data 
         cp -R data/csl_locales packaged/data/ 
         cp -R data/csl_styles packaged/data/ 
@@ -41,14 +41,14 @@ jobs:
         cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
-        tar -vczf ../verfassungsbooks-bundled.tar.gz *
+        tar -vczf ../publishgoods-bundled.tar.gz *
     - uses: actions/upload-artifact@v4
       with:
-        name: verfassungsbooks-server
-        path: verfassungsbooks-bundled.tar.gz
+        name: publishgoods-server
+        path: publishgoods-bundled.tar.gz
     - uses: softprops/action-gh-release@v2
       with:
-        files: verfassungsbooks-bundled.tar.gz
+        files: publishgoods-bundled.tar.gz
         name: "${{ env.GIT_BRANCH }}-${{ env.GIT_HASH }}"
         draft: true
         tag_name: "${{ env.GIT_BRANCH }}-${{ env.GIT_HASH }}"
@@ -59,7 +59,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: verfassungsbooks-server
+          name: publishgoods-server
           path: dest
       - name: List dest
         run: ls -R dest
@@ -78,8 +78,8 @@ jobs:
           rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/prod_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/ data/
           rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/staging_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" data/ verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/
       - name: Upload artifact to staging server
-        run: scp -i ~/.ssh/staging_ssh_key dest/verfassungsbooks-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-bundled.tar.gz
+        run: scp -i ~/.ssh/staging_ssh_key dest/publishgoods-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/publishgoods-bundled.tar.gz
       - name: Start update and start staging server
         run: |
-          ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh verfassungsbooks-bundled.tar.gz verfassungsbooks-server"
+          ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh publishgoods-bundled.tar.gz verfassungsbooks-server"
           ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "sudo systemctl start verfassungsbooks-server.service"

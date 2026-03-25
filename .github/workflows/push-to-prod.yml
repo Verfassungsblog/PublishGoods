@@ -38,7 +38,7 @@ jobs:
     - name: Package artifact
       run: |
         mkdir packaged
-        cp target/release/Verfassungsbooks packaged/ 
+        cp target/release/PublishGoods packaged/ 
         mkdir packaged/config && mkdir packaged/data 
         cp -R data/csl_locales packaged/data/ 
         cp -R data/csl_styles packaged/data/ 
@@ -48,11 +48,11 @@ jobs:
         cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
-        tar -vczf ../verfassungsbooks-bundled.tar.gz *
+        tar -vczf ../publishgoods-bundled.tar.gz *
     - uses: actions/upload-artifact@v4
       with:
-        name: verfassungsbooks-server
-        path: verfassungsbooks-bundled.tar.gz
+        name: publishgoods-server
+        path: publishgoods-bundled.tar.gz
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: verfassungsbooks-server
+          name: publishgoods-server
           path: dest
       - name: List dest
         run: ls -R dest
@@ -75,8 +75,8 @@ jobs:
           ssh -i ~/.ssh/prod_ssh_key -t verfassungsbooks@editor.verfassungsblog.de "sudo systemctl stop verfassungsbooks-server.service"
           ssh -i ~/.ssh/prod_ssh_key -t verfassungsbooks@editor.verfassungsblog.de "rm -Rf /home/verfassungsbooks/verfassungsbooks-server-old && cp -R /home/verfassungsbooks/verfassungsbooks-server /home/verfassungsbooks/verfassungsbooks-server-old"
       - name: Upload artifact to staging server
-        run: scp -i ~/.ssh/prod_ssh_key dest/verfassungsbooks-bundled.tar.gz verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-bundled.tar.gz
+        run: scp -i ~/.ssh/prod_ssh_key dest/publishgoods-bundled.tar.gz verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/publishgoods-bundled.tar.gz
       - name: Start update and start staging server
         run: |
-          ssh -i ~/.ssh/prod_ssh_key -t verfassungsbooks@editor.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh verfassungsbooks-bundled.tar.gz verfassungsbooks-server"
+          ssh -i ~/.ssh/prod_ssh_key -t verfassungsbooks@editor.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh publishgoods-bundled.tar.gz verfassungsbooks-server"
           ssh -i ~/.ssh/prod_ssh_key -t verfassungsbooks@editor.verfassungsblog.de "sudo systemctl start verfassungsbooks-server.service"

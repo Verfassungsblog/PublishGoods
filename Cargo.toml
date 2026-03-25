@@ -1,16 +1,16 @@
 [package]
-name = "Verfassungsbooks"
+name = "PublishGoods"
 version = "0.1.0"
 edition = "2024"
 authors = ["Keanu Dölle <kd@verfassungsblog.de>"]
-repository = "https://github.com/Verfassungsblog/verfassungsbooks"
+repository = "https://github.com/Verfassungsblog/PublishGoods"
 license = "MIT"
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vb-exchange = {git = "https://github.com/Verfassungsblog/Verfassungsbooks-Exchange-Lib", tag="2025.11"}
+vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2025.11"}
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.15"
