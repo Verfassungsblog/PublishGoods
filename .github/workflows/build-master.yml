@@ -16,7 +16,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup
-      run: rustup target add x86_64-unknown-linux-musl && npm install -g handlebars typescript@5.9.3 webpack webpack-cli && cd typescript && npm install
+      run: | 
+        sudo apt-get update
+        sudo apt-get install musl-tools
+        rustup target add x86_64-unknown-linux-musl
+        npm install -g handlebars typescript@5.9.3 webpack webpack-cli
+        cd typescript && npm install
     - name: Create version.txt
       run: |
         git_hash=$(git rev-parse --short "$GITHUB_SHA")
