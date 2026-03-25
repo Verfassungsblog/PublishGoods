@@ -12,7 +12,6 @@
   "devDependencies": {
     "@editorjs/editorjs": "^2.29.0",
     "@editorjs/quote": "^2.6.0",
-    "@types/editorjs__header": "^2.6.3",
     "editorjs-undo": "^2.0.26",
     "ts-loader": "^9.5.1",
     "typescript": "^5.3.3",
@@ -22,9 +21,9 @@
   "dependencies": {
     "@codemirror/lang-html": "^6.4.9",
     "@editorjs/editorjs": "^2.29.0",
-    "@editorjs/header": "^2.8.1",
     "@editorjs/image": "^2.9.0",
     "@editorjs/list": "^1.9.0",
+    "@editorjs/header": "^2.8.8",
     "@editorjs/quote": "^2.6.0",
     "@editorjs/raw": "^2.5.0",
     "@sotaproject/strikethrough": "^1.0.1",
