@@ -352,6 +352,11 @@ pub async fn delete_project_upload(
 ) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
 
+    // Validate filename to prevent path traversal
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(ApiErrorType::BadRequest("Invalid filename".to_string()).into());
+    }
+
     tokio::fs::remove_file(format!(
         "{}/projects/{}/uploads/{}",
         settings.data_path, project_id, filename
@@ -375,6 +380,11 @@ pub async fn get_project_upload(
             return Err(Status::NotFound);
         }
     };
+
+    // Validate filename to prevent path traversal
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(Status::BadRequest);
+    }
 
     let path = format!(
         "{}/projects/{}/uploads/{}",
