@@ -16,7 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup
-      run: npm install -g handlebars typescript@5.9.3 webpack webpack-cli && cd typescript && npm install
+      run: rustup target add x86_64-unknown-linux-musl && npm install -g handlebars typescript@5.9.3 webpack webpack-cli && cd typescript && npm install
     - name: Create version.txt
       run: |
         git_hash=$(git rev-parse --short "$GITHUB_SHA")
@@ -24,11 +24,13 @@ jobs:
         echo "$git_branch-$git_hash" > version.txt
         echo "GIT_BRANCH=$git_branch" >> $GITHUB_ENV
         echo "GIT_HASH=$git_hash" >> $GITHUB_ENV
-    - name: Build
-      run: cargo build --release --verbose
+    - name: Build x86_64-unknown-linux-gnu
+      run: cargo build --release --verbose --target x86_64-unknown-linux-gnu
+    - name: Build x86_64-unknown-linux-musl
+      run: cargo build --release --verbose --target x86_64-unknown-linux-musl
     - name: Run tests
       run: cargo test --release --verbose
-    - name: Package artifact
+    - name: Package artifact x86_64-unknown-linux-gnu
       run: |
         mkdir packaged
         cp target/release/PublishGoods packaged/ 
@@ -41,11 +43,29 @@ jobs:
         cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
-        tar -vczf ../publishgoods-bundled.tar.gz *
+        tar -vczf ../publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz *+
+    - name: Package artifact x86_64-unknown-linux-musl
+      run: |
+        mkdir packaged-musl
+        cp target/x86_64-unknown-linux-musl/release/PublishGoods packaged-musl/
+        mkdir packaged-musl/config && mkdir packaged-musl/data 
+        cp -R data/csl_locales packaged-musl/data/ 
+        cp -R data/csl_styles packaged-musl/data/ 
+        cp -R templates packaged-musl/templates 
+        cp config/default.toml packaged-musl/config/ 
+        cp Rocket.toml packaged-musl/ 
+        cp version.txt packaged-musl/ 
+        cp -R static packaged-musl/static 
+        cd packaged-musl
+        tar -vczf ../publishgoods-bundled-x86_64-unknown-linux-musl.tar.gz *
     - uses: actions/upload-artifact@v4
       with:
-        name: publishgoods-server
-        path: publishgoods-bundled.tar.gz
+        name: publishgoods-server-x86_64-unknown-linux-gnu
+        path: publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz
+    - uses: actions/upload-artifact@v4
+      with:
+        name: publishgoods-server-x86_64-unknown-linux-musl
+        path: publishgoods-bundled-x86_64-unknown-linux-musl.tar.gz
     - uses: softprops/action-gh-release@v2
       with:
         files: publishgoods-bundled.tar.gz
@@ -59,7 +79,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: publishgoods-server
+          name: publishgoods-server-x86_64-unknown-linux-gnu
           path: dest
       - name: List dest
         run: ls -R dest
@@ -78,7 +98,7 @@ jobs:
           rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/prod_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/ data/
           rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/staging_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" data/ verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/
       - name: Upload artifact to staging server
-        run: scp -i ~/.ssh/staging_ssh_key dest/publishgoods-bundled.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/publishgoods-bundled.tar.gz
+        run: scp -i ~/.ssh/staging_ssh_key dest/publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/publishgoods-bundled.tar.gz
       - name: Start update and start staging server
         run: |
           ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "cd /home/verfassungsbooks && ./update.sh publishgoods-bundled.tar.gz verfassungsbooks-server"
