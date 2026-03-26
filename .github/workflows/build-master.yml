@@ -73,7 +73,9 @@ jobs:
         path: publishgoods-bundled-x86_64-unknown-linux-musl.tar.gz
     - uses: softprops/action-gh-release@v2
       with:
-        files: publishgoods-bundled.tar.gz
+        files: |
+          publishgoods-bundled-x86_64-unknown-linux-musl.tar.gz
+          publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz
         name: "${{ env.GIT_BRANCH }}-${{ env.GIT_HASH }}"
         draft: true
         tag_name: "${{ env.GIT_BRANCH }}-${{ env.GIT_HASH }}"
