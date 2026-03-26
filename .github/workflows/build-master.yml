@@ -38,7 +38,7 @@ jobs:
     - name: Package artifact x86_64-unknown-linux-gnu
       run: |
         mkdir packaged
-        cp target/release/PublishGoods packaged/ 
+        cp target/x86_64-unknown-linux-gnu/release/PublishGoods packaged/ 
         mkdir packaged/config && mkdir packaged/data 
         cp -R data/csl_locales packaged/data/ 
         cp -R data/csl_styles packaged/data/ 
@@ -48,7 +48,7 @@ jobs:
         cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
-        tar -vczf ../publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz *+
+        tar -vczf ../publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz *
     - name: Package artifact x86_64-unknown-linux-musl
       run: |
         mkdir packaged-musl
