@@ -426,6 +426,12 @@ pub async fn get_assets(_session: Session, template_id: String) -> APIResult<Ass
         }
     };
 
+    let global_asset_path = PathBuf::from(format!("data/templates/{}/assets", template_id));
+
+    if !tokio::fs::try_exists(&global_asset_path).await? {
+        tokio::fs::create_dir_all(&global_asset_path).await?;
+    }
+
     // Get all entries in the global assets folder (via async fs) inside data/templates/<template_id>/assets
     let res = tokio::task::spawn_blocking(move || {
         let path = format!("data/templates/{}/assets", template_id);
@@ -660,7 +666,7 @@ pub async fn add_export_format(
 
     // Add folder in file system
     let base_path = format!("data/templates/{}/formats", template_id);
-    let base_path = Path::new(&base_path).canonicalize().unwrap();
+    let base_path = Path::new(&base_path);
 
     let new_path = match safe_path_combine(base_path.to_str().unwrap(), &format.slug) {
         Ok(path) => path,
