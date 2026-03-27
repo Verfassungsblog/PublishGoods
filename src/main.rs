@@ -14,8 +14,8 @@ use crate::projects::websocket::WebsocketManager;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
-use crate::storage::data_storage::DataStorage;
 use crate::storage::data_storage::current::User;
+use crate::storage::data_storage::DataStorage;
 use crate::storage::project_storage::ProjectStorage;
 use crate::storage::{data_storage, save_data_worker};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
@@ -24,12 +24,12 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
-use rocket::Request;
 use rocket::response::Redirect;
+use rocket::Request;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
-use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
+use tokio_rustls::rustls::ClientConfig;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
 
 pub mod cleaner;
@@ -99,7 +99,8 @@ async fn rocket() -> _ {
         };
         data_storage.insert_user(user, &settings).await.unwrap();
         data_storage.save_to_disk(&settings).await.unwrap();
-        info!(
+        // Log as error to show on default log level
+        error!(
             "Created new default admin user 'default@default' with password '{}'",
             password
         );
