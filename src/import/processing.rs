@@ -23,6 +23,7 @@ use crate::storage::project_storage::sections::migration::convert_contentblocks_
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::utils::block_id_generator::generate_id;
+use crate::utils::dedup::dedup_vec;
 use log::{debug, error, warn};
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
@@ -459,9 +460,6 @@ impl ImportProcessor {
             }
         }
 
-        // Remove posts that don't meet our category filters
-        // We can't just use the wordpress filter mechanism for category filters since it fails on too many categories (url length > 2000 chars) on some wp hosts
-
         // Include Category Filter
         if let Some(include_categories) = job_data.include_categories {
             posts.retain(|post| {
@@ -479,6 +477,11 @@ impl ImportProcessor {
                     .iter()
                     .any(|category| exclude_categories.contains(category))
             });
+        }
+
+        // Add co authors if any
+        for post in posts.iter_mut() {
+            let _ = api.add_coauthors(post).await;
         }
 
         let number_of_posts = posts.len();
@@ -635,6 +638,11 @@ impl ImportProcessor {
                     page += 1;
                 }
             }
+            // Add co authors if any
+            for post in posts.iter_mut() {
+                let _ = api.add_coauthors(post).await;
+            }
+
             for post in posts {
                 let additional_author_names = if import_author_names {
                     self.resolve_wp_authors(&post, &api).await
@@ -677,7 +685,7 @@ impl ImportProcessor {
 
     /// Tries to resolve the author id from the wordpress api
     ///
-    /// Returns a Vec with ['PersonUuidOrString'] with the authors (and optional co authors) as NameString variants
+    /// Returns a Vec with ['PersonUuidOrString'] with the authors as NameString variants
     async fn resolve_wp_authors(&self, post: &Post, api: &WordpressAPI) -> Vec<PersonUuidOrString> {
         debug!("Trying to resolve author names for post.");
         let mut author_names = vec![];
@@ -685,18 +693,7 @@ impl ImportProcessor {
         // Resolve author name
         if let Ok(author) = api.get_user(post.author).await {
             author_names.push(PersonUuidOrString::NameString(author.name));
-
-            // Add co authors if any
-            if let Some(co_authors) = &post.coauthors {
-                for co_author in co_authors {
-                    author_names.push(PersonUuidOrString::NameString(
-                        co_author.display_name.clone(),
-                    ));
-                }
-            }
         }
-
-        author_names.dedup();
 
         debug!("Resolved author names: {:?}", author_names);
 
@@ -770,6 +767,17 @@ impl ImportProcessor {
             None
         };
 
+        let mut authors = imported_authors;
+        if let Some(co_authors) = &post.coauthors {
+            for coauthor in co_authors {
+                authors.push(PersonUuidOrString::NameString(
+                    coauthor.display_name.clone(),
+                ));
+            }
+        }
+
+        authors = dedup_vec(authors);
+
         let section = Section {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
@@ -780,7 +788,7 @@ impl ImportProcessor {
                 title: post.title.rendered.clone(),
                 toc_title_subtitle_override: None,
                 subtitle,
-                authors: imported_authors,
+                authors,
                 editors: vec![],
                 web_url: Some(post.link.clone()),
                 identifiers,
@@ -835,6 +843,11 @@ impl ImportProcessor {
             },
             Err(e) => return Err(ImportError::WordPressApiError(e)),
         };
+        // Add co authors if any
+        for post in posts.iter_mut() {
+            let _ = api.add_coauthors(post).await;
+        }
+
         if posts.len() != 1 {
             return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
         }

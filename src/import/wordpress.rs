@@ -147,8 +147,8 @@ impl WordpressAPI {
         }
     }
 
-    pub async fn get_coauthor(&self, mut post: Post) -> Result<Post, WordpressAPIError> {
-        let id = post.id;
+    pub async fn add_coauthors(&self, post: &mut Post) -> Result<(), WordpressAPIError> {
+        let id = &post.id;
         let url = format!(
             "https://{}/wp-json/coauthors/v1/coauthors/?post_id={}",
             self.base_url, id
@@ -166,7 +166,7 @@ impl WordpressAPI {
                     Ok(res) => {
                         debug!("Got coauthors for post {}", post.id);
                         post.coauthors = Some(res);
-                        Ok(post)
+                        Ok(())
                     }
                     Err(e) => {
                         error!(
@@ -321,16 +321,11 @@ impl WordpressAPI {
                 };
                 match context {
                     WordpressAPIContext::View => match response.json::<Vec<Post>>().await {
-                        Ok(posts) => {
-                            let posts =
-                                try_join_all(posts.into_iter().map(|post| self.get_coauthor(post)))
-                                    .await?;
-                            Ok(PostData {
-                                number_of_records: num_of_records,
-                                total_pages: num_of_pages,
-                                data: PostDataType::FullPosts(posts),
-                            })
-                        }
+                        Ok(posts) => Ok(PostData {
+                            number_of_records: num_of_records,
+                            total_pages: num_of_pages,
+                            data: PostDataType::FullPosts(posts),
+                        }),
                         Err(e) => {
                             error!("Error parsing posts: {}", e);
                             Err(WordpressAPIError::SerdeParsingError)
@@ -367,16 +362,16 @@ impl WordpressAPI {
         let client = self.client.clone();
         let response = client.get(&url).send().await;
         match response {
-            Ok(response) => {
-                let post: Post = match response.json().await {
-                    Ok(post) => self.get_coauthor(post).await?,
-                    Err(e) => {
-                        eprintln!("Error parsing post {}: {}", id, e);
-                        return Err(WordpressAPIError::SerdeParsingError);
-                    }
-                };
-                Ok(post)
-            }
+            Ok(response) => match response.json::<Post>().await {
+                Ok(mut post) => {
+                    let _ = self.add_coauthors(&mut post).await;
+                    Ok(post)
+                }
+                Err(e) => {
+                    eprintln!("Error parsing post {}: {}", id, e);
+                    Err(WordpressAPIError::SerdeParsingError)
+                }
+            },
             Err(e) => {
                 eprintln!("Error fetching post {}: {}", id, e);
                 Err(WordpressAPIError::ReqwestError)
