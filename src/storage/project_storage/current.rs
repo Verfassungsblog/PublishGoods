@@ -506,22 +506,10 @@ impl ProjectDataV10 {
         parent_section_id: &uuid::Uuid,
         section_to_insert: Section,
     ) -> Result<(), ()> {
-        for section in &mut self.sections {
-            // Check if this is the parent section
-            if section.id == Some(*parent_section_id) {
-                section.sub_sections.insert(0, section_to_insert);
-                return Ok(());
-            } else {
-                // Check if one of the children is the parent section
-                if section
-                    .insert_child_section_as_child(parent_section_id, &section_to_insert)
-                    .is_some()
-                {
-                    return Ok(());
-                }
-            }
-        }
-        Err(())
+        let parent_section: &mut Section = self.get_section_mut(parent_section_id).ok_or(())?;
+        parent_section.sub_sections.insert(0, section_to_insert);
+
+        Ok(())
     }
     pub fn insert_section_after(
         &mut self,

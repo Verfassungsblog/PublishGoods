@@ -78,25 +78,6 @@ impl Section {
         }
     }
 
-    pub fn insert_child_section_as_child(
-        &mut self,
-        parent_section_id: &uuid::Uuid,
-        new_section: &Section,
-    ) -> Option<()> {
-        for section in self.sub_sections.iter_mut() {
-            if section.id == Some(*parent_section_id) {
-                section.sub_sections.push(new_section.clone());
-                return Some(());
-            } else if section
-                .insert_child_section_as_child(parent_section_id, new_section)
-                .is_some()
-            {
-                return Some(());
-            }
-        }
-        None
-    }
-
     pub fn insert_child_section_after(
         &mut self,
         section_id: &uuid::Uuid,
