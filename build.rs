@@ -62,12 +62,16 @@ fn main() {
 
     let res3 = std::process::Command::new("tsc")
         .args([
+            "--ignoreDeprecations",
+            "6.0",
             "--module",
             "system",
             "--lib",
             "es2015,dom,dom.Iterable",
             "--target",
             "es6",
+            "--strict",
+            "false",
             "--outFile",
             "static/js/general.js",
             "typescript_old/General.ts",
@@ -81,8 +85,12 @@ fn main() {
         .expect("Failed to compile typescript to javascript with npm run build");
     let res2 = std::process::Command::new("tsc")
         .args([
+            "--ignoreDeprecations",
+            "6.0",
             "--module",
             "system",
+            "--strict",
+            "false",
             "--lib",
             "es2015,dom,dom.Iterable",
             "--target",
