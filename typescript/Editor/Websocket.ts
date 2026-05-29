@@ -52,6 +52,9 @@ export type WebsocketEventMap = {
 export function WebsocketClient(projectId: string) {
     let ws: WebSocket | null = null;
     let clientId: string | null = null;
+    let connection_end_requested: boolean = false;
+    let first_connection: boolean = true;
+
     const handlers: { [K in keyof WebsocketEventMap]?: ((data: WebsocketEventMap[K]) => void)[] } = {};
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -64,8 +67,12 @@ export function WebsocketClient(projectId: string) {
 
             ws.onopen = () => {
                 console.log('WebSocket connected');
-                // Signal to user that connection is restored
-                show_alert('Verbindung zum Server wiederhergestellt!', 'success');
+                // Signal to user that connection is restored if not first connection
+                if(!first_connection) {
+                    show_alert('Verbindung zum Server wiederhergestellt!', 'success');
+                }else{
+                    first_connection = false;
+                }
                 resolve();
             };
 
@@ -79,11 +86,13 @@ export function WebsocketClient(projectId: string) {
             };
 
             ws.onclose = () => {
-                console.log('WebSocket closed. Trying to reconnect...');
-                // Signal to user that connection is lost
-                show_alert('Verbindung zum Server verloren. Versuche, die Verbindung wiederherzustellen...', 'warning');
                 ws = null;
-                setTimeout(connect, 1000);
+                if(!connection_end_requested) { // Only try to reconnect if disconnect wasn't requested by the user
+                    console.log('WebSocket closed. Trying to reconnect...');
+                    // Signal to user that connection is lost
+                    show_alert('Verbindung zum Server verloren. Versuche, die Verbindung wiederherzustellen...', 'warning');
+                    setTimeout(connect, 1000);
+                }
             };
         });
     }
@@ -143,6 +152,7 @@ export function WebsocketClient(projectId: string) {
     }
 
     function sendConnect(documentId: string): void {
+        connection_end_requested = false;
         const msg: ConnectMessage = { document_id: documentId };
         sendJson(WebsocketMessageType.CONNECT, msg);
     }
@@ -173,6 +183,8 @@ export function WebsocketClient(projectId: string) {
     }
 
     function sendDisconnect(): void {
+        connection_end_requested = true;
+        first_connection = true;
         if (!clientId) return;
         const msg: DisconnectMessage = { client_id: clientId };
         sendJson(WebsocketMessageType.DISCONNECT, msg);
@@ -188,6 +200,7 @@ export function WebsocketClient(projectId: string) {
     function sendBinary(type: WebsocketMessageType, payload: Uint8Array): void {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             console.error('WebSocket is not open');
+            show_alert("Couldn't save changes: Connection to server lost!", "danger");
             return;
         }
         const data = new Uint8Array(1 + payload.length);
