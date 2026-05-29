@@ -77,8 +77,10 @@ export function WebsocketClient(projectId: string) {
             };
 
             ws.onclose = () => {
-                console.log('WebSocket closed');
+                console.log('WebSocket closed. Trying to reconnect...');
+                //todo: signal to user that connection is lost
                 ws = null;
+                setTimeout(connect, 1000);
             };
         });
     }

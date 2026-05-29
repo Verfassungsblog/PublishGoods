@@ -38,7 +38,6 @@ let currentEditorBinding: any = null;
  * This function is responsible for:
  * - Cleaning up any previous editor/binding instances.
  * - Rendering the section editor template.
- * - Creating the `YjsBinding` websocket-backed doc.
  * - Creating the EditorJS instance.
  * - Wiring EditorJS `onChange` into the binding.
  *
