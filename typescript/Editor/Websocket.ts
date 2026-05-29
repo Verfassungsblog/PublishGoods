@@ -1,3 +1,4 @@
+import {show_alert} from "../tools";
 
 export enum WebsocketMessageType {
     CONNECT = 10,
@@ -10,7 +11,6 @@ export enum WebsocketMessageType {
     DISCONNECT = 50,
     ERROR = 60,
 }
-
 export interface ConnectMessage {
     document_id: string;
 }
@@ -64,6 +64,8 @@ export function WebsocketClient(projectId: string) {
 
             ws.onopen = () => {
                 console.log('WebSocket connected');
+                // Signal to user that connection is restored
+                show_alert('Verbindung zum Server wiederhergestellt!', 'success');
                 resolve();
             };
 
@@ -78,7 +80,8 @@ export function WebsocketClient(projectId: string) {
 
             ws.onclose = () => {
                 console.log('WebSocket closed. Trying to reconnect...');
-                //todo: signal to user that connection is lost
+                // Signal to user that connection is lost
+                show_alert('Verbindung zum Server verloren. Versuche, die Verbindung wiederherzustellen...', 'warning');
                 ws = null;
                 setTimeout(connect, 1000);
             };
