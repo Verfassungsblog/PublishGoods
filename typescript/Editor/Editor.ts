@@ -123,7 +123,7 @@ export async function init() {
 }
 
 function add_dnd_listeners(){
-    const PROXIMITY_PX = 24; // how close the pointer must be to reveal a dropzone
+    const PROXIMITY_PX = 30; // how close the pointer must be to reveal a dropzone
     const sectionAPI = SectionAPI();
     const container = document.getElementsByClassName("sidebar-full-contents-panel-contents")[0] as HTMLElement;
     if(!container){ return; }
