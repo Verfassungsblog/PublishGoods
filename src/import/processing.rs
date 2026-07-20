@@ -417,66 +417,39 @@ impl ImportProcessor {
         self.update_import_status(&job.id, ImportStatus::RequestWPPosts);
 
         let mut posts: Vec<Post> = vec![];
-        let mut page = 1;
-
-        loop {
-            let data = match api
-                .get_posts(
-                    WordpressAPIContext::View,
-                    Some(page),
-                    Some(100),
-                    None,
-                    job_data.after,
-                    None,
-                    job_data.before,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .await
-            {
-                Ok(data) => data,
-                Err(e) => {
-                    warn!("Error fetching posts from WordpressAPI: {:?}", e);
-                    self.update_import_status(
-                        &job.id,
-                        ImportStatus::Failed(ImportError::WordPressApiError(e)),
-                    );
-                    break;
-                }
-            };
-
-            let mut res_posts = match data.data {
-                PostDataType::PostPreviews(_) => unreachable!(),
-                PostDataType::FullPosts(posts) => posts,
-            };
-            posts.append(&mut res_posts);
-
-            if page >= data.total_pages {
-                break;
-            } else {
-                page += 1;
+        let data = match api
+            .get_posts(
+                WordpressAPIContext::View,
+                None,
+                job_data.after,
+                None,
+                job_data.before,
+                None,
+                None,
+                job_data.include_categories,
+                job_data.exclude_categories,
+                None,
+            )
+            .await
+        {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("Error fetching posts from WordpressAPI: {:?}", e);
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::WordPressApiError(e)),
+                );
+                return;
             }
-        }
+        };
 
-        // Include Category Filter
-        if let Some(include_categories) = job_data.include_categories {
-            posts.retain(|post| {
-                post.categories
-                    .iter()
-                    .any(|category| include_categories.contains(category))
-            });
-        }
-
-        // Exclude Category Filter
-        if let Some(exclude_categories) = job_data.exclude_categories {
-            posts.retain(|post| {
-                !post
-                    .categories
-                    .iter()
-                    .any(|category| exclude_categories.contains(category))
-            });
+        match data.data {
+            PostDataType::PostPreviews(_) => {
+                unreachable!()
+            }
+            PostDataType::FullPosts(data) => {
+                posts = data;
+            }
         }
 
         // Add co authors if any
@@ -602,42 +575,30 @@ impl ImportProcessor {
                 return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
             }
             let category = category.first().unwrap();
-            let mut posts = vec![];
-            let mut page = 1;
-            loop {
-                let mut new_posts = match api
-                    .get_posts(
-                        WordpressAPIContext::default(),
-                        Some(page),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(vec![category.id]),
-                        None,
-                    )
-                    .await
-                {
-                    Ok(posts) => match posts.data {
-                        PostDataType::FullPosts(posts) => posts,
-                        _ => {
-                            return Err(ImportError::WordPressApiError(
-                                WordpressAPIError::UnexpectedResponse,
-                            ));
-                        }
-                    },
-                    Err(e) => return Err(ImportError::WordPressApiError(e)),
-                };
-                if new_posts.is_empty() {
-                    break;
-                } else {
-                    posts.append(&mut new_posts);
-                    page += 1;
-                }
-            }
+            let mut posts = match api
+                .get_posts(
+                    WordpressAPIContext::View,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(vec![category.id]),
+                    None,
+                )
+                .await
+            {
+                Ok(posts) => match posts.data {
+                    PostDataType::FullPosts(posts) => posts,
+                    _ => {
+                        unreachable!()
+                    }
+                },
+                Err(e) => return Err(ImportError::WordPressApiError(e)),
+            };
+
             // Add co authors if any
             for post in posts.iter_mut() {
                 let _ = api.add_coauthors(post).await;
@@ -663,7 +624,7 @@ impl ImportProcessor {
             debug!("Found non-category link. Trying to import single post");
 
             let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
-
+            debug!("Successfully downloaded wp post. Trying to resolve author names.");
             let additional_author_names = if import_author_names {
                 self.resolve_wp_authors(&post, &api).await
             } else {
@@ -825,9 +786,8 @@ impl ImportProcessor {
                 None,
                 None,
                 None,
-                None,
-                None,
                 Some(slug.to_string()),
+                None,
                 None,
                 None,
             )
@@ -1004,6 +964,7 @@ impl ImportProcessor {
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
+        debug!("Importing html from wp");
         let dom = match Dom::parse(&input) {
             Ok(dom) => dom,
             Err(e) => {
@@ -1011,6 +972,8 @@ impl ImportProcessor {
                 return Err(ImportError::HtmlConversionFailed);
             }
         };
+
+        debug!("Parsed DOM successfully. Processing footnotes");
 
         // Get footnotes (WP footnote plugin)
         let mut footnotes: HashMap<String, String> = HashMap::new();
@@ -1040,6 +1003,7 @@ impl ImportProcessor {
                     // We only want to preserve the inner HTML, not the `td` tag.
                     let mut html = String::new();
                     for child in &td.children {
+                        debug!("Found footnote, converting with dom_to_html");
                         match child {
                             Node::Element(el) => {
                                 html.push_str(
@@ -1066,9 +1030,11 @@ impl ImportProcessor {
 
         let mut blocks: Vec<NewContentBlock> = vec![];
 
+        debug!("Starting to traverse DOM Tree");
         for node in dom.children {
             match node {
                 Node::Text(t) => {
+                    debug!("Found text, added as Paragraph Content block");
                     blocks.push(NewContentBlock {
                         id: generate_id(&section),
                         block_type: BlockType::Paragraph,
@@ -1078,6 +1044,8 @@ impl ImportProcessor {
                     });
                 }
                 Node::Element(el) => {
+                    debug!("Found element: {:?}", el);
+
                     // WP footnote plugin appends a trailing footnotes container block.
                     // We extract its content into `footnotes` above; the container itself must not
                     // be persisted as a separate block.
@@ -1330,6 +1298,8 @@ impl ImportProcessor {
             }
         }
 
+        debug!("Converting contentblocks to yrs.");
+
         let doc = convert_contentblocks_to_yrs(blocks);
         section.content = doc
             .transact()
@@ -1338,6 +1308,8 @@ impl ImportProcessor {
         if cfg!(feature = "language_detection") {
             section.metadata.lang = detect_language_for_section(&section);
         }
+
+        debug!("Saving to project data");
 
         project_data.write().unwrap().sections.push(section);
         Ok(())
@@ -1760,6 +1732,8 @@ impl ImportProcessor {
         keep_outer_html: bool,
         project_data: Arc<RwLock<ProjectData>>,
     ) -> String {
+        debug!("element_to_html conversion for {:?}", el);
+
         // Special cases: footnote references and link->citation conversion.
         if el.name == "a" {
             // Pandoc footnote references: <a role="doc-noteref"><sup>1</sup></a>

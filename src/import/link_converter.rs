@@ -1,7 +1,5 @@
 use crate::settings::Settings;
 
-/// Module to generate a Citation from a Link.
-
 pub async fn get_translation(link: &str, settings: &Settings) -> Option<Vec<hayagriva::Entry>> {
     let translation = send_translation_request(link, settings).await;
     match translation {

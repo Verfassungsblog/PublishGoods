@@ -317,8 +317,6 @@ pub async fn get_wordpress_posts_preview(
     let res = wordpress_api
         .get_posts(
             WordpressAPIContext::Embed,
-            preview_request.page,
-            preview_request.per_page,
             None,
             preview_request.after,
             preview_request.modified_after,
@@ -327,6 +325,7 @@ pub async fn get_wordpress_posts_preview(
             None,
             preview_request.include_categories,
             preview_request.exclude_categories,
+            None,
         )
         .await;
 

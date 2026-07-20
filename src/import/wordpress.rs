@@ -1,5 +1,4 @@
 use chrono::NaiveTime;
-use futures::future::try_join_all;
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -33,8 +32,55 @@ pub enum PostDataType {
 #[derive(Debug)]
 pub struct PostData {
     pub number_of_records: usize,
-    pub total_pages: usize,
     pub data: PostDataType,
+}
+
+impl PostData {
+    /// Returns Err if postdatatypes doesn't match
+    pub fn push_posts(&mut self, posts: PostDataType) -> Result<(), ()> {
+        match &self.data {
+            PostDataType::PostPreviews(data) => match posts {
+                PostDataType::PostPreviews(new_data) => {
+                    let mut data = data.clone();
+                    data.append(&mut new_data.clone());
+                    self.data = PostDataType::PostPreviews(data);
+                    Ok(())
+                }
+                PostDataType::FullPosts(_) => Err(()),
+            },
+            PostDataType::FullPosts(data) => match posts {
+                PostDataType::PostPreviews(_) => Err(()),
+                PostDataType::FullPosts(new_data) => {
+                    let mut data = data.clone();
+                    data.append(&mut new_data.clone());
+                    self.data = PostDataType::FullPosts(data);
+                    Ok(())
+                }
+            },
+        }
+    }
+
+    /// Removes all elements exceeding the limit
+    pub fn cap_to(&mut self, limit: usize) {
+        match &self.data {
+            PostDataType::PostPreviews(data) => {
+                if data.len() > limit {
+                    let mut data = data.clone();
+                    let n_remove = data.len() - limit;
+                    data.drain(data.len() - n_remove - 1..);
+                    self.data = PostDataType::PostPreviews(data);
+                }
+            }
+            PostDataType::FullPosts(data) => {
+                if data.len() > limit {
+                    let mut data = data.clone();
+                    let n_remove = data.len() - limit;
+                    data.drain(data.len() - n_remove - 1..);
+                    self.data = PostDataType::FullPosts(data);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -191,8 +237,6 @@ impl WordpressAPI {
     pub async fn get_posts(
         &self,
         context: WordpressAPIContext,
-        page: Option<usize>,
-        per_page: Option<usize>,
         search: Option<String>,
         after: Option<chrono::NaiveDate>,
         modified_after: Option<chrono::NaiveDate>,
@@ -201,11 +245,11 @@ impl WordpressAPI {
         slug: Option<String>,
         categories: Option<Vec<usize>>,
         categories_exclude: Option<Vec<usize>>,
+        limit: Option<usize>,
     ) -> Result<PostData, WordpressAPIError> {
         let url = format!("https://{}/wp-json/wp/v2/posts", self.base_url);
 
         let client = self.client.clone();
-        let request = client.request(reqwest::Method::GET, &url);
 
         let mut query: Vec<(String, String)> = Vec::new();
         match context {
@@ -222,12 +266,8 @@ impl WordpressAPI {
                 query.push(("context".to_string(), "embed".to_string()));
             }
         }
-        if let Some(page) = page {
-            query.push(("page".to_string(), page.to_string()));
-        }
-        if let Some(per_page) = per_page {
-            query.push(("per_page".to_string(), per_page.to_string()));
-        }
+        query.push(("per_page".to_string(), String::from("100")));
+
         if let Some(search) = search {
             query.push(("search".to_string(), search));
         }
@@ -259,102 +299,249 @@ impl WordpressAPI {
         if let Some(slug) = slug {
             query.push(("slug".to_string(), slug));
         }
-        if let Some(categories) = categories
-            && !categories.is_empty()
-        {
-            query.push((
-                "categories".to_string(),
-                categories
-                    .iter()
-                    .map(|i| i.to_string())
-                    .collect::<Vec<String>>()
-                    .join(","),
-            ));
-        }
-        if let Some(categories_exclude) = categories_exclude
-            && !categories_exclude.is_empty()
-        {
-            query.push((
-                "categories_exclude".to_string(),
-                categories_exclude
-                    .iter()
-                    .map(|i| i.to_string())
-                    .collect::<Vec<String>>()
-                    .join(","),
-            ));
-        }
-        debug!("Query is: {:?}", query);
-        let request = request.query(&query);
-        match request.send().await {
-            Ok(response) => {
-                if response.status() == 400 {
-                    // We will get a bad requests if no posts are found at this page
-                    return Err(WordpressAPIError::NotFound);
-                }
-                let num_of_records: usize = match response.headers().get("X-WP-Total") {
-                    Some(num) => match num.try_into_usize() {
-                        Some(num) => num,
-                        None => {
-                            error!("Error parsing X-WP-Total as usize.");
-                            debug!("{:?}", response);
-                            return Err(WordpressAPIError::UnexpectedResponse);
-                        }
-                    },
-                    None => {
-                        error!("X-WP-Total is missing in posts response");
-                        debug!("{:?}", response);
-                        return Err(WordpressAPIError::UnexpectedResponse);
+
+        // Calculate url length with all already applied query arguments and host url
+        let url_length = url.len() as u128
+            + query
+                .iter()
+                .map(|(x, y)| x.len() as u128 + y.len() as u128 + 1)
+                .sum::<u128>();
+        let remaining_url_length = 2000 - url_length;
+
+        // Make sure not categories to exclude doesn't extend url limit
+        let exclude_category_char_length = if let Some(exclude_categories) = &categories_exclude {
+            exclude_categories
+                .iter()
+                .map(|x| (x.checked_ilog10().unwrap_or(0) + 2) as u128)
+                .sum::<u128>()
+                + 18 // We use +2 (instead of +1) to also account for the commas for seperation
+        } else {
+            0
+        };
+
+        let include_category_char_length = if let Some(include_categories) = &categories {
+            include_categories
+                .iter()
+                .map(|x| (x.checked_ilog10().unwrap_or(0) + 2) as u128)
+                .sum::<u128>()
+                + 10
+        } else {
+            0
+        };
+
+        let mut manual_filter_excluded_categories = false;
+        let mut include_categories_chunks: Vec<String> = vec![];
+        let mut available_chars_for_inclusion = 0;
+
+        if include_category_char_length + exclude_category_char_length > remaining_url_length {
+            // We need to split up. Preferably add all exclude categories.
+            if exclude_category_char_length > (remaining_url_length - 100) {
+                // We can't add all exclude categories. We need to manually filter the posts afterwards
+                manual_filter_excluded_categories = true;
+            } else {
+                // Calculate how many chars we can use for inclusion categories while keeping the exclude categories
+                available_chars_for_inclusion = remaining_url_length - exclude_category_char_length;
+            }
+
+            // Split categories into chunks
+            if let Some(mut include_categories) = categories.clone() {
+                let mut chunk: String = String::new();
+
+                while include_categories.iter_mut().len() > 0 {
+                    let category = include_categories.remove(0);
+                    let category_char_length_with_comma =
+                        category.checked_ilog10().unwrap_or(0) + 2;
+
+                    let new_chunk_length =
+                        chunk.len() as u128 + category_char_length_with_comma as u128;
+
+                    if new_chunk_length > available_chars_for_inclusion {
+                        // Begin new chunk if we would exceed available chars
+                        include_categories_chunks.push(chunk);
+                        chunk = format!("{},", category);
+                    } else {
+                        chunk.push_str(&category.to_string());
                     }
-                };
-                let num_of_pages: usize = match response.headers().get("X-WP-TotalPages") {
-                    Some(num) => match num.try_into_usize() {
-                        Some(num) => num,
-                        None => {
-                            error!("Error parsing X-WP-TotalPages as usize.");
-                            return Err(WordpressAPIError::UnexpectedResponse);
-                        }
-                    },
-                    None => {
-                        error!("X-WP-TotalPages is missing in posts response");
-                        return Err(WordpressAPIError::UnexpectedResponse);
-                    }
-                };
-                match context {
-                    WordpressAPIContext::View => match response.json::<Vec<Post>>().await {
-                        Ok(posts) => Ok(PostData {
-                            number_of_records: num_of_records,
-                            total_pages: num_of_pages,
-                            data: PostDataType::FullPosts(posts),
-                        }),
-                        Err(e) => {
-                            error!("Error parsing posts: {}", e);
-                            Err(WordpressAPIError::SerdeParsingError)
-                        }
-                    },
-                    WordpressAPIContext::Edit => {
-                        error!("edit api context isn't supported yet!");
-                        Err(WordpressAPIError::Unsupported(String::from(
-                            "edit api context isn't supported yet!",
-                        )))
-                    }
-                    WordpressAPIContext::Embed => match response.json::<Vec<PostPreview>>().await {
-                        Ok(posts) => Ok(PostData {
-                            number_of_records: num_of_records,
-                            total_pages: num_of_pages,
-                            data: PostDataType::PostPreviews(posts),
-                        }),
-                        Err(e) => {
-                            error!("Error parsing posts: {}", e);
-                            Err(WordpressAPIError::SerdeParsingError)
-                        }
-                    },
                 }
             }
-            Err(e) => {
-                error!("Error fetching posts: {}", e);
-                Err(WordpressAPIError::ReqwestError)
+        } else {
+            if let Some(include_categories) = &categories {
+                include_categories_chunks.push(
+                    include_categories
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                )
             }
         }
+
+        if !manual_filter_excluded_categories {
+            if let Some(categories_exclude) = &categories_exclude
+                && !categories_exclude.is_empty()
+            {
+                query.push((
+                    "categories_exclude".to_string(),
+                    categories_exclude
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<String>>()
+                        .join(","),
+                ));
+            }
+        }
+
+        debug!("Main query is: {:?}", query);
+
+        let post_data_type = match context {
+            WordpressAPIContext::View => PostDataType::FullPosts(Vec::new()),
+            WordpressAPIContext::Edit => {
+                return Err(WordpressAPIError::Unsupported(String::from(
+                    "edit api context isn't supported yet!",
+                )));
+            }
+            WordpressAPIContext::Embed => PostDataType::PostPreviews(Vec::new()),
+        };
+        let mut all_posts: PostData = PostData {
+            number_of_records: 0,
+            data: post_data_type,
+        };
+
+        // Category loop
+        loop {
+            let mut category_query = query.clone();
+            if categories.is_some() {
+                let chunk = include_categories_chunks.pop();
+                if let Some(chunk) = chunk {
+                    category_query.push(("categories".to_string(), chunk));
+                } else {
+                    break;
+                }
+            }
+
+            let mut page = 1;
+
+            // Page loop
+            loop {
+                let mut page_query = category_query.clone();
+                page_query.push(("page".to_string(), page.to_string()));
+
+                debug!("Current query is: {:?}", page_query);
+
+                let resp = client
+                    .request(reqwest::Method::GET, &url)
+                    .query(&page_query)
+                    .send()
+                    .await;
+
+                match resp {
+                    Ok(response) => {
+                        if response.status() == 400 {
+                            // We will get a bad requests if no posts are found at this page
+                            return Err(WordpressAPIError::NotFound);
+                        }
+                        let num_of_records: usize = match response.headers().get("X-WP-Total") {
+                            Some(num) => match num.try_into_usize() {
+                                Some(num) => num,
+                                None => {
+                                    error!("Error parsing X-WP-Total as usize.");
+                                    debug!("{:?}", response);
+                                    return Err(WordpressAPIError::UnexpectedResponse);
+                                }
+                            },
+                            None => {
+                                error!("X-WP-Total is missing in posts response");
+                                debug!("{:?}", response);
+                                return Err(WordpressAPIError::UnexpectedResponse);
+                            }
+                        };
+                        let num_of_pages: usize = match response.headers().get("X-WP-TotalPages") {
+                            Some(num) => match num.try_into_usize() {
+                                Some(num) => num,
+                                None => {
+                                    error!("Error parsing X-WP-TotalPages as usize.");
+                                    return Err(WordpressAPIError::UnexpectedResponse);
+                                }
+                            },
+                            None => {
+                                error!("X-WP-TotalPages is missing in posts response");
+                                return Err(WordpressAPIError::UnexpectedResponse);
+                            }
+                        };
+
+                        match context {
+                            WordpressAPIContext::View => match response.json::<Vec<Post>>().await {
+                                Ok(mut posts) => {
+                                    if manual_filter_excluded_categories {
+                                        if let Some(ref categories_exclude) = categories_exclude {
+                                            posts.retain_mut(|post| {
+                                                !post.categories.iter().any(|category| {
+                                                    categories_exclude.contains(category)
+                                                })
+                                            })
+                                        }
+                                    }
+                                    all_posts
+                                        .push_posts(PostDataType::FullPosts(posts))
+                                        .unwrap();
+                                    all_posts.number_of_records =
+                                        all_posts.number_of_records + num_of_records;
+                                }
+                                Err(e) => {
+                                    error!("Error parsing posts: {}", e);
+                                    return Err(WordpressAPIError::SerdeParsingError);
+                                }
+                            },
+                            WordpressAPIContext::Edit => {
+                                error!("edit api context isn't supported yet!");
+                                return Err(WordpressAPIError::Unsupported(String::from(
+                                    "edit api context isn't supported yet!",
+                                )));
+                            }
+                            WordpressAPIContext::Embed => {
+                                match response.json::<Vec<PostPreview>>().await {
+                                    Ok(mut posts) => {
+                                        all_posts
+                                            .push_posts(PostDataType::PostPreviews(posts))
+                                            .unwrap();
+                                        all_posts.number_of_records =
+                                            all_posts.number_of_records + num_of_records;
+                                    }
+                                    Err(e) => {
+                                        error!("Error parsing posts: {}", e);
+                                        return Err(WordpressAPIError::SerdeParsingError);
+                                    }
+                                }
+                            }
+                        }
+
+                        if page >= num_of_pages {
+                            break;
+                        } else {
+                            page += 1;
+                        }
+                        if let Some(limit) = limit {
+                            if all_posts.number_of_records > limit {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error fetching posts: {}", e);
+                        return Err(WordpressAPIError::ReqwestError);
+                    }
+                }
+            }
+            if categories.is_none() {
+                break;
+            }
+        }
+
+        if let Some(limit) = limit {
+            all_posts.cap_to(limit);
+        }
+
+        Ok(all_posts)
     }
 
     pub async fn get_post(&self, id: usize) -> Result<Post, WordpressAPIError> {

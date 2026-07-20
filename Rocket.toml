@@ -2,7 +2,7 @@
 address = "127.0.0.1"
 port = 8000
 limits = { form = "100 MiB", data-form = "100 MiB", file = "100 MiB", json = "1 MiB" }
-secret_key = ""
+#secret_key = ""
 
 [debug]
 address = "127.0.0.1"
