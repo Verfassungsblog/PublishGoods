@@ -47,7 +47,7 @@ impl From<DecodeError> for ProjectStorageError {
 }
 
 impl From<JoinError> for ProjectStorageError {
-    fn from(value: JoinError) -> Self {
+    fn from(_value: JoinError) -> Self {
         ProjectStorageError::TokioJoinError
     }
 }

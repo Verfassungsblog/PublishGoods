@@ -1,6 +1,6 @@
 use crate::projects::api::UploadedImage;
-use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::sections::content::current::NewContentBlockConversionError::UnknownBlockType;
+use crate::storage::project_storage::sections::Section;
 use crate::utils::block_id_generator::generate_id;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use vb_exchange::projects::BlockType;
 use yrs::types::array::Array;
 use yrs::types::map::Map;
 use yrs::updates::decoder::Decode as _;
-use yrs::{Doc, GetString, MapPrelim, Out, ReadTxn, Transact, Transaction};
+use yrs::{Doc, GetString, MapPrelim, Out, Transact, Transaction};
 
 /// Decodes a yrs update into a Vec of NewContentBlock's
 pub fn decode_yjs_content(
@@ -579,10 +579,10 @@ pub struct BlockDataEditorJSFormat {
     pub style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<UploadedImage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub withBorder: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub withBackground: Option<bool>,
+    #[serde(rename = "withBorder", skip_serializing_if = "Option::is_none")]
+    pub with_border: Option<bool>,
+    #[serde(rename = "withBackground", skip_serializing_if = "Option::is_none")]
+    pub with_background: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stretched: Option<bool>,
 }
@@ -688,8 +688,8 @@ impl TryFrom<NewContentBlockEditorJSFormat> for NewContentBlock {
                     .file
                     .ok_or("Missing field 'file' in image block".to_string())?;
                 let caption = value.data.caption;
-                let with_border = value.data.withBorder.unwrap_or(false);
-                let with_background = value.data.withBackground.unwrap_or(false);
+                let with_border = value.data.with_border.unwrap_or(false);
+                let with_background = value.data.with_background.unwrap_or(false);
                 let stretched = value.data.stretched.unwrap_or(false);
                 Ok(NewContentBlock {
                     id: value.id,
@@ -733,8 +733,8 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
                     alignment: None,
                     style: None,
                     file: None,
-                    withBorder: None,
-                    withBackground: None,
+                    with_border: None,
+                    with_background: None,
                     stretched: None,
                 },
                 tunes,
@@ -751,8 +751,8 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
                     alignment: None,
                     style: None,
                     file: None,
-                    withBorder: None,
-                    withBackground: None,
+                    with_border: None,
+                    with_background: None,
                     stretched: None,
                 },
                 tunes,
@@ -769,8 +769,8 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
                     alignment: None,
                     style: None,
                     file: None,
-                    withBorder: None,
-                    withBackground: None,
+                    with_border: None,
+                    with_background: None,
                     stretched: None,
                 },
                 tunes,
@@ -787,8 +787,8 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
                     alignment: None,
                     style: Some(style),
                     file: None,
-                    withBorder: None,
-                    withBackground: None,
+                    with_border: None,
+                    with_background: None,
                     stretched: None,
                 },
                 tunes,
@@ -809,8 +809,8 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
                     alignment: Some(alignment),
                     style: None,
                     file: None,
-                    withBorder: None,
-                    withBackground: None,
+                    with_border: None,
+                    with_background: None,
                     stretched: None,
                 },
                 tunes,
@@ -833,8 +833,8 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
                     alignment: None,
                     style: None,
                     file: Some(file),
-                    withBorder: Some(with_border),
-                    withBackground: Some(with_background),
+                    with_border: Some(with_border),
+                    with_background: Some(with_background),
                     stretched: Some(stretched),
                 },
                 tunes,
@@ -846,7 +846,7 @@ impl From<NewContentBlock> for NewContentBlockEditorJSFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yrs::{Array, Doc, Map, Transact};
+    use yrs::{Array, Doc, Map, ReadTxn, Transact};
 
     fn setup_y_map(doc: &Doc, block: NewContentBlock) -> yrs::types::map::MapRef {
         let map = doc.get_or_insert_map("test");

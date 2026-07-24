@@ -79,13 +79,12 @@ async fn rocket() -> _ {
             '&', '*', '(', ')', '_', '+', '-', '=', '[', ']', '{', '}', '|', '\\', ';', ':', '\'',
             '"', ',', '.', '<', '>', '/', '?',
         ];
-        let mut password: String = "".to_string();
-        {
+        let password: String = {
             let mut random = rand::thread_rng();
-            password = (0..20)
+            (0..20)
                 .map(|_| PASSWORD_CHARACTERS[random.gen_range(0..PASSWORD_CHARACTERS.len())])
-                .collect();
-        }
+                .collect()
+        };
         let user = User {
             id: uuid::Uuid::new_v4(),
             name: String::from("default"),
@@ -141,10 +140,9 @@ async fn rocket() -> _ {
 
     let root_ca = Arc::new(load_root_ca(settings.ca_cert_path.clone()));
     let client_cert = load_client_cert(settings.client_cert_path.clone());
-    let client_key = load_private_key(settings.client_key_path.clone());
     let client_key2 = load_private_key(settings.client_key_path.clone());
     let crls = load_crl(settings.revocation_list_path.clone());
-    let client_verifier = WebPkiClientVerifier::builder(root_ca.clone())
+    let _client_verifier = WebPkiClientVerifier::builder(root_ca.clone())
         .with_crls(crls)
         .build()
         .expect("Couldn't build Client Verifier. Check Certs & Key!");

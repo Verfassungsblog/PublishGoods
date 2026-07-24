@@ -24,7 +24,6 @@ use crate::storage::project_storage::sections::content::current::NewContentBlock
 use crate::storage::project_storage::sections::migration::convert_contentblocks_to_yrs;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use crate::utils::block_id_generator::generate_id;
 use crate::utils::dedup::dedup_vec;
 use log::{debug, error, warn};
 use rocket::http::ContentType;
@@ -243,7 +242,7 @@ impl ImportProcessor {
                         let total_to_process = match &job.import_data {
                             ImportJobData::WordpressLinks(data) => Some(data.len()),
                             ImportJobData::FileImport(data) => Some(data.files_to_process.len()),
-                            ImportJobData::WordpressFilter(data) => None,
+                            ImportJobData::WordpressFilter(_data) => None,
                         };
 
                         let status = ImportStatus::Processing(ProcessingDetails {
@@ -3168,7 +3167,7 @@ mod tests {
 
     #[tokio::test]
     async fn convert_links_with_parents_preserves_parents() {
-        let processor = make_processor();
+        let _processor = make_processor();
         let project_data = empty_project();
 
         let mut parent = hayagriva::Entry::new("parent", hayagriva::types::EntryType::Book);

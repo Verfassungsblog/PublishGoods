@@ -93,6 +93,7 @@ async fn send_export_translation_request(
     }
 }
 
+#[cfg(test)]
 pub mod test {
 
     /*

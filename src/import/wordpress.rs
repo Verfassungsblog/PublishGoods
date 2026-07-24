@@ -6,9 +6,13 @@ use std::fmt::Display;
 /// Import from Wordpress API
 pub struct WordpressAPI {
     base_url: String,
+    // Reserved for authenticated WordPress imports (not read yet)
+    #[allow(dead_code)]
     username: Option<String>,
+    #[allow(dead_code)]
     password: Option<String>,
     // Timeout for API requests in milliseconds
+    #[allow(dead_code)]
     timeout: u64,
     client: reqwest::Client,
 }
@@ -489,7 +493,7 @@ impl WordpressAPI {
                             }
                             WordpressAPIContext::Embed => {
                                 match response.json::<Vec<PostPreview>>().await {
-                                    Ok(mut posts) => {
+                                    Ok(posts) => {
                                         all_posts
                                             .push_posts(PostDataType::PostPreviews(posts))
                                             .unwrap();

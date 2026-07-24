@@ -30,7 +30,7 @@ pub mod api {
     use std::sync::Arc;
 
     #[derive(serde::Deserialize)]
-    struct NewUser {
+    pub struct NewUser {
         username: String,
         password: String,
         email: String,

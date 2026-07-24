@@ -1050,7 +1050,7 @@ pub fn render_text(
                     html
                 }
             }
-            Err(error) => "".to_string(),
+            Err(_error) => "".to_string(),
         };
     }
     "".to_string()
@@ -1296,6 +1296,7 @@ struct CustomStyle {
 
 struct InlineCitation {
     node: Handle,
+    #[allow(dead_code)]
     uuid: uuid::Uuid,
     citation: String,
 }
@@ -1308,7 +1309,7 @@ enum ReplacementType {
 }
 
 #[derive(Copy, Clone)]
-enum CitationType {
+pub enum CitationType {
     Footnote,
     Endnote,
     Inline,

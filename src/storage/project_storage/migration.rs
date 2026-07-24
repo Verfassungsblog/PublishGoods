@@ -964,7 +964,7 @@ mod tests {
 
         // Check bibliography
         assert_eq!(project_v10.bibliography.entries.len(), 1);
-        let (new_uuid, entry_v3) = project_v10.bibliography.entries.iter().next().unwrap();
+        let (new_uuid, _entry_v3) = project_v10.bibliography.entries.iter().next().unwrap();
         let new_uuid_str = new_uuid.to_string();
 
         // Check citations in blocks

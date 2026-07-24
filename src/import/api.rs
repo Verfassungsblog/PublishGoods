@@ -8,11 +8,11 @@ use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
-use rocket::State;
 use rocket::form::Form;
 use rocket::fs::TempFile;
 use rocket::http::ContentType;
 use rocket::serde::json::Json;
+use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 /// Form data for file upload request
 #[derive(FromForm)]
-struct FileUpload<'r> {
+pub struct FileUpload<'r> {
     /// Vector of temporary files uploaded by user
     files: Vec<TempFile<'r>>,
     /// Optional bibliography file in BibTeX format
@@ -44,7 +44,7 @@ pub enum WordpressImportData {
 
 /// Configuration for importing content to WordPress
 #[derive(Serialize, Deserialize)]
-struct WordpressImportRequest {
+pub struct WordpressImportRequest {
     /// The unique identifier of the target project
     project_id: Uuid,
     /// Data to be imported
@@ -291,11 +291,11 @@ pub struct PostPreviewReponse {
 ///
 /// # Returns
 /// Returns a JSON response containing:
-/// - On success: [`DeprecatedApiResult`] with [`PostPreviewReponse`] containing the total number of matched posts and previews
+/// - On success: [`APIResult`](crate::utils::api_helpers::APIResult) with [`PostPreviewReponse`] containing the total number of matched posts and previews
 /// - On error:
-///   - [`DeprecatedApiError::BadRequest`] if the provided URL is invalid
-///   - [`DeprecatedApiError::NotFound`] if the WordPress site cannot be found
-///   - [`DeprecatedApiError::InternalServerError`] for other errors
+///   - [`ApiErrorType::BadRequest`](crate::utils::api_helpers::ApiErrorType::BadRequest) if the provided URL is invalid
+///   - [`ApiErrorType::ResourceNotFound`](crate::utils::api_helpers::ApiErrorType::ResourceNotFound) if the WordPress site cannot be found
+///   - [`ApiErrorType::InternalServerError`](crate::utils::api_helpers::ApiErrorType::InternalServerError) for other errors
 ///
 /// # Authentication
 /// Requires a valid session

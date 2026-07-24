@@ -1,4 +1,3 @@
-use crate::projects::api::DeprecatedApiError;
 use crate::settings::Settings;
 use crate::storage::data_storage::current::DataStorageError;
 use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
@@ -69,20 +68,6 @@ pub enum ApiErrorType {
     Other(String),
 }
 
-/// Translates from old `ApiError` values to the new error type representation.
-impl From<DeprecatedApiError> for ApiErrorType {
-    fn from(value: DeprecatedApiError) -> Self {
-        match value {
-            DeprecatedApiError::NotFound => ApiErrorType::ResourceNotFound("unknown".to_string()),
-            DeprecatedApiError::BadRequest(x) => ApiErrorType::BadRequest(x),
-            DeprecatedApiError::Unauthorized => ApiErrorType::Unauthorized,
-            DeprecatedApiError::InternalServerError => ApiErrorType::InternalServerError,
-            DeprecatedApiError::Conflict(x) => ApiErrorType::Conflict(x),
-            DeprecatedApiError::Other(x) => ApiErrorType::Other(x),
-        }
-    }
-}
-
 /// The new-style API error object for JSON responses.
 #[derive(Debug, Serialize)]
 pub struct ApiError {
@@ -108,7 +93,7 @@ impl ApiError {
 
 /// Allows Rocket to send `ApiError` as a JSON response, with status code selected based on the error type.
 impl<'r> Responder<'r, 'static> for ApiError {
-    fn respond_to(self, request: &'r Request<'_>) -> rocket::response::Result<'static> {
+    fn respond_to(self, _request: &'r Request<'_>) -> rocket::response::Result<'static> {
         debug!("Responding with error {:?}", self.error);
 
         let status = match self.error {

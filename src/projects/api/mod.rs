@@ -19,57 +19,6 @@ pub mod get;
 pub mod patch;
 pub mod sections;
 
-/// DEPRECATED!
-/// General return type of API Routes
-/// One of the fields error or data must be Some
-///
-/// Return data: Some(()) if api call succeeded and you don't want to return anything
-#[deprecated(note = "Please use `crate::utils::api_helpers::APIResult` instead.")]
-#[derive(Serialize, Deserialize)]
-pub struct DeprecatedApiResult<T> {
-    /// Error occured
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<DeprecatedApiError>,
-    /// Return response data or Some(()) if succeeded but no return data
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<T>,
-}
-
-/// DEPRECATED! Errors that may occur when calling api routes
-#[deprecated]
-#[derive(Serialize, Deserialize)]
-pub enum DeprecatedApiError {
-    /// The requested resource doesn't exist
-    NotFound,
-    /// The request couldn't be fulfilled due to user error, see string
-    BadRequest(String),
-    /// You didn't send a valid session cookie
-    Unauthorized,
-    /// Something seriously went wrong, admin will find infos in logs
-    InternalServerError,
-    /// e.g. Folder/File with this name already exists
-    Conflict(String),
-    /// Other error, specified with a string
-    Other(String),
-}
-
-impl<T> DeprecatedApiResult<T> {
-    /// Creates a JSON response with an ['ApiResult'] where the error field is set to the error provided
-    pub fn new_error(error: DeprecatedApiError) -> Json<DeprecatedApiResult<T>> {
-        Json(Self {
-            error: Some(error),
-            data: None,
-        })
-    }
-    /// Creates a JSON response with an ['ApiResult'] where the data field is set to the data provided
-    pub fn new_data(data: T) -> Json<DeprecatedApiResult<T>> {
-        Json(Self {
-            error: None,
-            data: Some(data),
-        })
-    }
-}
-
 /// Delete project
 /// DELETE /api/projects/<project_id>
 #[delete("/api/projects/<project_id>")]
@@ -248,12 +197,12 @@ pub async fn move_content_child_of(
 }
 
 #[derive(FromForm)]
-struct ImageUpload<'a> {
+pub struct ImageUpload<'a> {
     image: TempFile<'a>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
-struct ImageUploadResponse {
+pub struct ImageUploadResponse {
     success: u8,
     file: Option<UploadedImage>,
 }

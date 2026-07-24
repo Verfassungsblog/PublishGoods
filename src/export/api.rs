@@ -12,7 +12,7 @@ use vb_exchange::RenderingStatus;
 
 /// Just like [LocalRenderingRequest] but without an request_id
 #[derive(Serialize, Deserialize)]
-struct NewLocalRenderingRequest {
+pub struct NewLocalRenderingRequest {
     /// id of the project to render
     pub project_id: uuid::Uuid,
     /// list of export formats slugs that should be rendered
