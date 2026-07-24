@@ -20,7 +20,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install musl-tools
         rustup target add x86_64-unknown-linux-musl
-        npm install -g handlebars typescript@5.9.3 webpack webpack-cli
+        npm install -g handlebars typescript@6.0.3 webpack webpack-cli
         cd typescript && npm install
     - name: Create version.txt
       run: |
