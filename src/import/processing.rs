@@ -1,4 +1,3 @@
-use async_recursion::async_recursion;
 use chrono::NaiveDate;
 use hayagriva::io;
 use std::collections::{HashMap, VecDeque};
@@ -6,7 +5,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use vb_exchange::projects::BlockType;
 
-use html_parser::{Dom, Node};
+use html5ever::tendril::TendrilSink;
+use html5ever::{ParseOpts, QualName, parse_fragment};
+use markup5ever::{Attribute, local_name, ns};
+use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
@@ -301,6 +303,7 @@ impl ImportProcessor {
                 .import_by_url(
                     link,
                     Arc::clone(&project),
+                    job.project_id,
                     job.convert_footnotes_to_endnotes,
                     job.shift_headings_up,
                     job.convert_links,
@@ -361,6 +364,7 @@ impl ImportProcessor {
                     file,
                     content_type,
                     project,
+                    job.project_id,
                     job.convert_footnotes_to_endnotes,
                     job.shift_headings_up,
                     job.convert_links,
@@ -481,6 +485,7 @@ impl ImportProcessor {
                 .import_wp_post(
                     post,
                     project.clone(),
+                    job.project_id,
                     job.convert_footnotes_to_endnotes,
                     job.shift_headings_up,
                     job.convert_links,
@@ -523,6 +528,7 @@ impl ImportProcessor {
         &self,
         url: &str,
         project: Arc<RwLock<ProjectData>>,
+        project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings_up: bool,
         convert_links: bool,
@@ -613,6 +619,7 @@ impl ImportProcessor {
                 self.import_wp_post(
                     post,
                     project.clone(),
+                    project_id,
                     endnotes,
                     shift_headings_up,
                     convert_links,
@@ -634,6 +641,7 @@ impl ImportProcessor {
             self.import_wp_post(
                 post,
                 project.clone(),
+                project_id,
                 endnotes,
                 shift_headings_up,
                 convert_links,
@@ -688,6 +696,7 @@ impl ImportProcessor {
         &self,
         post: Post,
         project: Arc<RwLock<ProjectData>>,
+        project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings_up: bool,
         convert_links: bool,
@@ -766,6 +775,7 @@ impl ImportProcessor {
             section,
             post.content.rendered.clone(),
             project,
+            project_id,
             endnotes,
             shift_headings_up,
             convert_links,
@@ -819,6 +829,7 @@ impl ImportProcessor {
         file_path: &str,
         content_type: &ContentType,
         project: Arc<RwLock<ProjectData>>,
+        project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings_up: bool,
         convert_links: bool,
@@ -910,6 +921,7 @@ impl ImportProcessor {
         self.import_html_from_pandoc(
             file_content,
             project,
+            project_id,
             endnotes,
             shift_headings_up,
             convert_links,
@@ -960,346 +972,59 @@ impl ImportProcessor {
         mut section: Section,
         input: String,
         project_data: Arc<RwLock<ProjectData>>,
+        project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
         debug!("Importing html from wp");
-        let dom = match Dom::parse(&input) {
-            Ok(dom) => dom,
-            Err(e) => {
-                error!("Couldn't parse html from import: {}", e);
+
+        // Phase 1 (sync): parse and collect the URLs that need asynchronous work (images/media to download). The
+        // html5ever handles are `Rc`-based (`!Send`) and must not be held across an `.await`,
+        // so every handle access happens inside a scope that drops the handles before an await.
+        let (media_srcs, hrefs) = {
+            let dom = parse_dom(&input);
+            let top_nodes = top_level_nodes(&dom);
+            if top_nodes.is_empty() && !input.trim().is_empty() {
+                error!("Couldn't parse html from import: no parseable nodes");
                 return Err(ImportError::HtmlConversionFailed);
             }
+            let mut media = Vec::new();
+            collect_media_srcs(&top_nodes, &mut media);
+            let mut hrefs = Vec::new();
+            if convert_links {
+                collect_convertible_hrefs(&top_nodes, &mut hrefs);
+            }
+            (dedup_vec(media), dedup_vec(hrefs))
         };
 
-        debug!("Parsed DOM successfully. Processing footnotes");
+        // Phase 2 (async): download external media and resolve links into citations. Works
+        // only on owned `String`s, so no non-Send handles are alive across the awaits.
+        let media_map = self.download_all_media(&media_srcs, project_id).await;
+        let link_map = self.resolve_all_links(&hrefs, &project_data).await;
 
-        // Get footnotes (WP footnote plugin)
-        let mut footnotes: HashMap<String, String> = HashMap::new();
-        if let Some(footnote_div) = dom.children.iter().find(|x| match x {
-            Node::Element(div) => div
-                .classes
-                .contains(&"footnotes_reference_container".to_string()),
-            _ => false,
-        }) && let Node::Element(div) = footnote_div
-            && let Some(Node::Element(e)) = div.children.get(1)
-            && let Some(Node::Element(table)) = e.children.first()
-            && table.name == "table"
-            && let Some(Node::Element(tbody)) = table.children.get(1)
-            && tbody.name == "tbody"
-        {
-            for row in &tbody.children {
-                if let Node::Element(tr) = row
-                    && let Some(Node::Element(th)) = tr.children.first()
-                    && let Some(Node::Element(a)) = th.children.first()
-                    && a.classes.contains(&"footnote_backlink".to_string())
-                    && let Some(id) = a.id.clone()
-                    && let Some(Node::Element(td)) = tr.children.get(1)
-                    && td.classes.contains(&"footnote_plugin_text".to_string())
-                {
-                    // The WP footnote plugin wraps the actual content in a
-                    // `<td class="footnote_plugin_text">...</td>`.
-                    // We only want to preserve the inner HTML, not the `td` tag.
-                    let mut html = String::new();
-                    for child in &td.children {
-                        debug!("Found footnote, converting with dom_to_html");
-                        match child {
-                            Node::Element(el) => {
-                                html.push_str(
-                                    &self
-                                        .dom_to_html(
-                                            el.clone(),
-                                            None,
-                                            endnotes,
-                                            convert_links,
-                                            true,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                );
-                            }
-                            Node::Text(t) => html.push_str(t),
-                            Node::Comment(_) => {}
-                        }
-                    }
-                    footnotes.insert(id, html);
-                }
+        // Phase 3 (sync): re-parse and build the content blocks using the precomputed maps.
+        let blocks = {
+            let dom = parse_dom(&input);
+            let top_nodes = top_level_nodes(&dom);
+            let footnotes = extract_wp_footnotes(&top_nodes, &link_map, &media_map);
+
+            let mut blocks: Vec<NewContentBlock> = vec![];
+            for node in &top_nodes {
+                blocks.extend(node_to_blocks(
+                    &section,
+                    node,
+                    &footnotes,
+                    endnotes,
+                    shift_headings,
+                    &link_map,
+                    &media_map,
+                ));
             }
-        }
-
-        let mut blocks: Vec<NewContentBlock> = vec![];
-
-        debug!("Starting to traverse DOM Tree");
-        for node in dom.children {
-            match node {
-                Node::Text(t) => {
-                    debug!("Found text, added as Paragraph Content block");
-                    blocks.push(NewContentBlock {
-                        id: generate_id(&section),
-                        block_type: BlockType::Paragraph,
-                        data: BlockData::Paragraph { text: t },
-                        css_classes: vec![],
-                        revision_id: None,
-                    });
-                }
-                Node::Element(el) => {
-                    debug!("Found element: {:?}", el);
-
-                    // WP footnote plugin appends a trailing footnotes container block.
-                    // We extract its content into `footnotes` above; the container itself must not
-                    // be persisted as a separate block.
-                    if el
-                        .classes
-                        .contains(&"footnotes_reference_container".to_string())
-                    {
-                        continue;
-                    }
-                    match el.name.to_lowercase().as_str() {
-                        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                            let mut level = match el.name.to_lowercase().as_str() {
-                                "h1" => 1,
-                                "h2" => 2,
-                                "h3" => 3,
-                                "h4" => 4,
-                                "h5" => 5,
-                                "h6" => 6,
-                                _ => 0,
-                            };
-
-                            if shift_headings && level > 1 {
-                                level -= 1;
-                            }
-
-                            let text = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Heading,
-                                data: BlockData::Heading { text, level },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                        "p" | "div" => {
-                            let text = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Paragraph,
-                                data: BlockData::Paragraph { text },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                        "ul" | "ol" => {
-                            let style = if el.name.to_lowercase() == "ol" {
-                                "ordered".to_string()
-                            } else {
-                                "unordered".to_string()
-                            };
-                            let mut items: Vec<String> = vec![];
-                            for child in &el.children {
-                                if let Node::Element(li) = child
-                                    && li.name.to_lowercase() == "li"
-                                {
-                                    items.push(
-                                        self.dom_to_html(
-                                            li.clone(),
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            false,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    );
-                                }
-                            }
-                            if items.is_empty() {
-                                let html = self
-                                    .dom_to_html(
-                                        el.clone(),
-                                        Some(&footnotes),
-                                        endnotes,
-                                        convert_links,
-                                        true,
-                                        project_data.clone(),
-                                    )
-                                    .await;
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Raw,
-                                    data: BlockData::Raw { html },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            } else {
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::List,
-                                    data: BlockData::List { style, items },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            }
-                        }
-                        "blockquote" => {
-                            let text = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Quote,
-                                data: BlockData::Quote {
-                                    text,
-                                    caption: String::new(),
-                                    alignment: "left".to_string(),
-                                },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                        "figure" | "img" => {
-                            // Best-effort conversion into an Image block; fall back to Raw if no src.
-                            let (src, caption) = if el.name.to_lowercase() == "img" {
-                                (
-                                    el.attributes
-                                        .get("src")
-                                        .and_then(|x| x.clone())
-                                        .unwrap_or_default(),
-                                    None,
-                                )
-                            } else {
-                                let img = el.children.iter().find_map(|n| match n {
-                                    Node::Element(e) if e.name.to_lowercase() == "img" => Some(e),
-                                    _ => None,
-                                });
-                                let src = img
-                                    .and_then(|img| {
-                                        img.attributes.get("src").and_then(|x| x.clone())
-                                    })
-                                    .unwrap_or_default();
-                                let figcaption = el.children.iter().find_map(|n| match n {
-                                    Node::Element(e) if e.name.to_lowercase() == "figcaption" => {
-                                        Some(e)
-                                    }
-                                    _ => None,
-                                });
-                                let caption = figcaption.cloned();
-                                (src, caption)
-                            };
-
-                            if src.is_empty() {
-                                let html = self
-                                    .dom_to_html(
-                                        el.clone(),
-                                        Some(&footnotes),
-                                        endnotes,
-                                        convert_links,
-                                        true,
-                                        project_data.clone(),
-                                    )
-                                    .await;
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Raw,
-                                    data: BlockData::Raw { html },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            } else {
-                                let filename = src
-                                    .split('/')
-                                    .next_back()
-                                    .unwrap_or("image")
-                                    .split('?')
-                                    .next()
-                                    .unwrap_or("image")
-                                    .to_string();
-                                let caption = match caption {
-                                    None => None,
-                                    Some(fc) => Some(
-                                        self.dom_to_html(
-                                            fc,
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            false,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    ),
-                                };
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Image,
-                                    data: BlockData::Image {
-                                        file: crate::projects::api::UploadedImage {
-                                            url: src,
-                                            filename,
-                                        },
-                                        caption,
-                                        with_border: false,
-                                        with_background: false,
-                                        stretched: false,
-                                    },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            }
-                        }
-                        _ => {
-                            let html = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    true,
-                                    project_data.clone(),
-                                )
-                                .await;
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Raw,
-                                data: BlockData::Raw { html },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                    }
-                }
-                Node::Comment(_) => {}
-            }
-        }
+            blocks
+        };
 
         debug!("Converting contentblocks to yrs.");
-
         let doc = convert_contentblocks_to_yrs(blocks);
         section.content = doc
             .transact()
@@ -1310,7 +1035,6 @@ impl ImportProcessor {
         }
 
         debug!("Saving to project data");
-
         project_data.write().unwrap().sections.push(section);
         Ok(())
     }
@@ -1319,20 +1043,34 @@ impl ImportProcessor {
         &self,
         input: String,
         project_data: Arc<RwLock<ProjectData>>,
+        project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
-        let dom = match Dom::parse(&input) {
-            Ok(dom) => dom,
-            Err(e) => {
-                error!("Couldn't parse html from import after pandoc: {}", e);
-                return Err(ImportError::HtmlConversionFailed);
-            }
-        };
-        if dom.tree_type == html_parser::DomVariant::Document {
+        // Reject full HTML documents; pandoc is expected to emit a fragment.
+        if looks_like_document(&input) {
             return Err(ImportError::HtmlConversionFailed);
         }
+
+        let (media_srcs, hrefs) = {
+            let dom = parse_dom(&input);
+            let top_nodes = top_level_nodes(&dom);
+            if top_nodes.is_empty() && !input.trim().is_empty() {
+                error!("Couldn't parse html from import after pandoc: no parseable nodes");
+                return Err(ImportError::HtmlConversionFailed);
+            }
+            let mut media = Vec::new();
+            collect_media_srcs(&top_nodes, &mut media);
+            let mut hrefs = Vec::new();
+            if convert_links {
+                collect_convertible_hrefs(&top_nodes, &mut hrefs);
+            }
+            (dedup_vec(media), dedup_vec(hrefs))
+        };
+
+        let media_map = self.download_all_media(&media_srcs, project_id).await;
+        let link_map = self.resolve_all_links(&hrefs, &project_data).await;
 
         let mut section = Section {
             id: Some(uuid::Uuid::new_v4()),
@@ -1355,343 +1093,31 @@ impl ImportProcessor {
             },
         };
 
-        // Extract pandoc footnotes: <aside id="footnotes"><ol><li id="fn1">...</li></ol></aside>
-        let mut footnotes: HashMap<String, String> = HashMap::new();
-        if let Some(aside) = dom.children.iter().find(|x| match x {
-            Node::Element(el) => el.name == "aside" && el.id.as_deref() == Some("footnotes"),
-            _ => false,
-        }) && let Node::Element(aside) = aside
-        {
-            let ol = aside.children.iter().find(|node| match node {
-                Node::Element(el) => el.name == "ol",
-                _ => false,
-            });
-            if let Some(Node::Element(ol)) = ol {
-                for node in ol.children.iter() {
-                    if let Node::Element(li) = node {
-                        let Some(id) = li.id.clone() else {
-                            continue;
-                        };
+        let blocks = {
+            let dom = parse_dom(&input);
+            let top_nodes = top_level_nodes(&dom);
+            let footnotes = extract_pandoc_footnotes(&top_nodes, &link_map, &media_map);
 
-                        // Prefer the first <p> inside the <li>
-                        let mut text = String::new();
-                        if let Some(Node::Element(p)) = li
-                            .children
-                            .iter()
-                            .find(|n| matches!(n, Node::Element(e) if e.name == "p"))
-                        {
-                            for child in &p.children {
-                                match child {
-                                    Node::Text(t) => text.push_str(t),
-                                    Node::Element(el) => {
-                                        if el.name == "a"
-                                            && let Some(Some(role)) = el.attributes.get("role")
-                                            && role == "doc-backlink"
-                                        {
-                                            continue;
-                                        }
-                                        text.push_str(
-                                            &self
-                                                .dom_to_html(
-                                                    el.clone(),
-                                                    None,
-                                                    endnotes,
-                                                    convert_links,
-                                                    false,
-                                                    project_data.clone(),
-                                                )
-                                                .await,
-                                        );
-                                    }
-                                    Node::Comment(_) => {}
-                                }
-                            }
-                        } else {
-                            // Fallback: serialize full <li>
-                            text = self
-                                .dom_to_html(
-                                    li.clone(),
-                                    None,
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-                        }
-
-                        footnotes.insert(id, text);
-                    }
-                }
+            let mut blocks: Vec<NewContentBlock> = vec![];
+            for node in &top_nodes {
+                blocks.extend(node_to_blocks(
+                    &section,
+                    node,
+                    &footnotes,
+                    endnotes,
+                    shift_headings,
+                    &link_map,
+                    &media_map,
+                ));
             }
-        }
-
-        let mut blocks: Vec<NewContentBlock> = vec![];
-        for node in dom.children {
-            match node {
-                Node::Text(t) => {
-                    blocks.push(NewContentBlock {
-                        id: generate_id(&section),
-                        block_type: BlockType::Paragraph,
-                        data: BlockData::Paragraph { text: t },
-                        css_classes: vec![],
-                        revision_id: None,
-                    });
-                }
-                Node::Element(el) => {
-                    if el.name == "aside" && el.id.as_deref() == Some("footnotes") {
-                        continue;
-                    }
-                    match el.name.to_lowercase().as_str() {
-                        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                            let mut level = match el.name.to_lowercase().as_str() {
-                                "h1" => 1,
-                                "h2" => 2,
-                                "h3" => 3,
-                                "h4" => 4,
-                                "h5" => 5,
-                                "h6" => 6,
-                                _ => 0,
-                            };
-
-                            if shift_headings && level > 1 {
-                                level -= 1;
-                            }
-
-                            let text = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Heading,
-                                data: BlockData::Heading { text, level },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                        "p" | "div" => {
-                            let text = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Paragraph,
-                                data: BlockData::Paragraph { text },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                        "ul" | "ol" => {
-                            let style = if el.name.to_lowercase() == "ol" {
-                                "ordered".to_string()
-                            } else {
-                                "unordered".to_string()
-                            };
-                            let mut items: Vec<String> = vec![];
-                            for child in &el.children {
-                                if let Node::Element(li) = child
-                                    && li.name.to_lowercase() == "li"
-                                {
-                                    items.push(
-                                        self.dom_to_html(
-                                            li.clone(),
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            false,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    );
-                                }
-                            }
-                            if items.is_empty() {
-                                let html = self
-                                    .dom_to_html(
-                                        el.clone(),
-                                        Some(&footnotes),
-                                        endnotes,
-                                        convert_links,
-                                        true,
-                                        project_data.clone(),
-                                    )
-                                    .await;
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Raw,
-                                    data: BlockData::Raw { html },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            } else {
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::List,
-                                    data: BlockData::List { style, items },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            }
-                        }
-                        "blockquote" => {
-                            let text = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Quote,
-                                data: BlockData::Quote {
-                                    text,
-                                    caption: String::new(),
-                                    alignment: "left".to_string(),
-                                },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                        "figure" | "img" => {
-                            let (src, caption) = if el.name.to_lowercase() == "img" {
-                                (
-                                    el.attributes
-                                        .get("src")
-                                        .and_then(|x| x.clone())
-                                        .unwrap_or_default(),
-                                    None,
-                                )
-                            } else {
-                                let img = el.children.iter().find_map(|n| match n {
-                                    Node::Element(e) if e.name.to_lowercase() == "img" => Some(e),
-                                    _ => None,
-                                });
-                                let src = img
-                                    .and_then(|img| {
-                                        img.attributes.get("src").and_then(|x| x.clone())
-                                    })
-                                    .unwrap_or_default();
-                                let figcaption = el.children.iter().find_map(|n| match n {
-                                    Node::Element(e) if e.name.to_lowercase() == "figcaption" => {
-                                        Some(e.clone())
-                                    }
-                                    _ => None,
-                                });
-                                (src, figcaption)
-                            };
-
-                            if src.is_empty() {
-                                let html = self
-                                    .dom_to_html(
-                                        el.clone(),
-                                        Some(&footnotes),
-                                        endnotes,
-                                        convert_links,
-                                        true,
-                                        project_data.clone(),
-                                    )
-                                    .await;
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Raw,
-                                    data: BlockData::Raw { html },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            } else {
-                                let filename = src
-                                    .split('/')
-                                    .next_back()
-                                    .unwrap_or("image")
-                                    .split('?')
-                                    .next()
-                                    .unwrap_or("image")
-                                    .to_string();
-                                let caption = match caption {
-                                    None => None,
-                                    Some(fc) => Some(
-                                        self.dom_to_html(
-                                            fc,
-                                            Some(&footnotes),
-                                            endnotes,
-                                            convert_links,
-                                            false,
-                                            project_data.clone(),
-                                        )
-                                        .await,
-                                    ),
-                                };
-                                blocks.push(NewContentBlock {
-                                    id: generate_id(&section),
-                                    block_type: BlockType::Image,
-                                    data: BlockData::Image {
-                                        file: crate::projects::api::UploadedImage {
-                                            url: src,
-                                            filename,
-                                        },
-                                        caption,
-                                        with_border: false,
-                                        with_background: false,
-                                        stretched: false,
-                                    },
-                                    css_classes: el.classes.clone(),
-                                    revision_id: None,
-                                });
-                            }
-                        }
-                        "script" => {}
-                        _ => {
-                            let html = self
-                                .dom_to_html(
-                                    el.clone(),
-                                    Some(&footnotes),
-                                    endnotes,
-                                    convert_links,
-                                    false,
-                                    project_data.clone(),
-                                )
-                                .await;
-                            blocks.push(NewContentBlock {
-                                id: generate_id(&section),
-                                block_type: BlockType::Raw,
-                                data: BlockData::Raw { html },
-                                css_classes: el.classes.clone(),
-                                revision_id: None,
-                            });
-                        }
-                    }
-                }
-                Node::Comment(_) => {}
-            }
-        }
+            blocks
+        };
 
         debug!("Converted HTML to ContentBlocks: {:?}", blocks);
-
         let doc = convert_contentblocks_to_yrs(blocks);
         section.content = doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
-
-        debug!("Converted ContentBlocks to YRS.");
 
         if cfg!(feature = "language_detection") {
             section.metadata.lang = detect_language_for_section(&section);
@@ -1701,165 +1127,151 @@ impl ImportProcessor {
         Ok(())
     }
 
-    #[async_recursion]
-    async fn dom_to_html(
+    /// Downloads all referenced external media into the project's uploads directory.
+    ///
+    /// Returns a map from the original `src` URL to `(api_url, filename)` for every file that
+    /// was downloaded successfully. Downloads are best-effort: a failure just leaves the entry
+    /// out of the map, and callers fall back to the original external URL.
+    async fn download_all_media(
         &self,
-        ele: html_parser::Element,
-        footnotes: Option<&HashMap<String, String>>,
-        endnotes: bool,
-        convert_links: bool,
-        keep_outer_html: bool,
-        project_data: Arc<RwLock<ProjectData>>,
-    ) -> String {
-        self.element_to_html(
-            &ele,
-            footnotes,
-            endnotes,
-            convert_links,
-            keep_outer_html,
-            project_data,
-        )
-        .await
+        srcs: &[String],
+        project_id: uuid::Uuid,
+    ) -> HashMap<String, (String, String)> {
+        use futures::StreamExt;
+
+        let mut map = HashMap::new();
+        if srcs.is_empty() {
+            return map;
+        }
+        let client = media_client();
+
+        // Download concurrently (bounded), rather than serializing every network round-trip.
+        // Owned `String`s are moved into each task so the futures don't borrow `srcs`.
+        let results: Vec<(String, Option<(String, String)>)> = futures::stream::iter(srcs.to_vec())
+            .map(|src| async move {
+                let local = self.download_media(client, &src, project_id).await;
+                (src, local)
+            })
+            .buffer_unordered(8)
+            .collect()
+            .await;
+
+        for (src, result) in results {
+            match result {
+                Some(local) => {
+                    map.insert(src, local);
+                }
+                None => warn!("Couldn't download media from {}", src),
+            }
+        }
+        map
     }
 
-    #[async_recursion]
-    async fn element_to_html(
+    /// Downloads a single media file into `{data_path}/projects/{project_id}/uploads`.
+    ///
+    /// Returns `(api_url, filename)` on success, where `api_url` is the project-internal URL
+    /// used to reference the stored file.
+    async fn download_media(
         &self,
-        el: &html_parser::Element,
-        footnotes: Option<&HashMap<String, String>>,
-        endnotes: bool,
-        convert_links: bool,
-        keep_outer_html: bool,
-        project_data: Arc<RwLock<ProjectData>>,
-    ) -> String {
-        debug!("element_to_html conversion for {:?}", el);
+        client: &reqwest::Client,
+        url: &str,
+        project_id: uuid::Uuid,
+    ) -> Option<(String, String)> {
+        let response = client.get(url).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let bytes = response.bytes().await.ok()?;
+        let filename = format!("{}{}", uuid::Uuid::new_v4(), extension_from_url(url));
+        let dir = format!(
+            "{}/projects/{}/uploads",
+            self.settings.data_path, project_id
+        );
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            warn!("Couldn't create uploads directory {}: {}", dir, e);
+            return None;
+        }
+        let path = format!("{}/{}", dir, filename);
+        if let Err(e) = tokio::fs::write(&path, &bytes).await {
+            warn!("Couldn't write media file {}: {}", path, e);
+            return None;
+        }
+        Some((
+            format!("/api/projects/{}/uploads/{}", project_id, filename),
+            filename,
+        ))
+    }
 
-        // Special cases: footnote references and link->citation conversion.
-        if el.name == "a" {
-            // Pandoc footnote references: <a role="doc-noteref"><sup>1</sup></a>
-            if let Some(Some(role)) = el.attributes.get("role")
-                && role == "doc-noteref"
-                && let Some(Node::Element(sup)) = el.children.first()
-                && sup.name == "sup"
-                && let Some(Node::Text(num)) = sup.children.first()
-                && let Some(footnotes) = footnotes
-            {
-                let num = num.trim().to_string();
-                if let Some(footnote) = footnotes.get(&format!("fn{}", num)) {
-                    let content = footnote.replace('"', "'");
-                    let note_type = if endnotes { "endnote" } else { "footnote" };
-                    return format!(
-                        "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
-                        note_type, content
-                    );
-                }
-            }
+    /// Resolves every collected link into a citation replacement (when the Zotero translation
+    /// server recognizes it), adding the resulting bibliography entries to the project.
+    async fn resolve_all_links(
+        &self,
+        hrefs: &[String],
+        project_data: &Arc<RwLock<ProjectData>>,
+    ) -> HashMap<String, String> {
+        use futures::StreamExt;
 
-            // WordPress footnote plugin references
-            if let Some(Node::Element(sup)) = el.children.first()
-                && sup
-                    .classes
-                    .contains(&"footnote_plugin_tooltip_text".to_string())
-                && let Some(id) = sup.id.clone()
-            {
-                let footnote_id = id.replace("tooltip", "reference");
-                if let Some(footnotes) = footnotes
-                    && let Some(footnote) = footnotes.get(&footnote_id)
-                {
-                    let content = footnote.replace('"', "'");
-                    let note_type = if endnotes { "endnote" } else { "footnote" };
-                    return format!(
-                        "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
-                        note_type, content
-                    );
-                }
-            }
-
-            // Convert normal links to citations if enabled and resolvable via Zotero Translation Server.
-            if convert_links && let Some(Some(href)) = el.attributes.get("href") {
-                // Skip internal anchors/mailto/etc.
-                let href_lc = href.to_lowercase();
-                let is_http = href_lc.starts_with("http://") || href_lc.starts_with("https://");
-                if is_http
-                    && let Some(entries) =
-                        link_converter::get_translation(href, &self.settings).await
-                    && let Some(main_entry) = entries.first()
-                {
-                    let main_key = main_entry.key().to_string();
-                    let by_key = Self::collect_bib_entries_with_parents(entries);
-
-                    // Build UUID mapping
-                    let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
-                    for key in by_key.keys() {
-                        uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
-                    }
-
-                    let main_uuid = *uuid_map.get(&main_key).unwrap();
-
-                    // Convert and resolve parents
-                    {
-                        let mut project = project_data.write().unwrap();
-                        for (key, entry) in by_key.iter() {
-                            let mut converted = BibEntryV3::from(entry);
-                            let entry_uuid = *uuid_map.get(key).unwrap();
-                            converted.key = entry_uuid;
-                            converted.parents = entry
-                                .parents()
-                                .iter()
-                                .filter_map(|p| uuid_map.get(p.key()).copied())
-                                .filter(|&p_uuid| p_uuid != entry_uuid)
-                                .collect();
-
-                            project.bibliography.add_entry(converted);
-                        }
-                    }
-
-                    return format!("<citation data-key=\"{}\">C</citation>", main_uuid);
-                }
-            }
+        let mut map = HashMap::new();
+        if hrefs.is_empty() {
+            return map;
         }
 
-        let mut attrs: String = String::new();
-        for (attr, attrvalue) in el.attributes.iter() {
-            match attrvalue {
-                Some(value) => attrs.push_str(&format!(" {}=\"{}\"", attr, value)),
-                None => attrs.push_str(&format!(" {}", attr)),
+        // Resolve links concurrently (bounded): the translation round-trips overlap, while the
+        // brief `project_data` writes inside `convert_link_to_citation` stay serialized by its
+        // lock (never held across an await).
+        let results: Vec<(String, Option<String>)> = futures::stream::iter(hrefs.to_vec())
+            .map(|href| async move {
+                let citation = self.convert_link_to_citation(&href, project_data).await;
+                (href, citation)
+            })
+            .buffer_unordered(8)
+            .collect()
+            .await;
+
+        for (href, citation) in results {
+            if let Some(citation) = citation {
+                map.insert(href, citation);
             }
         }
-        if let Some(id) = &el.id {
-            attrs.push_str(&format!(" id=\"{}\"", id));
-        }
-        if !el.classes.is_empty() {
-            attrs.push_str(&format!(" class=\"{}\"", el.classes.join(" ")));
-        }
+        map
+    }
 
-        let mut inner = String::new();
-        for child in &el.children {
-            match child {
-                Node::Text(t) => inner.push_str(t),
-                Node::Element(child_el) => {
-                    inner.push_str(
-                        &self
-                            .element_to_html(
-                                child_el,
-                                footnotes,
-                                endnotes,
-                                convert_links,
-                                true,
-                                project_data.clone(),
-                            )
-                            .await,
-                    );
-                }
-                Node::Comment(_) => {}
+    /// Tries to convert a single external link into a citation by resolving it via the Zotero
+    /// translation server. On success the referenced bibliography entries (and their parents)
+    /// are added to the project and a `<citation>` replacement string is returned.
+    async fn convert_link_to_citation(
+        &self,
+        href: &str,
+        project_data: &Arc<RwLock<ProjectData>>,
+    ) -> Option<String> {
+        let entries = link_converter::get_translation(href, &self.settings).await?;
+        let main_entry = entries.first()?;
+        let main_key = main_entry.key().to_string();
+        let by_key = Self::collect_bib_entries_with_parents(entries);
+
+        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
+        for key in by_key.keys() {
+            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
+        }
+        let main_uuid = *uuid_map.get(&main_key)?;
+
+        {
+            let mut project = project_data.write().unwrap();
+            for (key, entry) in by_key.iter() {
+                let mut converted = BibEntryV3::from(entry);
+                let entry_uuid = *uuid_map.get(key).unwrap();
+                converted.key = entry_uuid;
+                converted.parents = entry
+                    .parents()
+                    .iter()
+                    .filter_map(|p| uuid_map.get(p.key()).copied())
+                    .filter(|&p_uuid| p_uuid != entry_uuid)
+                    .collect();
+                project.bibliography.add_entry(converted);
             }
         }
 
-        if keep_outer_html {
-            format!("<{}{}>{}</{}>", el.name, attrs, inner, el.name)
-        } else {
-            inner
-        }
+        Some(format!("<citation data-key=\"{}\">C</citation>", main_uuid))
     }
 
     async fn import_bib_entries(
@@ -1937,6 +1349,1077 @@ impl ImportProcessor {
 
         Ok(())
     }
+}
+
+/// HTML parsing, sanitization and serialization helpers built on top of
+/// `html5ever`/`markup5ever_rcdom`.
+///
+/// The importer walks the parsed `RcDom` handles directly. Because those handles are
+/// `Rc`-based (and therefore `!Send`), they are only ever touched from synchronous code; any
+/// asynchronous work (media downloads, link resolution) runs separately on owned data.
+/// Serialization is sanitizing:
+/// - `<script>`/`<style>` and similar elements are dropped together with their content.
+/// - Embedded content, forms and interactive elements are reduced to their plain text.
+/// - Unsupported inline wrappers (e.g. `<span>`, `<font>`) are unwrapped, keeping their text
+///   (this is what the editor expects — it would otherwise drop the tag *and* its content).
+/// - Only a small allowlist of standard attributes survives; `data-*`, `on*` and other
+///   non-standard attributes are stripped.
+
+/// Context threaded through the synchronous serialization functions.
+#[derive(Clone, Copy)]
+struct Ctx<'a> {
+    /// Extracted footnotes keyed by their reference id, used to inline note spans.
+    footnotes: Option<&'a HashMap<String, String>>,
+    /// Whether footnotes should be rendered as endnotes.
+    endnotes: bool,
+    /// Map from an external link URL to its `<citation>` replacement.
+    link_map: &'a HashMap<String, String>,
+    /// Map from an external media `src` to its downloaded `(api_url, filename)`, used to
+    /// rewrite inline `<img>`/media sources to the project-internal URL.
+    media_map: &'a HashMap<String, (String, String)>,
+    /// When true, block/table structure is preserved (used for `Raw` blocks); otherwise only
+    /// inline formatting is kept (used for paragraph/heading/quote/list text).
+    keep_structural: bool,
+}
+
+/// Returns a process-wide shared HTTP client for media downloads, built once and reused
+/// across all imports (avoids rebuilding a connection pool per post).
+fn media_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
+/// Parses `input` as an HTML fragment in `<body>` context. Parsing an in-memory string never
+/// fails.
+///
+/// The returned [`RcDom`] must be kept alive for as long as its handles are used: rcdom nodes
+/// empty their descendants' child lists on drop, so extracting handles and then dropping the
+/// dom would leave those handles childless.
+fn parse_dom(input: &str) -> RcDom {
+    let context = QualName::new(None, ns!(html), local_name!("body"));
+    parse_fragment(
+        RcDom::default(),
+        ParseOpts::default(),
+        context,
+        Vec::<Attribute>::new(),
+        false,
+    )
+    .from_utf8()
+    .read_from(&mut input.as_bytes())
+    .expect("reading from an in-memory byte slice cannot fail")
+}
+
+/// Returns the top-level content handles of a fragment parsed with [`parse_dom`].
+///
+/// `parse_fragment` wraps the fragment nodes in a synthetic `<html>` root; the actual content
+/// nodes are that root's children.
+fn top_level_nodes(dom: &RcDom) -> Vec<Handle> {
+    match dom.document.children.borrow().first() {
+        Some(root) => root.children.borrow().iter().cloned().collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Case-insensitive ASCII prefix check without allocating.
+fn starts_with_ci(s: &str, prefix: &str) -> bool {
+    let bytes = s.as_bytes();
+    let prefix = prefix.as_bytes();
+    bytes.len() >= prefix.len() && bytes[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+/// Whether the input looks like a full HTML document rather than a fragment (a leading BOM,
+/// whitespace and comments are skipped first).
+fn looks_like_document(input: &str) -> bool {
+    let mut s = input.trim_start_matches('\u{feff}').trim_start();
+    while let Some(rest) = s.strip_prefix("<!--") {
+        match rest.find("-->") {
+            Some(end) => s = rest[end + 3..].trim_start(),
+            None => break,
+        }
+    }
+    starts_with_ci(s, "<!doctype") || starts_with_ci(s, "<html") || starts_with_ci(s, "<?xml")
+}
+
+/// Lowercased local name of an element handle, or `None` for non-elements.
+fn tag_name(handle: &Handle) -> Option<String> {
+    match &handle.data {
+        NodeData::Element { name, .. } => Some(name.local.as_ref().to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
+/// Value of `attr_name` on an element handle, if present.
+fn attr_value(handle: &Handle, attr_name: &str) -> Option<String> {
+    if let NodeData::Element { attrs, .. } = &handle.data {
+        for attr in attrs.borrow().iter() {
+            if attr.name.local.as_ref().eq_ignore_ascii_case(attr_name) {
+                return Some(attr.value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Class list of an element handle.
+fn class_list(handle: &Handle) -> Vec<String> {
+    attr_value(handle, "class")
+        .map(|c| c.split_whitespace().map(|s| s.to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// All child handles of a node.
+fn children(handle: &Handle) -> Vec<Handle> {
+    handle.children.borrow().iter().cloned().collect()
+}
+
+/// Element child handles only (skips text and comments).
+fn element_children(handle: &Handle) -> Vec<Handle> {
+    handle
+        .children
+        .borrow()
+        .iter()
+        .filter(|c| matches!(c.data, NodeData::Element { .. }))
+        .cloned()
+        .collect()
+}
+
+/// Depth-first search for the first descendant element with the given (lowercase) tag name.
+fn find_descendant(handle: &Handle, name: &str) -> Option<Handle> {
+    for child in handle.children.borrow().iter() {
+        if tag_name(child).as_deref() == Some(name) {
+            return Some(child.clone());
+        }
+        if let Some(found) = find_descendant(child, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Collects all text within a subtree.
+fn collect_text(handle: &Handle, out: &mut String) {
+    match &handle.data {
+        NodeData::Text { contents } => out.push_str(&contents.borrow()),
+        NodeData::Element { .. } => {
+            for child in handle.children.borrow().iter() {
+                collect_text(child, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether `url` is an absolute http(s) URL.
+fn is_http_url(url: &str) -> bool {
+    let url = url.trim_start();
+    starts_with_ci(url, "http://") || starts_with_ci(url, "https://")
+}
+
+/// Best-effort filename (with extension) derived from a URL. Used as a fallback when a media
+/// file could not be downloaded.
+fn derive_filename(src: &str) -> String {
+    let path = src.split(['?', '#']).next().unwrap_or(src);
+    path.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("file")
+        .to_string()
+}
+
+/// File extension (including the leading dot) derived from a URL, or an empty string.
+fn extension_from_url(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let file = path.rsplit('/').next().unwrap_or("");
+    match file.rsplit_once('.') {
+        Some((_, ext))
+            if !ext.is_empty()
+                && ext.len() <= 5
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            format!(".{}", ext.to_ascii_lowercase())
+        }
+        _ => String::new(),
+    }
+}
+
+/// Single-pass HTML escaping matching html5ever's serializer (see
+/// `html5ever::serialize`'s `write_escaped`). Pass `attr_mode = true` for a
+/// double-quoted attribute value (additionally escapes `"`) and `false` for
+/// text content; `>` is escaped in both modes so the output is safe
+/// regardless of the surrounding context.
+fn escape_html(s: &str, attr_mode: bool) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '\u{00A0}' => out.push_str("&nbsp;"),
+            '"' if attr_mode => out.push_str("&quot;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Elements dropped entirely (tag and all descendants).
+fn is_dropped_element(name: &str) -> bool {
+    matches!(
+        name,
+        "script" | "style" | "noscript" | "template" | "head" | "title" | "meta" | "base"
+    )
+}
+
+/// Embedded content, forms and interactive elements: replaced by their plain text content.
+fn is_text_only_element(name: &str) -> bool {
+    matches!(
+        name,
+        // Embedded content
+        "iframe"
+            | "embed"
+            | "object"
+            | "param"
+            | "picture"
+            | "source"
+            | "video"
+            | "audio"
+            | "track"
+            | "map"
+            | "area"
+            | "canvas"
+            | "svg"
+            | "math"
+            | "applet"
+            // Forms & form elements
+            | "form"
+            | "input"
+            | "textarea"
+            | "select"
+            | "option"
+            | "optgroup"
+            | "button"
+            | "label"
+            | "fieldset"
+            | "legend"
+            | "datalist"
+            | "output"
+            | "progress"
+            | "meter"
+            // Interactive elements
+            | "details"
+            | "summary"
+            | "dialog"
+            | "menu"
+    )
+}
+
+/// Inline formatting elements kept as-is (after attribute filtering).
+fn is_kept_inline_element(name: &str) -> bool {
+    matches!(
+        name,
+        "a" | "b"
+            | "strong"
+            | "i"
+            | "em"
+            | "u"
+            | "s"
+            | "strike"
+            | "del"
+            | "ins"
+            | "mark"
+            | "sup"
+            | "sub"
+            | "small"
+            | "code"
+            | "br"
+            | "wbr"
+            | "q"
+            | "abbr"
+            | "cite"
+            | "kbd"
+            | "samp"
+            | "var"
+            | "time"
+            | "bdi"
+            | "bdo"
+            | "ruby"
+            | "rt"
+            | "rp"
+            | "img"
+    )
+}
+
+/// Block/structural elements kept when serializing `Raw` blocks.
+fn is_kept_block_element(name: &str) -> bool {
+    matches!(
+        name,
+        "p" | "div"
+            | "section"
+            | "article"
+            | "header"
+            | "footer"
+            | "aside"
+            | "nav"
+            | "main"
+            | "figure"
+            | "figcaption"
+            | "blockquote"
+            | "pre"
+            | "hr"
+            | "address"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "ul"
+            | "ol"
+            | "li"
+            | "dl"
+            | "dt"
+            | "dd"
+            | "table"
+            | "thead"
+            | "tbody"
+            | "tfoot"
+            | "tr"
+            | "td"
+            | "th"
+            | "caption"
+            | "colgroup"
+            | "col"
+    )
+}
+
+/// Whether an element participates in inline flow (used for whitespace-significance).
+fn is_inline_element(name: &str) -> bool {
+    // Text-only elements (button, iframe, …) are unwrapped to inline text, so whitespace
+    // separating them from adjacent inline content is significant and must be preserved.
+    is_kept_inline_element(name)
+        || is_text_only_element(name)
+        || matches!(name, "span" | "font" | "big" | "tt" | "nobr" | "acronym")
+}
+
+/// HTML void elements (serialized without a closing tag).
+fn is_void_element(name: &str) -> bool {
+    matches!(
+        name,
+        "br" | "wbr"
+            | "hr"
+            | "img"
+            | "col"
+            | "area"
+            | "source"
+            | "track"
+            | "embed"
+            | "param"
+            | "input"
+            | "meta"
+            | "link"
+    )
+}
+
+/// Standard attributes allowed to survive sanitization (never `data-*`/`on*`/non-standard).
+fn is_allowed_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "href"
+            | "src"
+            | "alt"
+            | "title"
+            | "lang"
+            | "dir"
+            | "datetime"
+            | "cite"
+            | "colspan"
+            | "rowspan"
+            | "scope"
+            | "headers"
+            | "span"
+            | "start"
+            | "reversed"
+            | "type"
+            | "value"
+            | "width"
+            | "height"
+    )
+}
+
+/// Serializes the allowed attributes of an element handle. A `src` that was downloaded is
+/// rewritten to the project-internal URL so inline media points at the stored copy.
+fn serialize_attrs(handle: &Handle, ctx: &Ctx) -> String {
+    let mut out = String::new();
+    if let NodeData::Element { attrs, .. } = &handle.data {
+        for attr in attrs.borrow().iter() {
+            let name = attr.name.local.as_ref().to_ascii_lowercase();
+            if !is_allowed_attribute(&name) {
+                continue;
+            }
+            let raw = attr.value.to_string();
+            let value = if name == "src" {
+                ctx.media_map
+                    .get(&raw)
+                    .map(|(url, _)| url.clone())
+                    .unwrap_or(raw)
+            } else {
+                raw
+            };
+            out.push_str(&format!(" {}=\"{}\"", name, escape_html(&value, true)));
+        }
+    }
+    out
+}
+
+/// Whether the nearest non-whitespace sibling in the given direction is inline (so that
+/// whitespace between it and the current node is significant).
+fn neighbor_is_inline(kids: &[Handle], index: usize, forward: bool) -> bool {
+    let indices: Vec<usize> = if forward {
+        ((index + 1)..kids.len()).collect()
+    } else {
+        (0..index).rev().collect()
+    };
+    for j in indices {
+        match &kids[j].data {
+            NodeData::Text { contents } => {
+                if contents.borrow().trim().is_empty() {
+                    continue;
+                }
+                return true;
+            }
+            NodeData::Element { .. } => {
+                return tag_name(&kids[j])
+                    .map(|t| is_inline_element(&t))
+                    .unwrap_or(false);
+            }
+            _ => continue,
+        }
+    }
+    false
+}
+
+/// Serializes the children of a node, preserving whitespace that separates inline content.
+fn serialize_children(node: &Handle, ctx: &Ctx) -> String {
+    let kids: Vec<Handle> = node.children.borrow().iter().cloned().collect();
+    let mut out = String::new();
+    for (i, kid) in kids.iter().enumerate() {
+        match &kid.data {
+            NodeData::Text { contents } => {
+                let text = contents.borrow().to_string();
+                if text.trim().is_empty() {
+                    if neighbor_is_inline(&kids, i, false) && neighbor_is_inline(&kids, i, true) {
+                        out.push(' ');
+                    }
+                } else {
+                    out.push_str(&escape_html(&text, false));
+                }
+            }
+            NodeData::Element { .. } => out.push_str(&serialize_node(kid, ctx)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Serializes a single element handle to sanitized HTML.
+fn serialize_node(node: &Handle, ctx: &Ctx) -> String {
+    let tag = match tag_name(node) {
+        Some(tag) => tag,
+        None => {
+            if let NodeData::Text { contents } = &node.data {
+                return escape_html(&contents.borrow(), false);
+            }
+            return String::new();
+        }
+    };
+
+    // Footnote references and link-to-citation conversion for `<a>`.
+    if tag == "a" {
+        if let Some(replacement) = footnote_replacement(node, ctx) {
+            return replacement;
+        }
+        if attr_value(node, "role").as_deref() == Some("doc-backlink") {
+            return String::new();
+        }
+        if let Some(href) = attr_value(node, "href") {
+            if let Some(citation) = ctx.link_map.get(&href) {
+                return citation.clone();
+            }
+        }
+    }
+
+    if is_dropped_element(&tag) {
+        return String::new();
+    }
+    if is_text_only_element(&tag) {
+        let mut text = String::new();
+        collect_text(node, &mut text);
+        return escape_html(&text, false);
+    }
+
+    let inner = serialize_children(node, ctx);
+    let keep = is_kept_inline_element(&tag) || (ctx.keep_structural && is_kept_block_element(&tag));
+    if keep {
+        let attrs = serialize_attrs(node, ctx);
+        if is_void_element(&tag) {
+            format!("<{}{}>", tag, attrs)
+        } else {
+            format!("<{}{}>{}</{}>", tag, attrs, inner, tag)
+        }
+    } else {
+        // Unsupported wrapper (e.g. <span>): unwrap, keeping the text/children.
+        inner
+    }
+}
+
+/// Detects a footnote reference `<a>` and returns the inline note-span replacement.
+fn footnote_replacement(a_node: &Handle, ctx: &Ctx) -> Option<String> {
+    let footnotes = ctx.footnotes?;
+    let sup = element_children(a_node).into_iter().next()?;
+    if tag_name(&sup).as_deref() != Some("sup") {
+        return None;
+    }
+
+    // Pandoc: <a role="doc-noteref"><sup>N</sup></a>
+    if attr_value(a_node, "role").as_deref() == Some("doc-noteref") {
+        let mut num = String::new();
+        collect_text(&sup, &mut num);
+        if let Some(content) = footnotes.get(&format!("fn{}", num.trim())) {
+            return Some(note_span(content, ctx.endnotes));
+        }
+    }
+
+    // WordPress footnote plugin:
+    // <a><sup class="footnote_plugin_tooltip_text" id="footnote_tooltip_N">N</sup></a>
+    if class_list(&sup)
+        .iter()
+        .any(|c| c == "footnote_plugin_tooltip_text")
+    {
+        if let Some(id) = attr_value(&sup, "id") {
+            let footnote_id = id.replace("tooltip", "reference");
+            if let Some(content) = footnotes.get(&footnote_id) {
+                return Some(note_span(content, ctx.endnotes));
+            }
+        }
+    }
+    None
+}
+
+/// Builds the inline `<span class="note">` used to represent a footnote/endnote.
+fn note_span(footnote_html: &str, endnotes: bool) -> String {
+    let content = footnote_html.replace('"', "'");
+    let note_type = if endnotes { "endnote" } else { "footnote" };
+    format!(
+        "<span class=\"note\" note-type=\"{}\" note-content=\"{}\">N</span>",
+        note_type, content
+    )
+}
+
+/// Collects the http(s) `src` URLs of all media elements in a subtree.
+fn collect_media_srcs(nodes: &[Handle], out: &mut Vec<String>) {
+    for node in nodes {
+        if let Some(tag) = tag_name(node) {
+            if matches!(tag.as_str(), "img" | "video" | "audio" | "source") {
+                if let Some(src) = attr_value(node, "src") {
+                    if is_http_url(&src) {
+                        out.push(src);
+                    }
+                }
+            }
+        }
+        collect_media_srcs(&children(node), out);
+    }
+}
+
+/// Collects the http(s) `href`s of all `<a>` elements in a subtree.
+fn collect_convertible_hrefs(nodes: &[Handle], out: &mut Vec<String>) {
+    for node in nodes {
+        if tag_name(node).as_deref() == Some("a") {
+            if let Some(href) = attr_value(node, "href") {
+                if is_http_url(&href) {
+                    out.push(href);
+                }
+            }
+        }
+        collect_convertible_hrefs(&children(node), out);
+    }
+}
+
+/// Extracts WordPress footnote-plugin footnotes into a map keyed by reference id.
+fn extract_wp_footnotes(
+    top: &[Handle],
+    link_map: &HashMap<String, String>,
+    media_map: &HashMap<String, (String, String)>,
+) -> HashMap<String, String> {
+    let ctx = Ctx {
+        footnotes: None,
+        endnotes: false,
+        link_map,
+        media_map,
+        keep_structural: false,
+    };
+    let mut footnotes = HashMap::new();
+
+    let Some(container) = top.iter().find(|n| {
+        class_list(n)
+            .iter()
+            .any(|c| c == "footnotes_reference_container")
+    }) else {
+        return footnotes;
+    };
+    let container_children = element_children(container);
+    let Some(inner) = container_children.get(1) else {
+        return footnotes;
+    };
+    let Some(table) = element_children(inner).into_iter().next() else {
+        return footnotes;
+    };
+    if tag_name(&table).as_deref() != Some("table") {
+        return footnotes;
+    }
+    let table_children = element_children(&table);
+    let Some(tbody) = table_children.get(1) else {
+        return footnotes;
+    };
+    if tag_name(tbody).as_deref() != Some("tbody") {
+        return footnotes;
+    }
+
+    for tr in element_children(tbody) {
+        let cells = element_children(&tr);
+        let Some(th) = cells.first() else { continue };
+        let Some(anchor) = element_children(th).into_iter().next() else {
+            continue;
+        };
+        if !class_list(&anchor).iter().any(|c| c == "footnote_backlink") {
+            continue;
+        }
+        let Some(id) = attr_value(&anchor, "id") else {
+            continue;
+        };
+        let Some(td) = cells.get(1) else { continue };
+        if !class_list(td).iter().any(|c| c == "footnote_plugin_text") {
+            continue;
+        }
+        // Preserve the inner HTML of the cell, not the `<td>` wrapper.
+        footnotes.insert(id, serialize_children(td, &ctx));
+    }
+    footnotes
+}
+
+/// Extracts pandoc footnotes (`<aside id="footnotes"><ol><li id="fnN">...`) into a map.
+fn extract_pandoc_footnotes(
+    top: &[Handle],
+    link_map: &HashMap<String, String>,
+    media_map: &HashMap<String, (String, String)>,
+) -> HashMap<String, String> {
+    let ctx = Ctx {
+        footnotes: None,
+        endnotes: false,
+        link_map,
+        media_map,
+        keep_structural: false,
+    };
+    let mut footnotes = HashMap::new();
+
+    let Some(aside) = top.iter().find(|n| {
+        tag_name(n).as_deref() == Some("aside")
+            && attr_value(n, "id").as_deref() == Some("footnotes")
+    }) else {
+        return footnotes;
+    };
+    let Some(ol) = element_children(aside)
+        .into_iter()
+        .find(|n| tag_name(n).as_deref() == Some("ol"))
+    else {
+        return footnotes;
+    };
+
+    for li in element_children(&ol) {
+        if tag_name(&li).as_deref() != Some("li") {
+            continue;
+        }
+        let Some(id) = attr_value(&li, "id") else {
+            continue;
+        };
+        // Prefer the first <p> inside the <li>, falling back to the whole <li>.
+        let text = if let Some(p) = element_children(&li)
+            .into_iter()
+            .find(|n| tag_name(n).as_deref() == Some("p"))
+        {
+            serialize_children(&p, &ctx)
+        } else {
+            serialize_children(&li, &ctx)
+        };
+        footnotes.insert(id, text);
+    }
+    footnotes
+}
+
+/// Converts a single top-level node handle into content blocks. Returns an empty vector when
+/// the node should be skipped (footnote containers, dropped elements, insignificant whitespace).
+///
+/// A single node can yield several blocks: an image embedded inside a `<p>`/`<div>` is split out
+/// into its own `Image` block (with the surrounding inline text kept as separate `Paragraph`
+/// blocks), because EditorJS cannot render an image inline within a paragraph.
+fn node_to_blocks(
+    section: &Section,
+    node: &Handle,
+    footnotes: &HashMap<String, String>,
+    endnotes: bool,
+    shift_headings: bool,
+    link_map: &HashMap<String, String>,
+    media_map: &HashMap<String, (String, String)>,
+) -> Vec<NewContentBlock> {
+    if let NodeData::Text { contents } = &node.data {
+        let text = contents.borrow().to_string();
+        if text.trim().is_empty() {
+            return vec![];
+        }
+        return vec![NewContentBlock::new(
+            section,
+            BlockType::Paragraph,
+            BlockData::Paragraph {
+                text: escape_html(&text, false),
+            },
+            vec![],
+        )];
+    }
+
+    let Some(tag) = tag_name(node) else {
+        return vec![];
+    };
+    let classes = class_list(node);
+
+    // Skip footnote containers (extracted separately) and non-content elements.
+    if classes.iter().any(|c| c == "footnotes_reference_container") {
+        return vec![];
+    }
+    if tag == "aside" && attr_value(node, "id").as_deref() == Some("footnotes") {
+        return vec![];
+    }
+    if is_dropped_element(&tag) {
+        return vec![];
+    }
+
+    let ctx = Ctx {
+        footnotes: Some(footnotes),
+        endnotes,
+        link_map,
+        media_map,
+        keep_structural: false,
+    };
+    let raw_ctx = Ctx {
+        keep_structural: true,
+        ..ctx
+    };
+
+    match tag.as_str() {
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+            let mut level = tag.as_bytes()[1] - b'0';
+            if shift_headings && level > 1 {
+                level -= 1;
+            }
+            let text = serialize_children(node, &ctx);
+            vec![NewContentBlock::new(
+                section,
+                BlockType::Heading,
+                BlockData::Heading { text, level },
+                classes,
+            )]
+        }
+        "p" | "div" => container_to_blocks(
+            section,
+            node,
+            footnotes,
+            endnotes,
+            shift_headings,
+            link_map,
+            media_map,
+            classes,
+        ),
+        "ul" | "ol" => {
+            let style = if tag == "ol" { "ordered" } else { "unordered" }.to_string();
+            let mut items: Vec<String> = vec![];
+            for li in element_children(node) {
+                if tag_name(&li).as_deref() == Some("li") {
+                    items.push(serialize_children(&li, &ctx));
+                }
+            }
+            if items.is_empty() {
+                vec![NewContentBlock::new(
+                    section,
+                    BlockType::Raw,
+                    BlockData::Raw {
+                        html: serialize_node(node, &raw_ctx),
+                    },
+                    classes,
+                )]
+            } else {
+                vec![NewContentBlock::new(
+                    section,
+                    BlockType::List,
+                    BlockData::List { style, items },
+                    classes,
+                )]
+            }
+        }
+        "blockquote" => {
+            let text = serialize_children(node, &ctx);
+            vec![NewContentBlock::new(
+                section,
+                BlockType::Quote,
+                BlockData::Quote {
+                    text,
+                    caption: String::new(),
+                    alignment: "left".to_string(),
+                },
+                classes,
+            )]
+        }
+        "figure" | "img" => image_or_raw_block(section, node, &tag, &ctx, media_map, classes)
+            .into_iter()
+            .collect(),
+        "video" | "audio" => media_raw_block(section, node, &tag, media_map, classes)
+            .into_iter()
+            .collect(),
+        _ => vec![NewContentBlock::new(
+            section,
+            BlockType::Raw,
+            BlockData::Raw {
+                html: serialize_node(node, &raw_ctx),
+            },
+            classes,
+        )],
+    }
+}
+
+/// Converts a `<p>`/`<div>` (or any block container) into blocks. Inline content is gathered
+/// into `Paragraph` blocks; embedded images become standalone `Image` blocks; and nested
+/// block-level elements (`<p>`, `<div>`, headings, lists, figures, tables, …) are converted
+/// recursively so their structure — and any images they contain — is not flattened into inline
+/// `<img>` markup (which EditorJS cannot render). When the element holds only inline content,
+/// this yields a single `Paragraph` block identical to the previous behavior.
+#[allow(clippy::too_many_arguments)]
+fn container_to_blocks(
+    section: &Section,
+    node: &Handle,
+    footnotes: &HashMap<String, String>,
+    endnotes: bool,
+    shift_headings: bool,
+    link_map: &HashMap<String, String>,
+    media_map: &HashMap<String, (String, String)>,
+    classes: Vec<String>,
+) -> Vec<NewContentBlock> {
+    let ctx = Ctx {
+        footnotes: Some(footnotes),
+        endnotes,
+        link_map,
+        media_map,
+        keep_structural: false,
+    };
+
+    // A child forces the container to be split when it is a block-level image or a nested
+    // block-level element; otherwise the whole container is a single inline paragraph.
+    let is_block_child = |kid: &Handle| -> bool {
+        child_block_image(kid).is_some()
+            || tag_name(kid)
+                .map(|t| !is_inline_element(&t) && !is_dropped_element(&t))
+                .unwrap_or(false)
+    };
+
+    let kids = children(node);
+    if !kids.iter().any(is_block_child) {
+        let text = serialize_children(node, &ctx);
+        return vec![NewContentBlock::new(
+            section,
+            BlockType::Paragraph,
+            BlockData::Paragraph { text },
+            classes,
+        )];
+    }
+
+    let mut blocks: Vec<NewContentBlock> = vec![];
+    let mut pending = String::new();
+    for (i, kid) in kids.iter().enumerate() {
+        // A block-level image (possibly wrapped in a link) becomes its own Image block.
+        if let Some(img) = child_block_image(kid) {
+            flush_paragraph(section, &mut pending, &classes, &mut blocks);
+            let img_tag = tag_name(&img).unwrap_or_default();
+            if let Some(block) =
+                image_or_raw_block(section, &img, &img_tag, &ctx, media_map, classes.clone())
+            {
+                blocks.push(block);
+            }
+            continue;
+        }
+        // A nested block-level element is converted recursively so its own children (paragraphs,
+        // headings, images, …) are emitted as proper blocks instead of inline markup.
+        if let Some(tag) = tag_name(kid) {
+            if !is_inline_element(&tag) && !is_dropped_element(&tag) {
+                flush_paragraph(section, &mut pending, &classes, &mut blocks);
+                blocks.extend(node_to_blocks(
+                    section,
+                    kid,
+                    footnotes,
+                    endnotes,
+                    shift_headings,
+                    link_map,
+                    media_map,
+                ));
+                continue;
+            }
+        }
+        match &kid.data {
+            NodeData::Text { contents } => {
+                let text = contents.borrow().to_string();
+                if text.trim().is_empty() {
+                    if neighbor_is_inline(&kids, i, false) && neighbor_is_inline(&kids, i, true) {
+                        pending.push(' ');
+                    }
+                } else {
+                    pending.push_str(&escape_html(&text, false));
+                }
+            }
+            NodeData::Element { .. } => pending.push_str(&serialize_node(kid, &ctx)),
+            _ => {}
+        }
+    }
+    flush_paragraph(section, &mut pending, &classes, &mut blocks);
+    blocks
+}
+
+/// If `child` is (or wraps only) an image that should become its own block, returns the
+/// `<img>`/`<figure>`/`<picture>` handle to build an `Image` block from. Inline wrappers
+/// (a linked or emphasized image) qualify only when their sole significant content is the image,
+/// so a `<p>` with a small inline icon inside a sentence keeps the icon inline.
+fn child_block_image(child: &Handle) -> Option<Handle> {
+    let tag = tag_name(child)?;
+    match tag.as_str() {
+        "img" | "figure" | "picture" => Some(child.clone()),
+        "a" | "span" | "strong" | "em" | "b" | "i" => {
+            let img = find_descendant(child, "img")?;
+            let mut text = String::new();
+            collect_text(child, &mut text);
+            if text.trim().is_empty() {
+                Some(img)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Emits the accumulated inline content as a `Paragraph` block (if non-empty) and clears it.
+fn flush_paragraph(
+    section: &Section,
+    pending: &mut String,
+    classes: &[String],
+    blocks: &mut Vec<NewContentBlock>,
+) {
+    if !pending.trim().is_empty() {
+        blocks.push(NewContentBlock::new(
+            section,
+            BlockType::Paragraph,
+            BlockData::Paragraph {
+                text: pending.trim().to_string(),
+            },
+            classes.to_vec(),
+        ));
+    }
+    pending.clear();
+}
+
+/// Builds an `Image` block from an `<img>`/`<figure>`, using the downloaded copy when present.
+/// Falls back to a `Raw` block when no usable image source is found.
+fn image_or_raw_block(
+    section: &Section,
+    node: &Handle,
+    tag: &str,
+    ctx: &Ctx,
+    media_map: &HashMap<String, (String, String)>,
+    classes: Vec<String>,
+) -> Option<NewContentBlock> {
+    let (src, caption) = if tag == "img" {
+        (attr_value(node, "src").unwrap_or_default(), None)
+    } else {
+        let src = find_descendant(node, "img")
+            .and_then(|img| attr_value(&img, "src"))
+            .unwrap_or_default();
+        let caption = find_descendant(node, "figcaption").map(|fc| serialize_children(&fc, ctx));
+        (src, caption)
+    };
+
+    if src.is_empty() {
+        let raw_ctx = Ctx {
+            keep_structural: true,
+            ..*ctx
+        };
+        return Some(NewContentBlock::new(
+            section,
+            BlockType::Raw,
+            BlockData::Raw {
+                html: serialize_node(node, &raw_ctx),
+            },
+            classes,
+        ));
+    }
+
+    let (url, filename) = media_map
+        .get(&src)
+        .cloned()
+        .unwrap_or_else(|| (src.clone(), derive_filename(&src)));
+
+    Some(NewContentBlock::new(
+        section,
+        BlockType::Image,
+        BlockData::Image {
+            file: crate::projects::api::UploadedImage { url, filename },
+            caption,
+            with_border: false,
+            with_background: false,
+            stretched: false,
+        },
+        classes,
+    ))
+}
+
+/// Builds a `Raw` block for a `<video>`/`<audio>` element, using the downloaded copy when
+/// present and rewriting the source to the project-internal URL.
+fn media_raw_block(
+    section: &Section,
+    node: &Handle,
+    tag: &str,
+    media_map: &HashMap<String, (String, String)>,
+    classes: Vec<String>,
+) -> Option<NewContentBlock> {
+    let src = attr_value(node, "src")
+        .filter(|s| is_http_url(s))
+        .or_else(|| find_descendant(node, "source").and_then(|s| attr_value(&s, "src")))
+        .filter(|s| !s.is_empty())?;
+
+    let url = media_map
+        .get(&src)
+        .map(|(u, _)| u.clone())
+        .unwrap_or_else(|| src.clone());
+
+    Some(NewContentBlock::new(
+        section,
+        BlockType::Raw,
+        BlockData::Raw {
+            html: format!(
+                "<{tag} controls src=\"{}\"></{tag}>",
+                escape_html(&url, true)
+            ),
+        },
+        classes,
+    ))
 }
 
 /// Contains preprocessing methods that get called, BEFORE pandoc is executed.
@@ -2094,7 +2577,15 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_wp(section, html, project.clone(), false, false, false)
+            .import_html_from_wp(
+                section,
+                html,
+                project.clone(),
+                Uuid::new_v4(),
+                false,
+                false,
+                false,
+            )
             .await
             .unwrap();
 
@@ -2130,7 +2621,7 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
             .await
             .unwrap();
 
@@ -2152,6 +2643,268 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn whitespace_between_inline_elements_is_preserved() {
+        let processor = make_processor();
+        let project = empty_project();
+        let section = empty_section();
+
+        // The space separating the two links is significant: dropping it would join the
+        // words into "onetwo" on re-serialization.
+        let html =
+            r#"<p>see <a href="https://a">one</a> <a href="https://b">two</a></p>"#.to_string();
+
+        processor
+            .import_html_from_wp(
+                section,
+                html,
+                project.clone(),
+                Uuid::new_v4(),
+                false,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert_eq!(blocks.len(), 1);
+        let BlockData::Paragraph { text } = &blocks[0].data else {
+            panic!("expected paragraph");
+        };
+        assert!(
+            text.contains("</a> <a"),
+            "space between inline elements must be preserved, got: {text}"
+        );
+        assert!(!text.contains("onetwo"));
+    }
+
+    /// Helper that imports a WordPress HTML fragment and returns the decoded blocks.
+    async fn import_wp_blocks(html: &str) -> Vec<NewContentBlock> {
+        let processor = make_processor();
+        let project = empty_project();
+        processor
+            .import_html_from_wp(
+                empty_section(),
+                html.to_string(),
+                project.clone(),
+                Uuid::new_v4(),
+                false,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let stored = project.read().unwrap();
+        decode_yjs_content(&stored.sections[0].content).unwrap()
+    }
+
+    fn first_paragraph_text(blocks: &[NewContentBlock]) -> String {
+        match &blocks[0].data {
+            BlockData::Paragraph { text } => text.clone(),
+            other => panic!("expected paragraph, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_span_wrapper_is_unwrapped_keeping_its_text() {
+        // Regression: the editor drops `<span>` together with its content, so the importer
+        // must unwrap spans and keep the text (here the "EN-US" span text must survive).
+        let blocks = import_wp_blocks(
+            r#"<p><i><span lang="EN-US">We</span></i> thank <span class="x">Ana</span>.</p>"#,
+        )
+        .await;
+        let text = first_paragraph_text(&blocks);
+        assert!(
+            !text.contains("<span"),
+            "span should be unwrapped, got: {text}"
+        );
+        assert!(
+            text.contains("<i>We</i>"),
+            "italic text must be kept, got: {text}"
+        );
+        assert!(text.contains("Ana"), "span text must be kept, got: {text}");
+    }
+
+    #[tokio::test]
+    async fn script_tags_are_dropped_with_their_content() {
+        let blocks = import_wp_blocks(r#"<p>a<script>alert('x')</script>b</p>"#).await;
+        let text = first_paragraph_text(&blocks);
+        assert_eq!(text, "ab");
+        assert!(!text.contains("alert"));
+        assert!(!text.contains("script"));
+    }
+
+    #[tokio::test]
+    async fn data_and_event_and_nonstandard_attributes_are_stripped() {
+        let blocks = import_wp_blocks(
+            r#"<p><a href="https://x.example" data-foo="1" onclick="evil()" rel="nofollow" title="T">l</a></p>"#,
+        )
+        .await;
+        let text = first_paragraph_text(&blocks);
+        assert!(
+            text.contains("href=\"https://x.example\""),
+            "href kept, got: {text}"
+        );
+        assert!(
+            text.contains("title=\"T\""),
+            "standard title kept, got: {text}"
+        );
+        assert!(!text.contains("data-foo"), "data-* stripped, got: {text}");
+        assert!(
+            !text.contains("onclick"),
+            "event handler stripped, got: {text}"
+        );
+        assert!(
+            !text.contains("rel="),
+            "non-standard attr stripped, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn embedded_and_form_elements_are_reduced_to_text() {
+        let blocks = import_wp_blocks(
+            r#"<p>before <button onclick="x">Click me</button> mid <iframe src="https://y">frame</iframe> end</p>"#,
+        )
+        .await;
+        let text = first_paragraph_text(&blocks);
+        assert!(
+            !text.contains("<button"),
+            "form element stripped, got: {text}"
+        );
+        assert!(
+            !text.contains("<iframe"),
+            "embedded element stripped, got: {text}"
+        );
+        assert!(text.contains("Click me"), "button text kept, got: {text}");
+        assert!(text.contains("frame"), "iframe text kept, got: {text}");
+    }
+
+    #[tokio::test]
+    async fn video_element_becomes_raw_block_linking_the_source() {
+        // `.invalid` never resolves, so the download fails fast and we fall back to the
+        // original URL — the block is still produced and links the (external) source.
+        let blocks =
+            import_wp_blocks(r#"<video src="https://nonexistent.invalid/clip.mp4"></video>"#).await;
+        assert_eq!(blocks.len(), 1);
+        let BlockData::Raw { html } = &blocks[0].data else {
+            panic!("expected raw block, got {:?}", blocks[0].data);
+        };
+        assert!(html.contains("<video controls"), "got: {html}");
+        assert!(
+            html.contains("clip.mp4"),
+            "source must be linked, got: {html}"
+        );
+    }
+
+    #[test]
+    fn inline_image_src_is_rewritten_to_downloaded_url() {
+        // An inline <img> whose source was downloaded must reference the project-local copy,
+        // not the original external URL.
+        let dom = parse_dom(r#"<p><img src="https://cdn.example/x.png"></p>"#);
+        let top = top_level_nodes(&dom);
+        let p = top.first().unwrap();
+
+        let link_map = HashMap::new();
+        let mut media_map = HashMap::new();
+        media_map.insert(
+            "https://cdn.example/x.png".to_string(),
+            (
+                "/api/projects/abc/uploads/f.png".to_string(),
+                "f.png".to_string(),
+            ),
+        );
+        let ctx = Ctx {
+            footnotes: None,
+            endnotes: false,
+            link_map: &link_map,
+            media_map: &media_map,
+            keep_structural: false,
+        };
+
+        let html = serialize_children(p, &ctx);
+        assert!(
+            html.contains(r#"src="/api/projects/abc/uploads/f.png""#),
+            "inline img must point at the downloaded copy, got: {html}"
+        );
+        assert!(
+            !html.contains("cdn.example"),
+            "external src must be replaced, got: {html}"
+        );
+    }
+
+    #[tokio::test]
+    async fn whitespace_around_text_only_element_is_preserved() {
+        // The space between a reduced-to-text <button> and the following inline element must
+        // survive so words are not joined.
+        let blocks = import_wp_blocks(r#"<p>a <button>b</button> <i>c</i></p>"#).await;
+        let text = first_paragraph_text(&blocks);
+        assert!(
+            text.contains("b <i>c</i>"),
+            "space after text-only element must survive, got: {text}"
+        );
+    }
+
+    /// Live integration test against verfassungsblog.de. Requires network access.
+    #[tokio::test]
+    async fn wp_import_real_verfassungsblog_post_produces_sanitized_blocks() {
+        let data_dir = format!("/tmp/vb_import_test_{}", Uuid::new_v4());
+        let mut settings = dummy_settings();
+        settings.data_path = data_dir.clone();
+        let processor = ImportProcessor {
+            settings,
+            project_storage: Arc::new(ProjectStorage::new()),
+            job_queue: RwLock::new(VecDeque::new()),
+            job_archive: RwLock::new(HashMap::new()),
+        };
+        let project = empty_project();
+
+        let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
+        let post = api.get_post(79100).await.unwrap();
+
+        processor
+            .import_wp_post(
+                post,
+                project.clone(),
+                Uuid::new_v4(),
+                false,
+                false,
+                false,
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        assert_eq!(stored.sections.len(), 1);
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        assert!(!blocks.is_empty(), "expected imported content blocks");
+
+        for block in &blocks {
+            match &block.data {
+                BlockData::Paragraph { text } | BlockData::Heading { text, .. } => {
+                    assert!(!text.contains("<script"), "script leaked: {text}");
+                    assert!(!text.contains("onclick"), "event handler leaked: {text}");
+                    assert!(!text.contains("<iframe"), "embedded element leaked: {text}");
+                    assert!(!text.contains("data-"), "data attribute leaked: {text}");
+                }
+                BlockData::Image { file, .. } => {
+                    // Downloaded media is referenced via the project uploads path; a failed
+                    // download falls back to the original absolute URL.
+                    assert!(
+                        file.url.starts_with("/api/projects/") || file.url.starts_with("http"),
+                        "unexpected image url: {}",
+                        file.url
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[tokio::test]
     async fn import_produces_yrs_content_that_decodes_back_to_blocks() {
         let processor = make_processor();
         let project = empty_project();
@@ -2162,6 +2915,7 @@ mod tests {
                 section,
                 "<h2>H</h2><p>P</p>".to_string(),
                 project.clone(),
+                Uuid::new_v4(),
                 false,
                 true,
                 false,
@@ -2186,7 +2940,7 @@ mod tests {
         let html = r#"<ul class="my-list"><li>One</li><li><em>Two</em></li></ul>"#.to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
             .await
             .unwrap();
 
@@ -2217,7 +2971,7 @@ mod tests {
 
         println!("Starting import");
         processor
-            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
             .await
             .unwrap();
 
@@ -2260,7 +3014,7 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), false, false, false)
+            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
             .await
             .unwrap();
 
@@ -2279,6 +3033,88 @@ mod tests {
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
     }
+
+    #[tokio::test]
+    async fn img_inside_paragraph_is_split_into_its_own_image_block() {
+        let processor = make_processor();
+        let project = empty_project();
+
+        // Text before and after the image, plus a linked image, all inside one <p>.
+        let html = r#"
+<p>Intro text <img src="https://example.com/inline.png" /> and trailing text.</p>
+<p><a href="https://example.com/full.png"><img src="https://example.com/linked.png" /></a></p>
+"#
+        .to_string();
+
+        processor
+            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
+            .await
+            .unwrap();
+
+        let stored = project.read().unwrap();
+        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+
+        // First <p> -> paragraph, image, paragraph. Second <p> -> a single image block.
+        assert_eq!(blocks.len(), 4);
+
+        let BlockData::Paragraph { text } = &blocks[0].data else {
+            panic!("expected leading paragraph, got {:?}", blocks[0].data);
+        };
+        assert_eq!(text, "Intro text");
+
+        let BlockData::Image { file, .. } = &blocks[1].data else {
+            panic!("expected image block, got {:?}", blocks[1].data);
+        };
+        assert_eq!(file.url, "https://example.com/inline.png");
+
+        let BlockData::Paragraph { text } = &blocks[2].data else {
+            panic!("expected trailing paragraph, got {:?}", blocks[2].data);
+        };
+        assert_eq!(text, "and trailing text.");
+
+        let BlockData::Image { file, .. } = &blocks[3].data else {
+            panic!("expected linked-image block, got {:?}", blocks[3].data);
+        };
+        assert_eq!(file.url, "https://example.com/linked.png");
+    }
+
+    #[tokio::test]
+    async fn wp_leading_alignleft_image_in_paragraph_becomes_image_block() {
+        // A WordPress `alignleft` image is emitted as the first child of a `<p>`, directly
+        // followed by the body text (with a large `srcset`). The image must be split out into
+        // its own Image block instead of being flattened into the paragraph as inline `<img>`
+        // markup (which the editor cannot render).
+        let html = r#"<p><img decoding="async" class="size-medium wp-image-105086 alignleft" src="https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-184x300.jpg" alt="" width="184" height="300" srcset="https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-92x150.jpg 92w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-184x300.jpg 184w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-200x327.jpg 200w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-400x654.jpg 400w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-scaled.jpg 1567w" sizes="(max-width: 184px) 100vw, 184px">Daran dachte ich nicht. Ich griff zu.</p>"#;
+
+        let blocks = import_wp_blocks(html).await;
+
+        assert_eq!(
+            blocks.len(),
+            2,
+            "expected an image block and a paragraph, got {blocks:?}"
+        );
+
+        let BlockData::Image { file, .. } = &blocks[0].data else {
+            panic!("expected leading image block, got {:?}", blocks[0].data);
+        };
+        // The downloaded copy is referenced via the uploads path; a failed download falls back
+        // to the original absolute URL.
+        assert!(
+            file.url.starts_with("/api/projects/") || file.url.starts_with("http"),
+            "unexpected image url: {}",
+            file.url
+        );
+
+        let BlockData::Paragraph { text } = &blocks[1].data else {
+            panic!("expected trailing paragraph, got {:?}", blocks[1].data);
+        };
+        assert_eq!(text, "Daran dachte ich nicht. Ich griff zu.");
+        assert!(
+            !text.contains("<img"),
+            "image must not remain inline, got: {text}"
+        );
+    }
+
     #[test]
     fn bibliography_collects_transitive_parents() {
         // child -> parent
@@ -2344,7 +3180,7 @@ mod tests {
 
         let entries = vec![child, parent];
 
-        // Simulating the block in dom_to_html where convert_links is true
+        // Simulating the block in convert_link_to_citation where a link resolves to entries
         let main_entry = entries.first().unwrap();
         let main_key = main_entry.key().to_string();
         let by_key = ImportProcessor::collect_bib_entries_with_parents(entries);

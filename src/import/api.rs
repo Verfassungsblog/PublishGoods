@@ -325,7 +325,9 @@ pub async fn get_wordpress_posts_preview(
             None,
             preview_request.include_categories,
             preview_request.exclude_categories,
-            None,
+            // Bound the preview so it returns a sample rather than the entire blog; the total
+            // count is still reported via `number_of_records`.
+            Some(preview_request.per_page.unwrap_or(100)),
         )
         .await;
 

@@ -1,5 +1,7 @@
 use crate::projects::api::UploadedImage;
+use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::sections::content::current::NewContentBlockConversionError::UnknownBlockType;
+use crate::utils::block_id_generator::generate_id;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -424,6 +426,23 @@ pub struct NewContentBlock {
     pub css_classes: Vec<String>,
     #[bincode(with_serde)]
     pub revision_id: Option<uuid::Uuid>,
+}
+
+impl NewContentBlock {
+    pub fn new(
+        section: &Section,
+        block_type: BlockType,
+        data: BlockData,
+        css_classes: Vec<String>,
+    ) -> NewContentBlock {
+        NewContentBlock {
+            id: generate_id(section),
+            block_type,
+            data,
+            css_classes,
+            revision_id: None,
+        }
+    }
 }
 
 impl From<NewContentBlock> for yrs::MapPrelim {

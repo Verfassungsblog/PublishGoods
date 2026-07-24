@@ -38,48 +38,38 @@ pub struct PostData {
 impl PostData {
     /// Returns Err if postdatatypes doesn't match
     pub fn push_posts(&mut self, posts: PostDataType) -> Result<(), ()> {
-        match &self.data {
-            PostDataType::PostPreviews(data) => match posts {
-                PostDataType::PostPreviews(new_data) => {
-                    let mut data = data.clone();
-                    data.append(&mut new_data.clone());
-                    self.data = PostDataType::PostPreviews(data);
-                    Ok(())
-                }
-                PostDataType::FullPosts(_) => Err(()),
-            },
-            PostDataType::FullPosts(data) => match posts {
-                PostDataType::PostPreviews(_) => Err(()),
-                PostDataType::FullPosts(new_data) => {
-                    let mut data = data.clone();
-                    data.append(&mut new_data.clone());
-                    self.data = PostDataType::FullPosts(data);
-                    Ok(())
-                }
-            },
+        match (&mut self.data, posts) {
+            (PostDataType::PostPreviews(data), PostDataType::PostPreviews(mut new_data)) => {
+                data.append(&mut new_data);
+                Ok(())
+            }
+            (PostDataType::FullPosts(data), PostDataType::FullPosts(mut new_data)) => {
+                data.append(&mut new_data);
+                Ok(())
+            }
+            _ => Err(()),
         }
     }
 
     /// Removes all elements exceeding the limit
     pub fn cap_to(&mut self, limit: usize) {
-        match &self.data {
-            PostDataType::PostPreviews(data) => {
-                if data.len() > limit {
-                    let mut data = data.clone();
-                    let n_remove = data.len() - limit;
-                    data.drain(data.len() - n_remove - 1..);
-                    self.data = PostDataType::PostPreviews(data);
-                }
-            }
-            PostDataType::FullPosts(data) => {
-                if data.len() > limit {
-                    let mut data = data.clone();
-                    let n_remove = data.len() - limit;
-                    data.drain(data.len() - n_remove - 1..);
-                    self.data = PostDataType::FullPosts(data);
-                }
-            }
+        match &mut self.data {
+            PostDataType::PostPreviews(data) => data.truncate(limit),
+            PostDataType::FullPosts(data) => data.truncate(limit),
         }
+    }
+
+    /// Number of collected posts/previews.
+    pub fn len(&self) -> usize {
+        match &self.data {
+            PostDataType::PostPreviews(data) => data.len(),
+            PostDataType::FullPosts(data) => data.len(),
+        }
+    }
+
+    /// Whether no posts/previews have been collected yet.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -360,9 +350,10 @@ impl WordpressAPI {
                         include_categories_chunks.push(chunk);
                         chunk = format!("{},", category);
                     } else {
-                        chunk.push_str(&category.to_string());
+                        chunk.push_str(format!("{},", category).as_str());
                     }
                 }
+                include_categories_chunks.push(chunk)
             }
         } else {
             if let Some(include_categories) = &categories {
@@ -484,8 +475,6 @@ impl WordpressAPI {
                                     all_posts
                                         .push_posts(PostDataType::FullPosts(posts))
                                         .unwrap();
-                                    all_posts.number_of_records =
-                                        all_posts.number_of_records + num_of_records;
                                 }
                                 Err(e) => {
                                     error!("Error parsing posts: {}", e);
@@ -504,8 +493,6 @@ impl WordpressAPI {
                                         all_posts
                                             .push_posts(PostDataType::PostPreviews(posts))
                                             .unwrap();
-                                        all_posts.number_of_records =
-                                            all_posts.number_of_records + num_of_records;
                                     }
                                     Err(e) => {
                                         error!("Error parsing posts: {}", e);
@@ -515,13 +502,21 @@ impl WordpressAPI {
                             }
                         }
 
+                        // `X-WP-Total` is the total matching this (chunk) query and is repeated on
+                        // every page, so only count it once per chunk (on the first page).
+                        if page == 1 {
+                            all_posts.number_of_records += num_of_records;
+                        }
+
                         if page >= num_of_pages {
                             break;
                         } else {
                             page += 1;
                         }
+                        // Stop paging once we have collected enough posts to satisfy the limit;
+                        // `cap_to` below trims any overshoot from the last page.
                         if let Some(limit) = limit {
-                            if all_posts.number_of_records > limit {
+                            if all_posts.len() >= limit {
                                 break;
                             }
                         }
@@ -870,7 +865,6 @@ mod tests {
         let posts = api
             .get_posts(
                 WordpressAPIContext::default(),
-                None,
                 None,
                 None,
                 None,
