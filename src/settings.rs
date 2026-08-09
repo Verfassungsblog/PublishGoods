@@ -12,6 +12,10 @@ pub struct Settings {
     pub project_cache_time: u64,
     /// Where should the app store the data
     pub data_path: String,
+    /// PostgreSQL connection string (e.g. postgresql://user@host:5432/db)
+    pub database_url: String,
+    /// Max connections to postgresql db
+    pub database_max_connections: u32,
     /// How long should the app wait for a file lock in ms
     pub file_lock_timeout: u64,
     pub backup_to_file_interval: u64,

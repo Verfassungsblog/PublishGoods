@@ -2,6 +2,10 @@ app_title = "Verfassungsbooks"
 project_cache_time = 1800
 #WARNING: CURRENTLY NOT USED IN ALL PLACES, leave it on data for now
 data_path = "data"
+# PostgreSQL connection string. Override in config/local.toml (or the APP_DATABASE_URL env var) for your environment.
+database_url = "postgresql://postgres@localhost:5432/publishgoods"
+# Maximum concurrent postgresql connections
+database_max_connections = 10
 # Time until data storage write fails in ms
 file_lock_timeout = 1000
 # Time until in-memory database is written to file in seconds

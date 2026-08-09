@@ -52,6 +52,7 @@ markup5ever_rcdom = "0.38.0"
 dashmap = {version = "6.1", features = ["serde"] }
 yrs = "0.25.0"
 ws = { package = "rocket_ws", version = "0.1.1" }
+sqlx = { version = "0.9", features = ["runtime-tokio", "macros", "postgres", "migrate", "derive", "uuid", "chrono", "json"]}
 
 [features]
 default = ["language_detection"]

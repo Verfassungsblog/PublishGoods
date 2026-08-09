@@ -14,8 +14,8 @@ use crate::projects::websocket::WebsocketManager;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
-use crate::storage::data_storage::current::User;
 use crate::storage::data_storage::DataStorage;
+use crate::storage::data_storage::current::User;
 use crate::storage::project_storage::ProjectStorage;
 use crate::storage::{data_storage, save_data_worker};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
@@ -24,15 +24,16 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
 use rand::Rng;
-use rocket::response::Redirect;
 use rocket::Request;
+use rocket::response::Redirect;
 use rocket_dyn_templates::Template;
 use std::sync::Arc;
-use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::ClientConfig;
+use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
 
 pub mod cleaner;
+pub mod db;
 pub mod export;
 pub mod import;
 pub mod persons;
@@ -122,6 +123,14 @@ async fn rocket() -> _ {
         .unwrap();
     info!("Loading project storage...");
     let project_storage = Arc::new(ProjectStorage::new());
+
+    info!("Connecting to PostgreSQL...");
+    let db_pool = db::init_pool(&settings).await;
+    info!("Running database schema migrations...");
+    db::run_migrations(&db_pool).await;
+    db::data_migration::migrate_from_bincode(&db_pool, &data_storage, &project_storage, &settings)
+        .await
+        .expect("Failed to migrate legacy data storage into PostgreSQL");
 
     info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings));
@@ -268,6 +277,7 @@ async fn rocket() -> _ {
         .manage(settings)
         .manage(data_storage)
         .manage(project_storage)
+        .manage(db_pool)
         .manage(import_manager)
         .manage(csl_data)
         .manage(rendering_manager)
