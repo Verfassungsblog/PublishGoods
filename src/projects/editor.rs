@@ -1,21 +1,18 @@
+use crate::db::repositories::{folders, projects};
 use crate::session::session_guard::Session;
-use crate::settings::Settings;
-use crate::storage::data_storage::DataStorage;
-use crate::storage::data_storage::current::ProjectListEntry;
-use crate::storage::project_storage::ProjectStorage;
-use chrono::Utc;
 use rocket::State;
 use rocket::http::Status;
 use rocket_dyn_templates::Template;
-use std::sync::Arc;
+use sqlx::PgPool;
 
+/// Renders the project editor page for an existing project, returning 404 if the id
+/// doesn't parse or no project with that id exists. Also touches the project's
+/// last-interaction timestamp (used for sorting the project list) on each visit.
 #[get("/projects/<project_id>")]
 pub async fn show_editor(
     project_id: String,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> Result<Template, Status> {
     let project_id = match uuid::Uuid::parse_str(&project_id) {
         Ok(project_id) => project_id,
@@ -25,24 +22,15 @@ pub async fn show_editor(
         }
     };
 
-    let project_storage = Arc::clone(project_storage);
-    if !project_storage.has_project(&project_id, settings).await {
+    if !projects::exists(pool.inner(), project_id)
+        .await
+        .unwrap_or(false)
+    {
         eprintln!("Couldn't get project with id {}", project_id);
         return Err(Status::NotFound);
     }
 
-    // Update last interaction time in project list
-    {
-        let mut project_list = data_storage.data.projects.write().unwrap();
-        if let Some(entry) = project_list
-            .entries
-            .iter_mut()
-            .find(|entry| *entry.id() == project_id)
-            && let ProjectListEntry::Project(project) = entry
-        {
-            project.last_interaction = Utc::now().naive_utc();
-        }
-    }
+    let _ = folders::touch_project_last_interaction(pool.inner(), project_id).await;
 
     Ok(Template::render("editor", project_id))
 }

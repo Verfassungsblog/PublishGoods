@@ -1,34 +1,25 @@
+use crate::db::repositories::{projects, templates, users};
 use crate::session::session_guard::Session;
-use crate::settings::Settings;
-use crate::storage::ProjectTemplateV2;
-use crate::storage::data_storage::DataStorage;
-use crate::storage::data_storage::current::{ProjectListEntry, ProjectListProject};
-use crate::storage::project_storage::current::Bibliography;
-use crate::storage::project_storage::{ProjectData, ProjectStorage};
-use chrono::Utc;
 use rocket::State;
 use rocket::http::Status;
 use rocket::response::Redirect;
 use rocket_dyn_templates::Template;
+use sqlx::PgPool;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 /// Show create project form
 #[get("/projects/create")]
 pub async fn show_create_project(
     _session: Session,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> Result<Template, Status> {
     // Get list of all templates
-    let templates: Vec<ProjectTemplateV2> = data_storage
-        .data
-        .templates
-        .iter()
-        .map(|x| x.value().read().unwrap().clone())
-        .collect();
+    let all_templates = templates::list_all(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let mut data = BTreeMap::new();
-    data.insert("templates", templates);
+    data.insert("templates", all_templates);
     Ok(Template::render("create_project", data))
 }
 
@@ -48,9 +39,7 @@ pub struct CreateProjectForm {
 pub async fn process_create_project(
     _session: Session,
     data: rocket::form::Form<CreateProjectForm>,
-    data_storage: &State<Arc<DataStorage>>,
-    project_storage: &State<Arc<ProjectStorage>>,
-    settings: &State<Settings>,
+    pool: &State<PgPool>,
 ) -> Result<Redirect, Status> {
     let template_id = match uuid::Uuid::try_parse(&data.template_id) {
         Ok(template_id) => template_id,
@@ -64,42 +53,32 @@ pub async fn process_create_project(
     };
 
     //Check if template exists
-    if !data_storage.data.templates.contains_key(&template_id) {
+    if !templates::exists(pool.inner(), template_id)
+        .await
+        .unwrap_or(false)
+    {
         return Err(Status::BadRequest);
     }
 
-    let project_data = ProjectData {
-        name: data.project_name.clone(),
-        description: data.project_description.clone(),
-        template_id,
-        last_interaction: 0,
-        metadata: None,
-        settings: None,
-        sections: vec![],
-        bibliography: Bibliography::new(),
-    };
+    let default_team_id = users::ensure_default_team(pool.inner())
+        .await
+        .map_err(|_| Status::InternalServerError)?;
 
     let project_id = uuid::Uuid::new_v4();
-    if let Err(e) = project_storage
-        .insert_project(project_id, project_data.clone(), settings)
-        .await
+    if let Err(e) = projects::insert(
+        pool.inner(),
+        project_id,
+        &data.project_name,
+        data.project_description.as_deref(),
+        Some(template_id),
+        None,
+        default_team_id,
+    )
+    .await
     {
-        eprintln!("Couldn't insert project into project_storage: {:?}", e);
+        eprintln!("Couldn't insert project: {:?}", e);
         return Err(Status::InternalServerError);
     }
-    let project_list = &data_storage.data.projects;
-    project_list
-        .write()
-        .unwrap()
-        .entries
-        .push(ProjectListEntry::Project(ProjectListProject {
-            id: project_id,
-            name: project_data.name,
-            last_interaction: Utc::now().naive_utc(),
-        }));
-    if let Err(e) = data_storage.save_to_disk(settings).await {
-        eprintln!("Couldn't save project list to disk: {:?}", e);
-        return Err(Status::InternalServerError);
-    }
+
     Ok(Redirect::to("/"))
 }

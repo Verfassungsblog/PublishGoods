@@ -1,12 +1,8 @@
 use crate::settings::Settings;
 use crate::storage::project_storage::migration::load_project_data;
-use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::sections::current::SectionV6;
-use crate::storage::project_storage::{
-    CURRENT_VERSION, ProjectData, ProjectStorage, ProjectStorageError,
-};
+use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
 use crate::storage::{BibEntryV3, MultipleFileLocks, MyMaybeTyped, MyPageRanges};
-use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
 use dashmap::{DashMap, Entry};
@@ -14,12 +10,10 @@ use hayagriva::types::{MaybeTyped, SerialNumber};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 use unic_langid_impl::LanguageIdentifier;
 use uuid::Uuid;
@@ -115,19 +109,6 @@ impl ProjectStorage {
         })
     }
 
-    pub async fn has_project(&self, uuid: &uuid::Uuid, settings: &Settings) -> bool {
-        match self.get_project(uuid, settings).await {
-            Ok(_) => true,
-            Err(e) => match e {
-                ProjectStorageError::ProjectNotFound => false,
-                _ => {
-                    error!("Error while checking if project exists: {:?}", e);
-                    false
-                }
-            },
-        }
-    }
-
     pub async fn get_project(
         &self,
         uuid: &uuid::Uuid,
@@ -154,94 +135,6 @@ impl ProjectStorage {
                 }
             }
         }
-    }
-
-    /// Deletes a project from memory and disk permanently.
-    /// Does not delete the project entry from the project list!
-    pub async fn delete_project(
-        &self,
-        project_id: &uuid::Uuid,
-        settings: &Settings,
-    ) -> Result<(), ProjectStorageError> {
-        debug!("Deleting project {}", project_id);
-
-        // Remove project from memory:
-        if self.projects.remove(project_id).is_none() {
-            return Err(ProjectStorageError::ProjectNotFound);
-        }
-
-        // Remove project from disk:
-        let path = format!("{}/projects/{}", settings.data_path, project_id);
-
-        if let Err(e) = tokio::fs::remove_dir_all(path).await {
-            error!("Failed to delete project {} from disk: {}", project_id, e);
-            return Err(ProjectStorageError::IOError(e));
-        };
-
-        Ok(())
-    }
-
-    pub async fn save_project_to_disk(
-        &self,
-        uuid: &Uuid,
-        settings: &Settings,
-    ) -> Result<(), ProjectStorageError> {
-        // Get project
-        let project = self
-            .projects
-            .get(uuid)
-            .ok_or(ProjectStorageError::ProjectNotFound)?
-            .value()
-            .clone();
-
-        match fs::create_dir(format!("{}/projects/{}", settings.data_path, uuid)) {
-            Ok(_) => {}
-            Err(e) => {
-                if e.kind() != std::io::ErrorKind::AlreadyExists {
-                    eprintln!("io error while creating project directory: {}", e);
-                    return Err(ProjectStorageError::IOError(e));
-                }
-            }
-        }
-
-        // Encode project data with bincode and save to disk
-        let path = format!(
-            "{}/projects/{}/project.{}.bincode",
-            settings.data_path, uuid, CURRENT_VERSION
-        );
-        let path_temp = format!("{}.temp", &path);
-
-        if let Err(_) = self.wait_for_file_lock(uuid, settings).await {
-            eprintln!("error while saving project to disk: couldn't get file lock");
-            return Err(ProjectStorageError::CouldntAcquireLock);
-        }
-
-        // We can't use tokio::fs because bincode doesn't support async I/O
-        rocket::tokio::task::spawn_blocking(move || {
-            let mut file = File::create(&path_temp)?;
-            let pcopy = project.read().unwrap().clone();
-            bincode::encode_into_std_write(&pcopy, &mut file, bincode::config::standard())?;
-
-            // Move temp_file to final location
-            std::fs::rename(path_temp, path)?;
-            Ok::<(), ProjectStorageError>(())
-        })
-        .await??;
-
-        self.remove_file_lock(uuid);
-        Ok(())
-    }
-
-    pub async fn insert_project(
-        &self,
-        uuid: Uuid,
-        project_data: ProjectData,
-        settings: &Settings,
-    ) -> Result<(), ProjectStorageError> {
-        self.projects
-            .insert(uuid, Arc::new(RwLock::new(project_data)));
-        self.save_project_to_disk(&uuid, settings).await?;
-        Ok(())
     }
 }
 
@@ -481,170 +374,73 @@ pub struct ProjectMetadataV5 {
     pub custom_fields: HashMap<String, String>,
 }
 
-impl ProjectDataV10 {
-    // TODO migrate to using path instead of the id and searching for it
-    pub fn remove_section(&mut self, section_to_remove_id: &uuid::Uuid) -> Option<Section> {
-        let pos = self
-            .sections
-            .iter()
-            .position(|section| section.id == Some(*section_to_remove_id));
-
-        match pos {
-            Some(pos) => Some(self.sections.remove(pos)),
-            None => {
-                for section in &mut self.sections {
-                    if let Some(removed) = section.remove_child_section(section_to_remove_id) {
-                        return Some(removed);
-                    }
-                }
-                None
-            }
-        }
-    }
-    pub fn insert_section_as_first_child(
-        &mut self,
-        parent_section_id: &uuid::Uuid,
-        section_to_insert: Section,
-    ) -> Result<(), ()> {
-        let parent_section: &mut Section = self.get_section_mut(parent_section_id).ok_or(())?;
-        parent_section.sub_sections.insert(0, section_to_insert);
-
-        Ok(())
-    }
-    pub fn insert_section_after(
-        &mut self,
-        previous_element: &uuid::Uuid,
-        section_to_insert: Section,
-    ) -> Result<(), ()> {
-        let pos = self
-            .sections
-            .iter()
-            .position(|section| section.id == Some(*previous_element));
-
-        match pos {
-            Some(pos) => {
-                self.sections.insert(pos + 1, section_to_insert);
-                Ok(())
-            }
-            None => {
-                for section in &mut self.sections {
-                    if section
-                        .insert_child_section_after(previous_element, &section_to_insert)
-                        .is_some()
-                    {
-                        return Ok(());
-                    }
-                }
-                Err(())
-            }
-        }
-    }
-
-    pub fn get_section(&self, section_id: &uuid::Uuid) -> Option<&Section> {
-        for section in &self.sections {
-            if let Some(found) = section.get_section(section_id) {
-                return Some(found);
-            }
-        }
-        None
-    }
-
-    pub fn get_section_mut(&mut self, section_id: &uuid::Uuid) -> Option<&mut Section> {
-        for section in &mut self.sections {
-            if let Some(found) = section.get_section_mut(section_id) {
-                return Some(found);
-            }
-        }
-        None
+/// Serializes a [License] to its stored DB string form (for the `license` column).
+pub(crate) fn license_to_string(license: &License) -> String {
+    match license {
+        License::CC0 => "CC0".to_string(),
+        License::CC_BY_4 => "CC_BY_4".to_string(),
+        License::CC_BY_SA_4 => "CC_BY_SA_4".to_string(),
+        License::CC_BY_ND_4 => "CC_BY_ND_4".to_string(),
+        License::CC_BY_NC_4 => "CC_BY_NC_4".to_string(),
+        License::CC_BY_NC_SA_4 => "CC_BY_NC_SA_4".to_string(),
+        License::CC_BY_NC_ND_4 => "CC_BY_NC_ND_4".to_string(),
+        License::Other(other) => other.clone(),
     }
 }
 
-pub fn get_section_by_path_mut<'a>(
-    project: &'a mut RwLockWriteGuard<ProjectData>,
-    path: &Vec<uuid::Uuid>,
-) -> Result<&'a mut Section, ApiError> {
-    // Find first section
-    let first_section_opt = project.sections.iter_mut().find_map(|section| {
-        if section.id.unwrap_or_default() == path[0] {
-            Some(section)
-        } else {
-            None
-        }
-    });
-
-    // Return error if no first section found
-    let mut current_section = first_section_opt.ok_or_else(|| {
-        println!("Couldn't find section with id {}", path[0]);
-        ApiError::from(ApiErrorType::ResourceNotFound(String::from("section")))
-    })?;
-
-    // Iterate through the path
-    for &part in path.iter().skip(1) {
-        let mut found_section = None;
-
-        for section in &mut current_section.sub_sections {
-            if section.id.unwrap_or_default() == part {
-                found_section = Some(section);
-                break;
-            }
-        }
-
-        match found_section {
-            Some(section) => {
-                current_section = section;
-            }
-            None => {
-                println!("Couldn't find section with id {}", part);
-                return Err(ApiErrorType::ResourceNotFound(String::from("section")).into());
-            }
-        }
+/// Parses a stored license string back into a [License], treating unknown values as
+/// `License::Other`.
+pub(crate) fn license_from_string(value: &str) -> License {
+    match value {
+        "CC0" => License::CC0,
+        "CC_BY_4" => License::CC_BY_4,
+        "CC_BY_SA_4" => License::CC_BY_SA_4,
+        "CC_BY_ND_4" => License::CC_BY_ND_4,
+        "CC_BY_NC_4" => License::CC_BY_NC_4,
+        "CC_BY_NC_SA_4" => License::CC_BY_NC_SA_4,
+        "CC_BY_NC_ND_4" => License::CC_BY_NC_ND_4,
+        other => License::Other(other.to_string()),
     }
-
-    Ok(current_section)
 }
 
-pub fn get_section_by_path<'a>(
-    project: &'a RwLockReadGuard<ProjectData>,
-    path: &Vec<uuid::Uuid>,
-) -> Result<&'a Section, ApiError> {
-    let mut first_section: Option<&Section> = None;
+/// `authors`/`editors` come from the `persons_projects` join, not a plain column — always
+/// `None` here; [`crate::db::repositories::projects::get_metadata_in_tx`] fetches them
+/// separately and fills the fields in afterward (same pattern as `PersonV2::bios`).
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ProjectMetadataV5 {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        let keywords: Option<sqlx::types::Json<Vec<Keyword>>> = row.try_get("keywords")?;
+        let custom_fields: Option<sqlx::types::Json<HashMap<String, String>>> =
+            row.try_get("custom_fields")?;
+        let identifiers: Option<sqlx::types::Json<Vec<Identifier>>> = row.try_get("identifiers")?;
+        let languages: Option<Vec<String>> = row.try_get("languages")?;
+        let license: Option<String> = row.try_get("license")?;
 
-    // Find first section
-    for section in project.sections.iter() {
-        if section.id.unwrap_or_default() == path[0] {
-            first_section = Some(section);
-        }
+        Ok(ProjectMetadataV5 {
+            title: row.try_get("title")?,
+            subtitle: row.try_get("subtitle")?,
+            authors: None,
+            editors: None,
+            web_url: row.try_get("web_url")?,
+            identifiers: identifiers.map(|j| j.0),
+            published: row.try_get("publish_date")?,
+            languages: languages
+                .map(|langs| langs.iter().filter_map(|l| Language::from_tag(l)).collect()),
+            number_of_pages: row
+                .try_get::<Option<i32>, _>("number_of_pages")?
+                .map(|n| n as u32),
+            short_abstract: row.try_get("short_abstract")?,
+            long_abstract: row.try_get("long_abstract")?,
+            keywords: keywords.map(|j| j.0),
+            ddc: row.try_get("ddc")?,
+            license: license.as_deref().map(license_from_string),
+            series: row.try_get("series")?,
+            volume: row.try_get("volume")?,
+            edition: row.try_get("edition")?,
+            publisher: row.try_get("publisher")?,
+            custom_fields: custom_fields.map(|j| j.0).unwrap_or_default(),
+        })
     }
-
-    // Return error if no first section found
-    let first_section: &Section = match first_section {
-        Some(first_section) => first_section,
-        None => {
-            println!("Couldn't find section with id {}", path[0]);
-            return Err(ApiErrorType::ResourceNotFound(String::from("section")).into());
-        }
-    };
-
-    let mut current_section: &Section = first_section;
-
-    // Skip first element, because we already found it
-    for part in path.iter().skip(1) {
-        // Search for next section in the current sections children
-        let mut found = false;
-        for section in current_section.sub_sections.iter() {
-            if section.id.unwrap_or_default() == *part {
-                current_section = section;
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            println!("Couldn't find section with id {}", part);
-            return Err(ApiErrorType::ResourceNotFound(String::from("section")).into());
-        }
-    }
-
-    Ok(current_section)
 }
 
 /// is either the uuid to a person or just a string with a name

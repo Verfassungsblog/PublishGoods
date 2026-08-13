@@ -28,6 +28,11 @@ pub struct Settings {
     pub client_key_path: String,
     pub revocation_list_path: String,
     pub version: String,
+    /// How many failed login attempts within `lockout_window_minutes` trigger a lockout.
+    pub max_login_attempts: i64,
+    /// Rolling window (in minutes) used both to count recent failed login attempts and to
+    /// lock the account.
+    pub lockout_window_minutes: i64,
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bibliography_folders SET name = $2, parent = $3 WHERE id = $1 AND project_id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "238513eaf801d726973b3701e6a57a3d54b7b7ee61e3469b4d717ee0c6c55c82"
+}

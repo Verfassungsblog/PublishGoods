@@ -17,6 +17,11 @@ max_import_threads = 4
 # URL to the zotero translation server (https://github.com/zotero/translation-server) for importing zotero items.
 zotero_translation_server = "https://translation-server.anghenfil.de"
 
+# How many failed login attempts within lockout_window_minutes trigger a lockout.
+max_login_attempts = 5
+# Rolling window (in minutes) used both to count recent failed login attempts and to lock the account.
+lockout_window_minutes = 15
+
 # Export Server Settings
 
 # mTLS CA Cert

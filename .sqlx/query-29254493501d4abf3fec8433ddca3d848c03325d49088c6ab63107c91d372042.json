@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT slug, name, preview_pdf_path, output_files,\n                  export_steps as \"export_steps: Json<Vec<ExportStep>>\"\n           FROM export_formats WHERE project_template_id = $1 AND slug = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "export_formats",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "export_formats",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "preview_pdf_path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "export_formats",
+            "name": "preview_pdf_path"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "output_files",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "export_formats",
+            "name": "output_files"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "export_steps: Json<Vec<ExportStep>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "export_formats",
+            "name": "export_steps"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "29254493501d4abf3fec8433ddca3d848c03325d49088c6ab63107c91d372042"
+}

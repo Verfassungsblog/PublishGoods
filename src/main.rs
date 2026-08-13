@@ -10,14 +10,13 @@
 
 #[macro_use]
 extern crate rocket;
+use crate::db::repositories::users;
 use crate::projects::websocket::WebsocketManager;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
-use crate::storage::data_storage::current::User;
 use crate::storage::project_storage::ProjectStorage;
-use crate::storage::{data_storage, save_data_worker};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use crate::utils::csl::CslData;
 use argon2::password_hash::rand_core::OsRng;
@@ -67,43 +66,6 @@ async fn rocket() -> _ {
     if !std::path::Path::new(&format!("{}/projects", settings.data_path)).exists() {
         info!("Data directory does not exist, creating it...");
         std::fs::create_dir_all(format!("{}/projects", settings.data_path)).unwrap(); //Intentionally panic if directory creation fails
-        //Create empty DataStorage
-        info!("Creating empty data storage...");
-        let data_storage = data_storage::DataStorage::new();
-        //Create new admin user
-        let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
-        const PASSWORD_CHARACTERS: [char; 92] = [
-            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q',
-            'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-            'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y',
-            'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '!', '@', '#', '$', '%', '^',
-            '&', '*', '(', ')', '_', '+', '-', '=', '[', ']', '{', '}', '|', '\\', ';', ':', '\'',
-            '"', ',', '.', '<', '>', '/', '?',
-        ];
-        let password: String = {
-            let mut random = rand::thread_rng();
-            (0..20)
-                .map(|_| PASSWORD_CHARACTERS[random.gen_range(0..PASSWORD_CHARACTERS.len())])
-                .collect()
-        };
-        let user = User {
-            id: uuid::Uuid::new_v4(),
-            name: String::from("default"),
-            email: String::from("default@default"),
-            password_hash: Argon2::default()
-                .hash_password(password.as_bytes(), &salt)
-                .unwrap()
-                .to_string(),
-            locked_until: None,
-            login_attempts: Vec::new(),
-        };
-        data_storage.insert_user(user, &settings).await.unwrap();
-        data_storage.save_to_disk(&settings).await.unwrap();
-        // Log as error to show on default log level
-        error!(
-            "Created new default admin user 'default@default' with password '{}'",
-            password
-        );
     }
 
     // Clear temp directory
@@ -114,35 +76,87 @@ async fn rocket() -> _ {
     }
     std::fs::create_dir(temp_dir).unwrap();
 
-    info!("Loading data storage...");
-    let data_storage = Arc::new(DataStorage::load_from_disk(&settings).await.unwrap());
-    info!("Scanning project directory for removed/added projects");
-    data_storage
-        .scan_for_missing_or_deleted_projects(&settings)
-        .await
-        .unwrap();
-    info!("Loading project storage...");
-    let project_storage = Arc::new(ProjectStorage::new());
-
     info!("Connecting to PostgreSQL...");
     let db_pool = db::init_pool(&settings).await;
     info!("Running database schema migrations...");
     db::run_migrations(&db_pool).await;
-    db::data_migration::migrate_from_bincode(&db_pool, &data_storage, &project_storage, &settings)
+
+    // A legacy bincode data file means this is an existing pre-Postgres install: migrate it
+    // into Postgres (idempotent - `migrate_from_bincode` no-ops if `users` is already
+    // populated). Otherwise this is either a fresh install or one that's already been
+    // migrated, so only bootstrap a default admin in the fresh-install case - otherwise we'd
+    // create a redundant second admin right before the legacy one gets migrated in.
+    let legacy_data_exists = std::fs::read_dir(&settings.data_path)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("data.") && name.ends_with(".bincode"))
+        });
+
+    if legacy_data_exists {
+        info!("Found legacy bincode data storage, migrating into PostgreSQL...");
+        let data_storage = DataStorage::load_from_disk(&settings)
+            .await
+            .expect("Failed to load legacy data storage from disk");
+        let project_storage = ProjectStorage::new();
+        db::data_migration::migrate_from_bincode(
+            &db_pool,
+            &data_storage,
+            &project_storage,
+            &settings,
+        )
         .await
         .expect("Failed to migrate legacy data storage into PostgreSQL");
+    } else {
+        let users_exist: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users)")
+            .fetch_one(&db_pool)
+            .await
+            .unwrap();
+        if !users_exist {
+            info!("No users found, creating default admin user...");
+            let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
+            const PASSWORD_CHARACTERS: [char; 92] = [
+                'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
+                'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F',
+                'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V',
+                'W', 'X', 'Y', 'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '!', '@',
+                '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '-', '=', '[', ']', '{', '}',
+                '|', '\\', ';', ':', '\'', '"', ',', '.', '<', '>', '/', '?',
+            ];
+            let password: String = {
+                let mut random = rand::thread_rng();
+                (0..20)
+                    .map(|_| PASSWORD_CHARACTERS[random.gen_range(0..PASSWORD_CHARACTERS.len())])
+                    .collect()
+            };
+            let password_hash = Argon2::default()
+                .hash_password(password.as_bytes(), &salt)
+                .unwrap()
+                .to_string();
+            let default_team_id = users::ensure_default_team(&db_pool).await.unwrap();
+            users::insert(
+                &db_pool,
+                "default@default",
+                "default",
+                &password_hash,
+                default_team_id,
+            )
+            .await
+            .unwrap();
+            // Log as error to show on default log level
+            error!(
+                "Created new default admin user 'default@default' with password '{}'",
+                password
+            );
+        }
+    }
 
     info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings));
-
-    info!("Starting auto-save worker...");
-    // Start seperate thread for auto-saving
-    save_data_worker(
-        data_storage.clone(),
-        project_storage.clone(),
-        settings.clone(),
-    )
-    .await;
 
     info!("Starting cleanup worker...");
     cleaner::worker();
@@ -164,18 +178,17 @@ async fn rocket() -> _ {
     info!("Starting rendering worker...");
     let rendering_manager = export::rendering_manager::RenderingManager::start(
         settings.clone(),
-        data_storage.clone(),
-        project_storage.clone(),
+        db_pool.clone(),
         csl_data.clone(),
         Arc::new(client_config),
     );
 
     info!("Starting import processing worker...");
     let import_manager =
-        import::processing::ImportProcessor::start(settings.clone(), project_storage.clone());
+        import::processing::ImportProcessor::start(settings.clone(), db_pool.clone());
 
     let websocket_manager = Arc::new(WebsocketManager::new(
-        project_storage.clone(),
+        db_pool.clone(),
         Arc::new(settings.clone()),
     ));
 
@@ -275,8 +288,6 @@ async fn rocket() -> _ {
         )
         .manage(SessionStorage::new())
         .manage(settings)
-        .manage(data_storage)
-        .manage(project_storage)
         .manage(db_pool)
         .manage(import_manager)
         .manage(csl_data)

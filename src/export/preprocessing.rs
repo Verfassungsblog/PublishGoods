@@ -1,4 +1,4 @@
-use crate::storage::data_storage::DataStorage;
+use crate::db::repositories::persons;
 use crate::storage::project_storage::ProjectData;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::Section;
@@ -50,7 +50,7 @@ use vb_exchange::projects::{
 ///
 /// # Arguments
 /// * `project_data` - Full data of the project to be prepared.
-/// * `data_storage` - Shared reference to user and entity storage for resolving person UUIDs.
+/// * `pool` - PostgreSQL connection pool used for resolving person UUIDs.
 /// * `csl_data` - Shared reference for citation style language data required for rendering citations.
 /// * `sections_to_include` - Optional list of UUIDs representing the sections to include in preparation.
 /// * `project_id` - The UUID of the current project.
@@ -60,12 +60,11 @@ use vb_exchange::projects::{
 /// Returns `Err(RenderingError)` if required metadata is missing or other preparation steps fail.
 pub async fn prepare_project(
     project_data: ProjectData,
-    data_storage: Arc<DataStorage>,
+    pool: sqlx::PgPool,
     csl_data: Arc<CslData>,
     sections_to_include: Option<Vec<uuid::Uuid>>,
     project_id: &uuid::Uuid,
 ) -> Result<PreparedProject, RenderingError> {
-    let data_storage = Arc::clone(&data_storage);
     let citation_bib = render_citations(&project_data, csl_data);
 
     let metadata = match project_data.metadata {
@@ -82,7 +81,7 @@ pub async fn prepare_project(
     for author in metadata.authors.unwrap_or_default() {
         match author {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person_cloned(&id).await {
+                let person = match persons::get(&pool, id).await {
                     Ok(person) => person,
                     Err(e) => {
                         eprintln!(
@@ -104,7 +103,7 @@ pub async fn prepare_project(
     for editor in metadata.editors.unwrap_or_default() {
         match editor {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match data_storage.get_person_cloned(&id).await {
+                let person = match persons::get(&pool, id).await {
                     Ok(person) => person,
                     Err(e) => {
                         eprintln!(
@@ -135,7 +134,7 @@ pub async fn prepare_project(
                         data.push(
                             render_section(
                                 section,
-                                data_storage.clone(),
+                                pool.clone(),
                                 &citation_bib,
                                 project_id,
                                 add_soft_hyphens,
@@ -147,7 +146,7 @@ pub async fn prepare_project(
                 None => data.push(
                     render_section(
                         section,
-                        data_storage.clone(),
+                        pool.clone(),
                         &citation_bib,
                         project_id,
                         add_soft_hyphens,
@@ -326,7 +325,7 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
 ///
 /// # Arguments
 /// * `section` - The section to render.
-/// * `data_storage` - Shared access to the `DataStorage`, used for resolving author/editor UUIDs.
+/// * `pool` - PostgreSQL connection pool, used for resolving author/editor UUIDs.
 /// * `citation_bib` - A map from citation keys to their corresponding bibliography data.
 /// * `project_id` - The UUID identifying the project this section belongs to.
 /// * `add_soft_hyphens` - If true, adds soft hyphens to title and subtitle based on the detected language.
@@ -336,7 +335,7 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
 #[async_recursion]
 pub async fn render_section(
     section: Section,
-    data_storage: Arc<DataStorage>,
+    pool: sqlx::PgPool,
     citation_bib: &HashMap<String, String>,
     project_id: &uuid::Uuid,
     add_soft_hyphens: bool,
@@ -346,7 +345,7 @@ pub async fn render_section(
     let mut authors = vec![];
     for author in section.metadata.authors {
         let person = match author {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id).await {
+            PersonUuidOrString::PersonUuid(id) => match persons::get(&pool, id).await {
                 Ok(person) => PersonOrString::Person(person),
                 Err(e) => {
                     eprintln!(
@@ -365,7 +364,7 @@ pub async fn render_section(
     let mut editors = vec![];
     for editor in section.metadata.editors {
         let person = match editor {
-            PersonUuidOrString::PersonUuid(id) => match data_storage.get_person_cloned(&id).await {
+            PersonUuidOrString::PersonUuid(id) => match persons::get(&pool, id).await {
                 Ok(person) => PersonOrString::Person(person),
                 Err(e) => {
                     eprintln!(
@@ -443,7 +442,7 @@ pub async fn render_section(
         sub_sections.push(
             render_section(
                 sub_section,
-                data_storage.clone(),
+                pool.clone(),
                 citation_bib,
                 project_id,
                 add_soft_hyphens,

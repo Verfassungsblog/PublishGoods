@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, data as \"data: Json<BibEntryV3>\" FROM bibliography_entries WHERE project_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bibliography_entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "data: Json<BibEntryV3>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "bibliography_entries",
+            "name": "data"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "9db1a6502a45579af328225c79d3be21888eebc6cbf323ba7b3e28e402761e6a"
+}

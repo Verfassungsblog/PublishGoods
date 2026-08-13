@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE project_templates SET name = $2, description = $3, version = gen_random_uuid() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7969b2ed4ef5524b72e4e67e1e1930e12cd5de257fb2a9e78a292ee867adea29"
+}

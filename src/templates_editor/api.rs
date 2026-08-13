@@ -1,17 +1,17 @@
+use crate::db::repositories::templates::{self, Template};
 use crate::session::session_guard::Session;
 use crate::storage::ProjectTemplateV2;
-use crate::storage::data_storage::DataStorage;
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use rocket::State;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
 use rocket::serde::json::Json;
+use sqlx::PgPool;
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use uuid::Uuid;
 use vb_exchange::export_formats::{ExportFormat, ExportStep};
 
@@ -23,8 +23,8 @@ use vb_exchange::export_formats::{ExportFormat, ExportStep};
 pub async fn get_template(
     _session: Session,
     template_id: String,
-    data_storage: &State<Arc<DataStorage>>,
-) -> APIResult<ProjectTemplateV2> {
+    pool: &State<PgPool>,
+) -> APIResult<Template> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
@@ -34,13 +34,8 @@ pub async fn get_template(
         }
     };
 
-    // Get template from data storage
-    let data_storage = data_storage;
-    let template = data_storage.data.templates.get(&template_id);
-    template.map_or_else(
-        || Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
-        |template| Ok(template.clone().read().unwrap().clone().into()),
-    )
+    let template = templates::get(pool.inner(), template_id).await?;
+    Ok(template.into())
 }
 
 /// POST /api/templates/<template_id>
@@ -52,7 +47,7 @@ pub async fn update_template(
     _session: Session,
     template_id: String,
     template: Json<ProjectTemplateV2>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -63,17 +58,7 @@ pub async fn update_template(
         }
     };
 
-    let mut template = template.into_inner();
-    // Generate a new version id since we updated the template
-    template.version = Some(uuid::Uuid::new_v4());
-
-    let data_storage = data_storage;
-
-    // Check if template exists, otherwise return 404
-    let data_storage = data_storage;
-    if !data_storage.data.templates.contains_key(&template_id) {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    let template = template.into_inner();
 
     // Check if id in template matches id in url
     if template_id != template.id {
@@ -84,13 +69,14 @@ pub async fn update_template(
         .into());
     }
 
-    *data_storage
-        .data
-        .templates
-        .get_mut(&template_id)
-        .unwrap()
-        .write()
-        .unwrap() = template;
+    templates::replace(
+        pool.inner(),
+        template_id,
+        &template.name,
+        &template.description,
+        &template.export_formats,
+    )
+    .await?;
 
     Ok(().into())
 }
@@ -221,7 +207,7 @@ pub async fn create_file_asset(
     _session: Session,
     template_id: String,
     asset: Form<NewAssetFile<'_>>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -285,9 +271,7 @@ pub async fn create_file_asset(
     }
     match file.copy_to(path).await {
         Ok(_) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-            }
+            templates::touch_version(pool.inner(), template_id).await?;
             Ok(().into())
         }
         Err(e) => {
@@ -309,7 +293,7 @@ pub async fn delete_assets(
     _session: Session,
     template_id: String,
     paths: Json<DeleteAssetRequest>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -354,9 +338,7 @@ pub async fn delete_assets(
         }
     }
 
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::touch_version(pool.inner(), template_id).await?;
 
     Ok(().into())
 }
@@ -368,7 +350,7 @@ pub async fn create_folder_asset(
     _session: Session,
     template_id: String,
     asset: Json<NewAssetFolder>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -401,9 +383,7 @@ pub async fn create_folder_asset(
 
     match res {
         Ok(res) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-            }
+            templates::touch_version(pool.inner(), template_id).await?;
             res
         }
         Err(e) => {
@@ -546,7 +526,7 @@ pub async fn update_asset_file(
     template_id: String,
     path: PathBuf,
     content: Json<UpdateAssetRequest>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -575,9 +555,7 @@ pub async fn update_asset_file(
         return Err(ApiErrorType::ResourceNotFound("asset".to_string()).into());
     }
 
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::touch_version(pool.inner(), template_id).await?;
 
     // Update the file
     match tokio::fs::write(&path, content.into_inner().content).await {
@@ -596,7 +574,7 @@ pub async fn move_asset(
     _session: Session,
     template_id: String,
     asset: Json<MoveAssetRequest>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -636,23 +614,20 @@ pub async fn move_asset(
         return Err(ApiErrorType::InternalServerError.into());
     }
 
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::touch_version(pool.inner(), template_id).await?;
 
     Ok(().into())
 }
 
+/// POST /api/templates/<template_id>/export_formats
+/// Adds a new export format to the template and creates its asset directory on disk.
 #[post("/api/templates/<template_id>/export_formats", data = "<data>")]
 pub async fn add_export_format(
     _session: Session,
     template_id: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
     data: Json<ExportFormat>,
 ) -> APIResult<ExportFormat> {
-    // Clone data storage
-    let data_storage = data_storage;
-
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
@@ -683,30 +658,11 @@ pub async fn add_export_format(
         .into());
     }
 
-    let template_exists;
-    {
-        template_exists = match data_storage.data.templates.get(&template_id) {
-            Some(template) => {
-                template
-                    .write()
-                    .unwrap()
-                    .export_formats
-                    .insert(format.slug.clone(), format.clone());
-                true
-            }
-            None => false,
-        };
-    }
-
-    if !template_exists {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::insert_export_format(pool.inner(), template_id, &format).await?;
 
     match tokio::fs::create_dir_all(new_path).await {
         Ok(_) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-            }
+            templates::touch_version(pool.inner(), template_id).await?;
             Ok(format.into())
         }
         Err(e) => {
@@ -733,24 +689,15 @@ pub async fn update_export_format_metadata(
     _session: Session,
     slug: String,
     template_id: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
     data: Json<ExportFormatMetadata>,
 ) -> APIResult<()> {
-    // Clone data storage
-    let data_storage = data_storage;
-
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
             eprintln!("Couldn't parse template id: {}", e);
             return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
         }
-    };
-
-    // Get template
-    let template_entry = match data_storage.data.templates.get(&template_id) {
-        None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
-        Some(template) => Arc::clone(template.value()),
     };
 
     // Move files on disk if slug changed
@@ -786,34 +733,15 @@ pub async fn update_export_format_metadata(
         }
     }
 
-    if slug != data.slug {
-        let mut entry = match template_entry.write().unwrap().export_formats.remove(&slug) {
-            None => return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into()),
-            Some(entry) => entry,
-        };
-        entry.slug = data.slug.clone();
-        entry.name = data.name.clone();
-        entry.preview_pdf_path = data.preview_pdf_path.clone();
-
-        template_entry
-            .write()
-            .unwrap()
-            .export_formats
-            .insert(entry.slug.clone(), entry);
-    } else {
-        match template_entry
-            .write()
-            .unwrap()
-            .export_formats
-            .get_mut(&slug)
-        {
-            None => return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into()),
-            Some(export_format) => {
-                export_format.name = data.name.clone();
-                export_format.preview_pdf_path = data.preview_pdf_path.clone();
-            }
-        }
-    }
+    templates::update_export_format_metadata(
+        pool.inner(),
+        template_id,
+        &slug,
+        &data.slug,
+        &data.name,
+        data.preview_pdf_path.as_deref(),
+    )
+    .await?;
 
     Ok(().into())
 }
@@ -824,11 +752,9 @@ pub async fn update_export_format_metadata(
 pub async fn delete_export_format(
     _session: Session,
     template_id: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
     slug: String,
 ) -> APIResult<()> {
-    let data_storage = data_storage;
-
     let template_id = match Uuid::parse_str(&template_id) {
         Ok(template_id) => template_id,
         Err(e) => {
@@ -838,50 +764,28 @@ pub async fn delete_export_format(
     };
     let slug = sanitize_path(&slug);
 
-    let template = {
-        let templates = &data_storage.data.templates;
-        // This scope ensures that we drop the lock as soon as we finish using it
-        match templates.get(&template_id) {
-            Some(template) => Arc::clone(template.value()),
-            None => return Err(ApiErrorType::ResourceNotFound("template".to_string()).into()),
-        }
-    };
+    templates::delete_export_format(pool.inner(), template_id, &slug).await?;
 
-    let remove_result = {
-        let mut template_write = template.write().unwrap();
-        template_write.export_formats.remove(&slug)
-    };
-
-    match remove_result {
-        Some(_) => {
-            //Remove folder:
-            let base_path = format!("data/templates/{}/formats/", template_id);
-            let safe_path = safe_path_combine(base_path.as_str(), &slug);
-            match safe_path {
-                Ok(path) => match tokio::fs::remove_dir_all(path).await {
-                    Ok(_) => {
-                        if let Err(()) = data_storage.update_template_version_id(template_id).await
-                        {
-                            return Err(
-                                ApiErrorType::ResourceNotFound("template".to_string()).into()
-                            );
-                        }
-                        Ok(().into())
-                    }
-                    Err(e) => {
-                        eprintln!("Couldn't delete physical folder for export format: {}", e);
-                        Err(ApiErrorType::InternalServerError.into())
-                    }
-                },
-                Err(_) => {
-                    eprintln!(
-                        "Couldn't delete physical folder for export format. Couldn't create safe_path"
-                    );
-                    Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into())
-                }
+    //Remove folder:
+    let base_path = format!("data/templates/{}/formats/", template_id);
+    let safe_path = safe_path_combine(base_path.as_str(), &slug);
+    match safe_path {
+        Ok(path) => match tokio::fs::remove_dir_all(path).await {
+            Ok(_) => {
+                templates::touch_version(pool.inner(), template_id).await?;
+                Ok(().into())
             }
+            Err(e) => {
+                eprintln!("Couldn't delete physical folder for export format: {}", e);
+                Err(ApiErrorType::InternalServerError.into())
+            }
+        },
+        Err(_) => {
+            eprintln!(
+                "Couldn't delete physical folder for export format. Couldn't create safe_path"
+            );
+            Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into())
         }
-        None => Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into()),
     }
 }
 
@@ -977,7 +881,7 @@ pub async fn create_file_asset_for_export_format(
     template_id: String,
     slug: String,
     asset: Form<NewAssetFile<'_>>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1047,9 +951,7 @@ pub async fn create_file_asset_for_export_format(
     }
     match file.copy_to(path).await {
         Ok(_) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-            }
+            templates::touch_version(pool.inner(), template_id).await?;
             Ok(().into())
         }
         Err(e) => {
@@ -1070,7 +972,7 @@ pub async fn delete_assets_for_export_format(
     template_id: String,
     paths: Json<DeleteAssetRequest>,
     slug: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1116,9 +1018,7 @@ pub async fn delete_assets_for_export_format(
             }
         }
     }
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::touch_version(pool.inner(), template_id).await?;
 
     Ok(().into())
 }
@@ -1134,7 +1034,7 @@ pub async fn create_folder_asset_for_export_format(
     template_id: String,
     asset: Json<NewAssetFolder>,
     slug: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1169,9 +1069,7 @@ pub async fn create_folder_asset_for_export_format(
 
     match res {
         Ok(res) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-            }
+            templates::touch_version(pool.inner(), template_id).await?;
             res
         }
         Err(e) => {
@@ -1194,7 +1092,7 @@ pub async fn update_asset_file_for_export_format(
     path: PathBuf,
     content: Json<UpdateAssetRequest>,
     slug: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1228,9 +1126,7 @@ pub async fn update_asset_file_for_export_format(
     // Update the file
     match tokio::fs::write(&path, content.into_inner().content).await {
         Ok(_) => {
-            if let Err(()) = data_storage.update_template_version_id(template_id).await {
-                return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-            }
+            templates::touch_version(pool.inner(), template_id).await?;
             Ok(().into())
         }
         Err(e) => {
@@ -1251,7 +1147,7 @@ pub async fn move_asset_for_export_format(
     template_id: String,
     asset: Json<MoveAssetRequest>,
     slug: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1293,9 +1189,7 @@ pub async fn move_asset_for_export_format(
         return Err(ApiErrorType::InternalServerError.into());
     }
 
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::touch_version(pool.inner(), template_id).await?;
 
     Ok(().into())
 }
@@ -1318,7 +1212,7 @@ pub async fn create_export_step(
     template_id: String,
     slug: String,
     step: Json<ExportStep>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<ExportStep> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1331,28 +1225,13 @@ pub async fn create_export_step(
 
     let slug = sanitize_path(&slug);
 
-    let data_storage = Arc::clone(data_storage);
-    let template = match data_storage.data.templates.get(&template_id) {
-        Some(template) => Arc::clone(template.value()),
-        None => {
-            eprintln!("Couldn't find template");
-            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-        }
-    };
-
     let mut step = step.into_inner();
     step.id = Some(uuid::Uuid::new_v4());
 
-    match template.write().unwrap().export_formats.get_mut(&slug) {
-        None => {
-            eprintln!("Couldn't find export format");
-            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
-        }
-        Some(export_format) => export_format.export_steps.push(step.clone()),
-    }
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
+    steps.push(step.clone());
+    templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
+    templates::touch_version(pool.inner(), template_id).await?;
 
     Ok(step.into())
 }
@@ -1375,7 +1254,7 @@ pub async fn move_export_step(
     slug: String,
     step_id: String,
     movedata: Json<MoveExportStepRequest>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1397,58 +1276,31 @@ pub async fn move_export_step(
     let slug = sanitize_path(&slug);
     let move_after = movedata.move_after;
 
-    let data_storage = Arc::clone(data_storage);
-    let template = match data_storage.data.templates.get(&template_id) {
-        Some(template) => Arc::clone(template.value()),
+    let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
+
+    // Find export step and move it after move_after:
+    let step_index = steps.iter().position(|step| step.id == Some(step_id));
+    let step_index = match step_index {
+        Some(index) => index,
         None => {
-            eprintln!("Couldn't find template");
-            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
+            return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
         }
     };
+    let step = steps.remove(step_index);
+    // Find new position:
+    let new_index = match move_after {
+        Some(move_after) => match steps.iter().position(|step| step.id == Some(move_after)) {
+            None => {
+                return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
+            }
+            Some(index) => index + 1,
+        },
+        None => 0_usize,
+    };
+    steps.insert(new_index, step);
 
-    match template.write().unwrap().export_formats.get_mut(&slug) {
-        None => {
-            eprintln!("Couldn't find export format");
-            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
-        }
-        Some(export_format) => {
-            // Find export step and move it after move_after:
-            let step_index = export_format
-                .export_steps
-                .iter()
-                .position(|step| step.id == Some(step_id));
-            let step_index = match step_index {
-                Some(index) => index,
-                None => {
-                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
-                }
-            };
-            let step = export_format.export_steps.remove(step_index);
-            // Find new position:
-            let new_index = match move_after {
-                Some(move_after) => {
-                    match export_format
-                        .export_steps
-                        .iter()
-                        .position(|step| step.id == Some(move_after))
-                    {
-                        None => {
-                            return Err(
-                                ApiErrorType::ResourceNotFound("export_step".to_string()).into()
-                            );
-                        }
-                        Some(index) => index + 1,
-                    }
-                }
-                None => 0_usize,
-            };
-            export_format.export_steps.insert(new_index, step);
-        }
-    }
-
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
+    templates::touch_version(pool.inner(), template_id).await?;
     Ok(().into())
 }
 
@@ -1464,7 +1316,7 @@ pub async fn update_export_step(
     slug: String,
     step_id: String,
     step: Json<ExportStep>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1476,15 +1328,6 @@ pub async fn update_export_step(
     };
 
     let slug = sanitize_path(&slug);
-
-    let data_storage = Arc::clone(data_storage);
-    let template = match data_storage.data.templates.get(&template_id) {
-        Some(template) => Arc::clone(template.value()),
-        None => {
-            eprintln!("Couldn't find template");
-            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-        }
-    };
 
     let parameter_step_id = match Uuid::parse_str(&step_id) {
         Ok(id) => id,
@@ -1505,45 +1348,34 @@ pub async fn update_export_step(
         );
     }
 
-    match template.write().unwrap().export_formats.get_mut(&slug) {
+    let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
+    let index = match steps.iter().position(|x| x.id == Some(step_id)) {
+        Some(id) => id,
         None => {
-            eprintln!("Couldn't find export format");
-            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
+            return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
         }
-        Some(export_format) => {
-            // Find export_step and update
-            let index = match export_format
-                .export_steps
-                .iter()
-                .position(|x| x.id == Some(step_id))
-            {
-                Some(id) => id,
-                None => {
-                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
-                }
-            };
+    };
+    match steps.get_mut(index) {
+        Some(old_step) => *old_step = step,
+        None => {
+            return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
+        }
+    }
 
-            match export_format.export_steps.get_mut(index) {
-                Some(old_step) => *old_step = step,
-                None => {
-                    return Err(ApiErrorType::ResourceNotFound("export_step".to_string()).into());
-                }
-            }
-        }
-    }
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
+    templates::touch_version(pool.inner(), template_id).await?;
     Ok(().into())
 }
 
+/// DELETE /api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>
+/// Removes an export step from an export format's step list.
 #[delete("/api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>")]
 pub async fn delete_export_step(
     _session: Session,
     template_id: String,
     slug: String,
     step_id: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id and step_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1564,38 +1396,21 @@ pub async fn delete_export_step(
 
     let slug = sanitize_path(&slug);
 
-    let data_storage = Arc::clone(data_storage);
-    let template = match data_storage.data.templates.get(&template_id) {
-        Some(template) => Arc::clone(template.value()),
-        None => {
-            eprintln!("Couldn't find template");
-            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-        }
-    };
-
-    match template.write().unwrap().export_formats.get_mut(&slug) {
-        Some(export_format) => {
-            export_format
-                .export_steps
-                .retain(|step| step.id != Some(step_id));
-        }
-        None => {
-            eprintln!("Couldn't find export format");
-            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
-        }
-    };
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
+    steps.retain(|step| step.id != Some(step_id));
+    templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
+    templates::touch_version(pool.inner(), template_id).await?;
     Ok(().into())
 }
 
+/// GET /api/templates/<template_id>/export_formats/<slug>/export_steps
+/// Returns the ordered list of export steps for the given export format.
 #[get("/api/templates/<template_id>/export_formats/<slug>/export_steps")]
 pub async fn get_export_steps(
     _session: Session,
     template_id: String,
     slug: String,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<Vec<ExportStep>> {
     //Parse template_id to uuid
     let template_id = match Uuid::parse_str(&template_id) {
@@ -1608,24 +1423,6 @@ pub async fn get_export_steps(
 
     let slug = sanitize_path(&slug);
 
-    let data_storage = data_storage;
-    let template = match data_storage.data.templates.get(&template_id) {
-        Some(template) => Arc::clone(template.value()),
-        None => {
-            eprintln!("Couldn't find template");
-            return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-        }
-    };
-
-    let export_steps = match template.read().unwrap().export_formats.get(&slug) {
-        Some(export_format) => export_format.export_steps.clone(),
-        None => {
-            eprintln!("Couldn't find export format");
-            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
-        }
-    };
-    if let Err(()) = data_storage.update_template_version_id(template_id).await {
-        return Err(ApiErrorType::ResourceNotFound("template".to_string()).into());
-    }
+    let export_steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
     Ok(export_steps.into())
 }

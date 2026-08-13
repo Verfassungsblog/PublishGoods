@@ -1,35 +1,38 @@
+use crate::db::repositories::{folders, sections};
+use crate::db::section_content;
 use crate::projects::websocket::WebsocketMessage::{
     DOCUPDATE, RECEIVEDDOCUPDATE, REMOVECURSOR, SETCURSOR,
 };
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::ProjectStorage;
 use dashmap::DashMap;
 use dashmap::mapref::one::{Ref, RefMut};
 use rocket::State;
 use rocket::futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Error;
+use sqlx::PgPool;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use yrs::StateVector;
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, Transact, Update};
 
+/// Tracks all currently-open collaborative documents (one per section being edited) and
+/// owns the DB pool / settings needed to load and persist their CRDT content.
 pub struct WebsocketManager {
     documents: Arc<DashMap<uuid::Uuid, DocumentState>>,
-    project_storage: Arc<ProjectStorage>,
+    pool: PgPool,
     settings: Arc<Settings>,
 }
 
 impl WebsocketManager {
-    pub fn new(project_storage: Arc<ProjectStorage>, settings: Arc<Settings>) -> Self {
+    /// Creates an empty `WebsocketManager` backed by the given DB pool and settings.
+    pub fn new(pool: PgPool, settings: Arc<Settings>) -> Self {
         Self {
             documents: Arc::new(DashMap::new()),
-            project_storage,
+            pool,
             settings,
         }
     }
@@ -53,7 +56,11 @@ impl WebsocketManager {
     /// - document_id: The id of the document to load
     /// - client_id: The id of the client that requested the document, will be inserted into the document's clients list
     ///
-    /// Returns None if the document is already loaded or an error occurs
+    /// Before loading, verifies (via the `sections` table) that the section actually belongs
+    /// to `project_id`; if it belongs to a different project the load is refused.
+    ///
+    /// Returns None if the document is already loaded, belongs to another project, or an
+    /// error occurs
     pub async fn load_document_from_storage(
         &self,
         project_id: &uuid::Uuid,
@@ -65,22 +72,30 @@ impl WebsocketManager {
             return None;
         }
         debug!("Creating ydoc for section {}", document_id);
+
+        // The section row is the source of truth for which project a section belongs to.
+        // If it already exists, refuse to attach unless it actually belongs to `project_id`
+        // (today's code has no such check at all, trusting the client-supplied project_id).
+        // If it doesn't exist yet, treat this as a brand-new/empty document — in practice the
+        // section row is always created first via `add_content`/`sections::insert` before the
+        // frontend ever opens a websocket for it, so this is just the "not yet persisted" case.
+        match sections::get_project_id(&self.pool, *document_id).await {
+            Ok(actual_project_id) if actual_project_id != *project_id => {
+                error!(
+                    "Refusing to load section {}: belongs to project {}, not {}",
+                    document_id, actual_project_id, project_id
+                );
+                return None;
+            }
+            _ => {}
+        }
+
         let ydoc = Doc::new();
-        let project_lock = self
-            .project_storage
-            .get_project(project_id, &self.settings)
+        let binary_update = section_content::read(&self.settings, *document_id)
             .await
-            .unwrap()
-            .clone();
-        let binary_update = project_lock
-            .read()
-            .unwrap()
-            .get_section(document_id)
-            .map(|x| x.content.clone());
+            .unwrap_or_default();
 
-        drop(project_lock); // release lock
-
-        if let Some(binary_update) = binary_update {
+        if !binary_update.is_empty() {
             let update = match Update::decode_v1(&binary_update) {
                 Ok(update) => update,
                 Err(e) => {
@@ -190,7 +205,7 @@ impl WebsocketManager {
         let project_id = *project_id;
         let document_id = *document_id;
         let documents = Arc::clone(&self.documents);
-        let project_storage = Arc::clone(&self.project_storage);
+        let pool = self.pool.clone();
         let settings = Arc::clone(&self.settings);
 
         tokio::task::spawn(async move {
@@ -225,7 +240,7 @@ impl WebsocketManager {
                             .save_document_to_storage(
                                 &project_id.clone(),
                                 &document_id.clone(),
-                                project_storage.clone(),
+                                &pool,
                                 &settings.clone(),
                             )
                             .await
@@ -271,35 +286,29 @@ impl DocumentState {
         tokio::task::spawn(async move {});
     }
 
+    /// Encodes the document's current state as a yrs update and persists it to the CRDT
+    /// content file for `document_id`, then touches the owning project's last-interaction
+    /// timestamp. Fails without writing anything if the section no longer belongs to
+    /// `project_id` (e.g. it was deleted or reassigned concurrently).
     pub async fn save_document_to_storage(
         &self,
         project_id: &uuid::Uuid,
         document_id: &uuid::Uuid,
-        project_storage: Arc<ProjectStorage>,
+        pool: &PgPool,
         settings: &Settings,
     ) -> Result<(), ()> {
         let binary_update = self.doc.transact().encode_diff_v1(&StateVector::default());
 
-        let project_lock = project_storage
-            .get_project(project_id, settings)
-            .await
-            .map_err(|_| ())?;
-
-        {
-            let mut project_write = project_lock.write().map_err(|_| ())?;
-            project_write.last_interaction = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            if let Some(section) = project_write.get_section_mut(document_id) {
-                section.content = binary_update;
-            } else {
-                return Err(());
-            }
+        // Bail out if the section was deleted (or reassigned to another project) concurrently.
+        match sections::get_project_id(pool, *document_id).await {
+            Ok(actual_project_id) if actual_project_id == *project_id => {}
+            _ => return Err(()),
         }
 
-        project_storage
-            .save_project_to_disk(project_id, settings)
+        section_content::write(settings, *document_id, &binary_update)
+            .await
+            .map_err(|_| ())?;
+        folders::touch_project_last_interaction(pool, *project_id)
             .await
             .map_err(|_| ())?;
 
@@ -479,17 +488,21 @@ pub struct ErrorMessage {
     pub error: String,
 }
 
+/// Upgrades the connection to a WebSocket and drives the collaborative-editing protocol
+/// for a project: parses/dispatches incoming client messages via [`handle_client_msg`],
+/// relays broadcast updates from other clients, and on disconnect removes the client from
+/// the document's active-client list, saving and evicting the document once no clients
+/// remain attached to it.
 #[get("/api/projects/<project_id>/websocket")]
 pub async fn websocket<'a>(
     ws: ws::WebSocket,
     _session: Session,
     project_id: &'a str,
-    project_storage: &'a State<Arc<ProjectStorage>>,
+    pool: &'a State<PgPool>,
     settings: &'a State<Settings>,
-    _data_storage: &'a State<Arc<DataStorage>>,
     websocket_manager: &'a State<Arc<WebsocketManager>>,
 ) -> ws::Channel<'a> {
-    let project_storage = project_storage.inner().clone();
+    let pool = pool.inner().clone();
     let settings = settings.inner().clone();
     let project_id = match uuid::Uuid::parse_str(project_id) {
         Ok(project_id) => project_id,
@@ -575,7 +588,7 @@ pub async fn websocket<'a>(
                         &mut document_id,
                         &mut broadcast_rx,
                         websocket_manager.inner().clone(),
-                        project_storage.clone(),
+                        pool.clone(),
                         &settings,
                     ).await;
 
@@ -639,7 +652,7 @@ pub async fn websocket<'a>(
                         let _ = state_to_save.save_document_to_storage(
                             &project_id,
                             &doc_id,
-                            project_storage.clone(),
+                            &pool,
                             &settings
                         ).await;
                     }
@@ -650,6 +663,11 @@ pub async fn websocket<'a>(
     }))
 }
 
+/// Dispatches a single decoded `WebsocketMessage` from a client, updating the shared
+/// document state (creating/loading it on `CONNECT`, applying and broadcasting updates on
+/// `DOCUPDATE`, relaying cursor messages, and saving/evicting the document on
+/// `DISCONNECT` when it was the last active client) and returns the response message(s)
+/// to send back to the sender.
 async fn handle_client_msg(
     msg: WebsocketMessage,
     client_id: &uuid::Uuid,
@@ -657,7 +675,7 @@ async fn handle_client_msg(
     document_id: &mut Option<uuid::Uuid>,
     broadcast_rx: &mut Option<broadcast::Receiver<BroadcastMessage>>,
     websocket_manager: Arc<WebsocketManager>,
-    project_storage: Arc<ProjectStorage>,
+    pool: PgPool,
     settings: &Settings,
 ) -> Result<Vec<WebsocketMessage>, ErrorMessage> {
     match msg {
@@ -824,12 +842,7 @@ async fn handle_client_msg(
                         if !websocket_manager.documents.contains_key(&doc_id) {
                             save_worker_notifier.notify_one(); // Notify the save worker to shut itself down
                             let _ = state_to_save
-                                .save_document_to_storage(
-                                    project_id,
-                                    &doc_id,
-                                    project_storage.clone(),
-                                    settings,
-                                )
+                                .save_document_to_storage(project_id, &doc_id, &pool, settings)
                                 .await;
                         }
                     }
@@ -842,5 +855,128 @@ async fn handle_client_msg(
             error!("Unexpected websocket message: {:?}", msg);
             Ok(vec![])
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::repositories::users;
+    use crate::settings::ExportServer;
+    use yrs::{Text, WriteTxn};
+
+    fn dummy_settings() -> Settings {
+        Settings {
+            app_title: "test".to_string(),
+            project_cache_time: 0,
+            data_path: "/tmp".to_string(),
+            database_url: "".to_string(),
+            database_max_connections: 1,
+            file_lock_timeout: 0,
+            backup_to_file_interval: 0,
+            max_connections_to_rendering_server: 0,
+            max_import_threads: 0,
+            zotero_translation_server: "".to_string(),
+            export_servers: vec![ExportServer {
+                hostname: "".to_string(),
+                port: 0,
+                domain_name: "".to_string(),
+            }],
+            ca_cert_path: "".to_string(),
+            client_cert_path: "".to_string(),
+            client_key_path: "".to_string(),
+            revocation_list_path: "".to_string(),
+            version: "test".to_string(),
+            max_login_attempts: 5,
+            lockout_window_minutes: 15,
+        }
+    }
+
+    async fn seed_project(pool: &PgPool) -> Uuid {
+        let team_id = users::ensure_default_team(pool).await.unwrap();
+        sqlx::query_scalar!(
+            "INSERT INTO projects (title, owner_team_id) VALUES ('Test', $1) RETURNING id",
+            team_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn refuses_to_load_a_section_that_belongs_to_another_project(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let real_project = seed_project(&pool).await;
+        let other_project = seed_project(&pool).await;
+        let section_id: Uuid = sqlx::query_scalar!(
+            "INSERT INTO sections (project_id, position, title) VALUES ($1, 1000, 'S') RETURNING id",
+            real_project
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        let manager = WebsocketManager::new(pool.clone(), Arc::new(dummy_settings()));
+        // Attempt to attach to the section under the WRONG project id.
+        let result = manager
+            .load_document_from_storage(&other_project, &section_id, None)
+            .await;
+        assert_eq!(result, None);
+        assert!(!manager.documents.contains_key(&section_id));
+
+        // The correct project id succeeds.
+        let result = manager
+            .load_document_from_storage(&real_project, &section_id, None)
+            .await;
+        assert_eq!(result, Some(()));
+        assert!(manager.documents.contains_key(&section_id));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn save_document_to_storage_writes_crdt_bytes_and_touches_project(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let section_id: Uuid = sqlx::query_scalar!(
+            "INSERT INTO sections (project_id, position, title) VALUES ($1, 1000, 'S') RETURNING id",
+            project_id
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        let settings = dummy_settings();
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            let text = txn.get_or_insert_text("content");
+            text.push(&mut txn, "hello");
+        }
+        let (tx, _) = broadcast::channel(1);
+        let state = DocumentState {
+            broadcast_tx: tx,
+            save_requester: Arc::new(tokio::sync::Notify::new()),
+            active_clients: vec![],
+            doc,
+        };
+
+        state
+            .save_document_to_storage(&project_id, &section_id, &pool, &settings)
+            .await
+            .unwrap();
+
+        let bytes = section_content::read(&settings, section_id).await.unwrap();
+        assert!(!bytes.is_empty());
+        section_content::delete(&settings, section_id)
+            .await
+            .unwrap();
+
+        // Saving against the wrong project id must fail without writing anything.
+        let other_project = seed_project(&pool).await;
+        let result = state
+            .save_document_to_storage(&other_project, &section_id, &pool, &settings)
+            .await;
+        assert!(result.is_err());
+        Ok(())
     }
 }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM export_formats WHERE project_template_id = $1 AND slug = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e507ba0e7f33c2c00dcc816c7e6440895ec5b898f43d8010fbdd98bdb36b280c"
+}
