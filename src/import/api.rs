@@ -6,13 +6,12 @@ use crate::import::wordpress::{
 };
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::project_storage::ProjectStorage;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
+use rocket::State;
 use rocket::form::Form;
 use rocket::fs::TempFile;
 use rocket::http::ContentType;
 use rocket::serde::json::Json;
-use rocket::State;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -77,7 +76,6 @@ pub async fn import_from_upload(
     mut upload: Form<FileUpload<'_>>,
     _session: Session,
     settings: &State<Settings>,
-    _project_storage: &State<Arc<ProjectStorage>>,
     import_processor: &State<Arc<ImportProcessor>>,
 ) -> APIResult<Uuid> {
     debug!(

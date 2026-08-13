@@ -11,6 +11,10 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
 pub mod data_migration;
+/// sqlx/PostgreSQL-backed repository layer (CRUD per schema domain).
+pub mod repositories;
+/// Filesystem storage for sections' CRDT body content, kept outside Postgres.
+pub mod section_content;
 
 /// Creates the PostgreSQL connection pool from [`Settings::database_url`].
 ///

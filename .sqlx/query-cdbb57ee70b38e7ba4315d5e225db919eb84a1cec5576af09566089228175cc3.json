@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE persons SET first_names = $2, last_names = $3, orcid = $4, gnd = $5, ror = $6 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cdbb57ee70b38e7ba4315d5e225db919eb84a1cec5576af09566089228175cc3"
+}

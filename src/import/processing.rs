@@ -11,6 +11,7 @@ use markup5ever::{Attribute, local_name, ns};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
+use crate::db::repositories::{bibliography, projects};
 use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
 use crate::import::link_converter;
 use crate::import::wordpress::{
@@ -18,12 +19,11 @@ use crate::import::wordpress::{
 };
 use crate::settings::Settings;
 use crate::storage::BibEntryV3;
-use crate::storage::project_storage::current::PersonUuidOrString;
+use crate::storage::project_storage::current::{BibEntryOrFolder, PersonUuidOrString};
 use crate::storage::project_storage::sections::content::current::BlockData;
 use crate::storage::project_storage::sections::content::current::NewContentBlock;
 use crate::storage::project_storage::sections::migration::convert_contentblocks_to_yrs;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
-use crate::storage::project_storage::{ProjectData, ProjectStorage};
 use crate::utils::dedup::dedup_vec;
 use log::{debug, error, warn};
 use rocket::http::ContentType;
@@ -37,8 +37,8 @@ use yrs::{ReadTxn, StateVector, Transact};
 pub struct ImportProcessor {
     /// Copy of the global settings
     settings: Settings,
-    /// Reference to the project storage
-    project_storage: Arc<ProjectStorage>,
+    /// Postgres connection pool
+    pool: sqlx::PgPool,
     /// Queue of import jobs that are still waiting for a worker thread
     pub job_queue: RwLock<VecDeque<ImportJob>>,
     /// HashMap with information about jobs currently running or finished/failed
@@ -92,6 +92,8 @@ pub enum ImportError {
     WordPressApiError(WordpressAPIError),
     /// The target project to import to doesn't exist
     ProjectNotFound,
+    /// A database error occurred while persisting imported content
+    DatabaseError(String),
 }
 
 /// Represents a import job with settings and an ['ImportJobData'] variant.
@@ -187,8 +189,8 @@ impl ImportProcessor {
 
     /// Starts the background import processor and returns a shared instance of the processor.
     ///
-    /// This function initializes an [`ImportProcessor`] with the given application [`Settings`] and a reference
-    /// to the [`ProjectStorage`]. It then spawns an asynchronous task that continuously monitors the import job queue.
+    /// This function initializes an [`ImportProcessor`] with the given application [`Settings`] and a Postgres
+    /// connection `pool`. It then spawns an asynchronous task that continuously monitors the import job queue.
     /// Whenever there are pending jobs and the number of running import threads is less than the configured maximum,
     /// it starts new asynchronous worker threads to process each import job concurrently. Each job is tracked in
     /// the `job_archive` map with its current [`ImportStatus`]. The thread count is adjusted atomically as jobs are picked up and finished.
@@ -196,17 +198,17 @@ impl ImportProcessor {
     ///
     /// # Arguments
     /// * `settings` - The application configuration containing, e.g., the maximum number of concurrent import threads.
-    /// * `project_storage` - An atomically reference-counted pointer to the global project storage instance.
+    /// * `pool` - PostgreSQL connection pool used by the processor to read and persist project data.
     ///
     /// # Returns
     /// An `Arc<ImportProcessor>` that can be used to schedule new import jobs or query their progress.
     ///
     /// The background worker will run for the process lifetime, picking up and processing import jobs as
     /// they become available in the queue.
-    pub fn start(settings: Settings, project_storage: Arc<ProjectStorage>) -> Arc<ImportProcessor> {
+    pub fn start(settings: Settings, pool: sqlx::PgPool) -> Arc<ImportProcessor> {
         let processor = Arc::new(ImportProcessor {
             settings,
-            project_storage,
+            pool,
             job_queue: RwLock::new(VecDeque::new()),
             job_archive: RwLock::new(HashMap::new()),
         });
@@ -254,9 +256,7 @@ impl ImportProcessor {
                             .write()
                             .unwrap()
                             .insert(job.id, status);
-                        proc_clone
-                            .process_job(job, proc_clone.project_storage.clone())
-                            .await;
+                        proc_clone.process_job(job).await;
                         debug!("Job finished");
                         running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     });
@@ -270,25 +270,30 @@ impl ImportProcessor {
     }
 
     /// Import WordPress posts by post links
-    async fn process_wordpress_links(&self, job: ImportJob, project_storage: Arc<ProjectStorage>) {
+    async fn process_wordpress_links(&self, job: ImportJob) {
         let job_data = match job.import_data {
             ImportJobData::WordpressLinks(links) => links,
             _ => unreachable!(),
         };
 
-        let project = match project_storage
-            .get_project(&job.project_id, &self.settings)
-            .await
-        {
-            Ok(project) => project.clone(),
-            Err(_) => {
+        match projects::exists(&self.pool, job.project_id).await {
+            Ok(true) => {}
+            Ok(false) => {
                 self.update_import_status(
                     &job.id,
                     ImportStatus::Failed(ImportError::ProjectNotFound),
                 );
                 return;
             }
-        };
+            Err(e) => {
+                error!("Couldn't check if project {} exists: {}", job.project_id, e);
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
+                );
+                return;
+            }
+        }
 
         let total_num = job_data.len();
         for (num, link) in job_data.iter().enumerate() {
@@ -301,7 +306,6 @@ impl ImportProcessor {
             if let Err(e) = self
                 .import_by_url(
                     link,
-                    Arc::clone(&project),
                     job.project_id,
                     job.convert_footnotes_to_endnotes,
                     job.shift_headings_up,
@@ -320,18 +324,34 @@ impl ImportProcessor {
 
     /// Import content from files via Pandoc.
     /// Optionally imports bibliography entries from bibtex
-    async fn process_file_import(&self, job: ImportJob, project_storage: Arc<ProjectStorage>) {
+    async fn process_file_import(&self, job: ImportJob) {
         let job_data = match job.import_data {
             ImportJobData::FileImport(data) => data,
             _ => unreachable!(),
         };
 
+        match projects::exists(&self.pool, job.project_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::ProjectNotFound),
+                );
+                return;
+            }
+            Err(e) => {
+                error!("Couldn't check if project {} exists: {}", job.project_id, e);
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
+                );
+                return;
+            }
+        }
+
         // Import bib entries from file if present
         if let Some(bib_file) = job_data.bib_file {
-            match self
-                .import_bib_entries(job.project_id, &bib_file, &self.settings)
-                .await
-            {
+            match self.import_bib_entries(job.project_id, &bib_file).await {
                 Ok(_) => {
                     debug!("Bib entries imported successfully");
                 }
@@ -353,16 +373,10 @@ impl ImportProcessor {
         for (num, (file, content_type)) in job_data.files_to_process.iter().enumerate() {
             debug!("Processing file: {}", file);
 
-            let project = project_storage
-                .get_project(&job.project_id, &self.settings)
-                .await
-                .unwrap();
-
             match self
                 .convert_file(
                     file,
                     content_type,
-                    project,
                     job.project_id,
                     job.convert_footnotes_to_endnotes,
                     job.shift_headings_up,
@@ -399,11 +413,30 @@ impl ImportProcessor {
     }
 
     /// Imports WordPress posts from a wordpress host by filter criteria
-    async fn process_wordpress_filter(&self, job: ImportJob, project_storage: Arc<ProjectStorage>) {
+    async fn process_wordpress_filter(&self, job: ImportJob) {
         let job_data = match job.import_data {
             ImportJobData::WordpressFilter(data) => data,
             _ => unreachable!(),
         };
+
+        match projects::exists(&self.pool, job.project_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::ProjectNotFound),
+                );
+                return;
+            }
+            Err(e) => {
+                error!("Couldn't check if project {} exists: {}", job.project_id, e);
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
+                );
+                return;
+            }
+        }
 
         // Load all posts matching filter (except categories)
         let api = match WordpressAPI::new(job_data.wp_host) {
@@ -461,12 +494,6 @@ impl ImportProcessor {
         }
 
         let number_of_posts = posts.len();
-        let project = Arc::clone(
-            &project_storage
-                .get_project(&job.project_id, &self.settings)
-                .await
-                .unwrap(),
-        );
 
         for (num, post) in posts.into_iter().enumerate() {
             self.update_import_status(
@@ -483,7 +510,6 @@ impl ImportProcessor {
             if let Err(e) = self
                 .import_wp_post(
                     post,
-                    project.clone(),
                     job.project_id,
                     job.convert_footnotes_to_endnotes,
                     job.shift_headings_up,
@@ -502,7 +528,7 @@ impl ImportProcessor {
 
     /// Processes an import job by delegating the job to the appropriate handler based on the type of import data.
     ///
-    /// This asynchronous function accepts an `ImportJob` and a reference to the shared `ProjectStorage`.
+    /// This asynchronous function accepts an `ImportJob`.
     /// Depending on the `import_data` variant present in the job, it will call the corresponding asynchronous processing function:
     /// - For `ImportJobData::WordpressLinks`, it processes links to WordPress posts.
     /// - For `ImportJobData::FileImport`, it processes file imports using Pandoc.
@@ -510,23 +536,27 @@ impl ImportProcessor {
     ///
     /// # Arguments
     /// * `job` - The `ImportJob` to be processed, containing configuration and import data.
-    /// * `project_storage` - Shared reference to the `ProjectStorage`, which manages project data and resources.
-    async fn process_job(&self, job: ImportJob, project_storage: Arc<ProjectStorage>) {
+    async fn process_job(&self, job: ImportJob) {
         match job.import_data {
-            ImportJobData::WordpressLinks(_) => {
-                self.process_wordpress_links(job, project_storage).await
-            }
-            ImportJobData::FileImport(_) => self.process_file_import(job, project_storage).await,
-            ImportJobData::WordpressFilter(_) => {
-                self.process_wordpress_filter(job, project_storage).await
-            }
+            ImportJobData::WordpressLinks(_) => self.process_wordpress_links(job).await,
+            ImportJobData::FileImport(_) => self.process_file_import(job).await,
+            ImportJobData::WordpressFilter(_) => self.process_wordpress_filter(job).await,
         }
     }
 
+    /// Imports WordPress content referenced by a single URL into a project.
+    ///
+    /// If `url` points at a WordPress category page, every post in that category is fetched and
+    /// imported as its own section. Otherwise `url` is treated as a link to a single post, which
+    /// is fetched and imported. Author names are resolved from the WordPress API when
+    /// `import_author_names` is set.
+    ///
+    /// # Errors
+    /// Returns an [`ImportError`] if the URL is invalid, the WordPress API request fails, or
+    /// importing the resolved post(s) fails.
     pub async fn import_by_url(
         &self,
         url: &str,
-        project: Arc<RwLock<ProjectData>>,
         project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings_up: bool,
@@ -617,7 +647,6 @@ impl ImportProcessor {
                 };
                 self.import_wp_post(
                     post,
-                    project.clone(),
                     project_id,
                     endnotes,
                     shift_headings_up,
@@ -639,7 +668,6 @@ impl ImportProcessor {
 
             self.import_wp_post(
                 post,
-                project.clone(),
                 project_id,
                 endnotes,
                 shift_headings_up,
@@ -682,7 +710,7 @@ impl ImportProcessor {
     ///
     /// # Arguments
     /// * `post` - The WordPress post to import. Can include custom ACF fields and co-authors.
-    /// * `project` - An atomic, shareable handle to the project data to which this post should be imported.
+    /// * `project_id` - The UUID of the project this post should be imported into.
     /// * `endnotes` - Whether to convert inline footnotes to endnotes in the imported content.
     /// * `shift_headings_up` - Whether to increase the level of all headings in the imported content by one.
     /// * `convert_links` - Whether to convert any internal WordPress links to project-internal links.
@@ -694,7 +722,6 @@ impl ImportProcessor {
     async fn import_wp_post(
         &self,
         post: Post,
-        project: Arc<RwLock<ProjectData>>,
         project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings_up: bool,
@@ -773,7 +800,6 @@ impl ImportProcessor {
         self.import_html_from_wp(
             section,
             post.content.rendered.clone(),
-            project,
             project_id,
             endnotes,
             shift_headings_up,
@@ -827,7 +853,6 @@ impl ImportProcessor {
         &self,
         file_path: &str,
         content_type: &ContentType,
-        project: Arc<RwLock<ProjectData>>,
         project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings_up: bool,
@@ -919,7 +944,6 @@ impl ImportProcessor {
 
         self.import_html_from_pandoc(
             file_content,
-            project,
             project_id,
             endnotes,
             shift_headings_up,
@@ -966,11 +990,21 @@ impl ImportProcessor {
         }
     }
 
+    /// Sanitizes WordPress-flavored HTML into editor content blocks, sets the section's
+    /// content and detected language, then persists the resulting `section` as a new
+    /// section of `project_id` in the database.
+    ///
+    /// Downloads referenced media and resolves external links into citations before
+    /// building the final blocks (see the phase comments in the body for the
+    /// sync/async/sync split, which keeps non-`Send` DOM handles off await points).
+    ///
+    /// # Errors
+    /// Returns [`ImportError::HtmlConversionFailed`] if the input can't be parsed, or
+    /// [`ImportError::DatabaseError`] if persisting the section fails.
     async fn import_html_from_wp(
         &self,
         mut section: Section,
         input: String,
-        project_data: Arc<RwLock<ProjectData>>,
         project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings: bool,
@@ -1000,7 +1034,7 @@ impl ImportProcessor {
         // Phase 2 (async): download external media and resolve links into citations. Works
         // only on owned `String`s, so no non-Send handles are alive across the awaits.
         let media_map = self.download_all_media(&media_srcs, project_id).await;
-        let link_map = self.resolve_all_links(&hrefs, &project_data).await;
+        let link_map = self.resolve_all_links(&hrefs, project_id).await;
 
         // Phase 3 (sync): re-parse and build the content blocks using the precomputed maps.
         let blocks = {
@@ -1033,15 +1067,32 @@ impl ImportProcessor {
             section.metadata.lang = detect_language_for_section(&section);
         }
 
-        debug!("Saving to project data");
-        project_data.write().unwrap().sections.push(section);
+        debug!("Saving imported section");
+        crate::db::repositories::sections::insert_at_end(
+            &self.pool,
+            &self.settings,
+            project_id,
+            None,
+            &section,
+        )
+        .await
+        .map_err(|e| ImportError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
+    /// Sanitizes pandoc-produced HTML into editor content blocks, builds a new `Section`
+    /// from them, and persists it as a new section of `project_id` in the database.
+    ///
+    /// Like [`Self::import_html_from_wp`], downloads referenced media and resolves external
+    /// links into citations before building the final blocks.
+    ///
+    /// # Errors
+    /// Returns [`ImportError::HtmlConversionFailed`] if `input` looks like a full HTML
+    /// document or can't be parsed, or [`ImportError::DatabaseError`] if persisting the
+    /// section fails.
     async fn import_html_from_pandoc(
         &self,
         input: String,
-        project_data: Arc<RwLock<ProjectData>>,
         project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings: bool,
@@ -1069,7 +1120,7 @@ impl ImportProcessor {
         };
 
         let media_map = self.download_all_media(&media_srcs, project_id).await;
-        let link_map = self.resolve_all_links(&hrefs, &project_data).await;
+        let link_map = self.resolve_all_links(&hrefs, project_id).await;
 
         let mut section = Section {
             id: Some(uuid::Uuid::new_v4()),
@@ -1122,7 +1173,15 @@ impl ImportProcessor {
             section.metadata.lang = detect_language_for_section(&section);
         }
 
-        project_data.write().unwrap().sections.push(section);
+        crate::db::repositories::sections::insert_at_end(
+            &self.pool,
+            &self.settings,
+            project_id,
+            None,
+            &section,
+        )
+        .await
+        .map_err(|e| ImportError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -1206,7 +1265,7 @@ impl ImportProcessor {
     async fn resolve_all_links(
         &self,
         hrefs: &[String],
-        project_data: &Arc<RwLock<ProjectData>>,
+        project_id: uuid::Uuid,
     ) -> HashMap<String, String> {
         use futures::StreamExt;
 
@@ -1216,11 +1275,11 @@ impl ImportProcessor {
         }
 
         // Resolve links concurrently (bounded): the translation round-trips overlap, while the
-        // brief `project_data` writes inside `convert_link_to_citation` stay serialized by its
-        // lock (never held across an await).
+        // bibliography inserts inside `convert_link_to_citation` each go through their own
+        // short-lived pool connection.
         let results: Vec<(String, Option<String>)> = futures::stream::iter(hrefs.to_vec())
             .map(|href| async move {
-                let citation = self.convert_link_to_citation(&href, project_data).await;
+                let citation = self.convert_link_to_citation(&href, project_id).await;
                 (href, citation)
             })
             .buffer_unordered(8)
@@ -1238,11 +1297,7 @@ impl ImportProcessor {
     /// Tries to convert a single external link into a citation by resolving it via the Zotero
     /// translation server. On success the referenced bibliography entries (and their parents)
     /// are added to the project and a `<citation>` replacement string is returned.
-    async fn convert_link_to_citation(
-        &self,
-        href: &str,
-        project_data: &Arc<RwLock<ProjectData>>,
-    ) -> Option<String> {
+    async fn convert_link_to_citation(&self, href: &str, project_id: uuid::Uuid) -> Option<String> {
         let entries = link_converter::get_translation(href, &self.settings).await?;
         let main_entry = entries.first()?;
         let main_key = main_entry.key().to_string();
@@ -1254,30 +1309,41 @@ impl ImportProcessor {
         }
         let main_uuid = *uuid_map.get(&main_key)?;
 
-        {
-            let mut project = project_data.write().unwrap();
-            for (key, entry) in by_key.iter() {
-                let mut converted = BibEntryV3::from(entry);
-                let entry_uuid = *uuid_map.get(key).unwrap();
-                converted.key = entry_uuid;
-                converted.parents = entry
-                    .parents()
-                    .iter()
-                    .filter_map(|p| uuid_map.get(p.key()).copied())
-                    .filter(|&p_uuid| p_uuid != entry_uuid)
-                    .collect();
-                project.bibliography.add_entry(converted);
+        for (key, entry) in by_key.iter() {
+            let mut converted = BibEntryV3::from(entry);
+            let entry_uuid = *uuid_map.get(key).unwrap();
+            converted.key = entry_uuid;
+            converted.parents = entry
+                .parents()
+                .iter()
+                .filter_map(|p| uuid_map.get(p.key()).copied())
+                .filter(|&p_uuid| p_uuid != entry_uuid)
+                .collect();
+            if let Err(e) = bibliography::insert(
+                &self.pool,
+                project_id,
+                &BibEntryOrFolder::BibEntry(converted),
+            )
+            .await
+            {
+                warn!("Couldn't save imported bibliography entry: {:?}", e);
             }
         }
 
         Some(format!("<citation data-key=\"{}\">C</citation>", main_uuid))
     }
 
+    /// Parses a BibLaTeX file and inserts its entries (and any parent entries they
+    /// reference) into `project_id`'s bibliography, generating a fresh UUID for each entry.
+    ///
+    /// # Errors
+    /// Returns [`ImportError::BibFileInvalid`] if the file can't be read or parsed,
+    /// [`ImportError::ProjectNotFound`] if `project_id` doesn't exist, or
+    /// [`ImportError::DatabaseError`] if inserting an entry fails.
     async fn import_bib_entries(
         &self,
         project_id: uuid::Uuid,
         bib_file_path: &str,
-        settings: &Settings,
     ) -> Result<(), ImportError> {
         let mut bib_file_content = String::new();
         let mut bib_file = match tokio::fs::File::open(bib_file_path).await {
@@ -1310,12 +1376,12 @@ impl ImportProcessor {
 
         debug!("Parsed Bib Entries: {:?}", bib);
 
-        let project_storage = self.project_storage.clone();
-        let project = project_storage
-            .get_project(&project_id, settings)
+        if !projects::exists(&self.pool, project_id)
             .await
-            .map_err(|_| ImportError::ProjectNotFound)?
-            .clone();
+            .unwrap_or(false)
+        {
+            return Err(ImportError::ProjectNotFound);
+        }
 
         // We need stable UUIDs for bib entries and their parents.
         // Recursively collect all entries + their parents.
@@ -1343,7 +1409,13 @@ impl ImportProcessor {
 
             debug!("Converted Entry: {:?}", converted);
 
-            project.write().unwrap().bibliography.add_entry(converted);
+            bibliography::insert(
+                &self.pool,
+                project_id,
+                &BibEntryOrFolder::BibEntry(converted),
+            )
+            .await
+            .map_err(|e| ImportError::DatabaseError(e.to_string()))?;
         }
 
         Ok(())
@@ -2474,9 +2546,11 @@ mod postprocess {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::repositories::{sections as sections_repo, users};
     use crate::settings::{ExportServer, Settings};
     use crate::storage::project_storage::current::Bibliography;
     use crate::storage::project_storage::sections::content::current::decode_yjs_content;
+    use sqlx::PgPool;
     use uuid::Uuid;
 
     fn dummy_settings() -> Settings {
@@ -2484,6 +2558,8 @@ mod tests {
             app_title: "test".to_string(),
             project_cache_time: 0,
             data_path: "/tmp".to_string(),
+            database_url: "".to_string(),
+            database_max_connections: 1,
             file_lock_timeout: 0,
             backup_to_file_interval: 0,
             max_connections_to_rendering_server: 0,
@@ -2502,26 +2578,37 @@ mod tests {
         }
     }
 
-    fn make_processor() -> ImportProcessor {
+    fn make_processor(pool: PgPool) -> ImportProcessor {
         ImportProcessor {
             settings: dummy_settings(),
-            project_storage: Arc::new(ProjectStorage::new()),
+            pool,
             job_queue: RwLock::new(VecDeque::new()),
             job_archive: RwLock::new(HashMap::new()),
         }
     }
 
-    fn empty_project() -> Arc<RwLock<ProjectData>> {
-        Arc::new(RwLock::new(ProjectData {
-            name: "test".to_string(),
-            description: None,
-            template_id: Uuid::new_v4(),
-            last_interaction: 0,
-            metadata: None,
-            settings: None,
-            sections: vec![],
-            bibliography: Bibliography::new(),
-        }))
+    async fn seed_project(pool: &PgPool) -> Uuid {
+        let team_id = users::ensure_default_team(pool).await.unwrap();
+        sqlx::query_scalar!(
+            "INSERT INTO projects (title, owner_team_id) VALUES ('Test', $1) RETURNING id",
+            team_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// Fetches the (single) section written for `project_id` and returns its decoded content.
+    async fn imported_blocks(
+        pool: &PgPool,
+        settings: &Settings,
+        project_id: Uuid,
+    ) -> Vec<NewContentBlock> {
+        let tree = sections_repo::get_tree_for_project_with_content(pool, settings, project_id)
+            .await
+            .unwrap();
+        assert_eq!(tree.len(), 1);
+        decode_yjs_content(&tree[0].content).unwrap()
     }
 
     fn empty_section() -> Section {
@@ -2547,10 +2634,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn wp_footnote_plugin_is_converted_into_note_span() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn wp_footnote_plugin_is_converted_into_note_span(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
         let section = empty_section();
 
         // Minimal WP-footnote-plugin-ish structure that matches the extractor.
@@ -2576,21 +2663,11 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_wp(
-                section,
-                html,
-                project.clone(),
-                Uuid::new_v4(),
-                false,
-                false,
-                false,
-            )
+            .import_html_from_wp(section, html, project_id, false, false, false)
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        assert_eq!(stored.sections.len(), 1);
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         // The trailing footnotes container must be skipped; only the paragraph remains.
         assert_eq!(blocks.len(), 1);
 
@@ -2606,12 +2683,15 @@ mod tests {
 
         // Verify that the ID is a valid UUID v4
         uuid::Uuid::parse_str(&para.id).expect("Block ID should be a valid UUID");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn pandoc_footnote_is_converted_into_note_span_and_footnotes_are_skipped() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn pandoc_footnote_is_converted_into_note_span_and_footnotes_are_skipped(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
 
         let html = r#"
 <p>Hello<a role="doc-noteref"><sup>1</sup></a></p>
@@ -2620,13 +2700,11 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
+            .import_html_from_pandoc(html, project_id, false, false, false)
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        assert_eq!(stored.sections.len(), 1);
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         assert_eq!(blocks.len(), 1);
 
         let BlockData::Paragraph { text } = &blocks[0].data else {
@@ -2639,12 +2717,13 @@ mod tests {
 
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn whitespace_between_inline_elements_is_preserved() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn whitespace_between_inline_elements_is_preserved(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
         let section = empty_section();
 
         // The space separating the two links is significant: dropping it would join the
@@ -2653,20 +2732,11 @@ mod tests {
             r#"<p>see <a href="https://a">one</a> <a href="https://b">two</a></p>"#.to_string();
 
         processor
-            .import_html_from_wp(
-                section,
-                html,
-                project.clone(),
-                Uuid::new_v4(),
-                false,
-                false,
-                false,
-            )
+            .import_html_from_wp(section, html, project_id, false, false, false)
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         assert_eq!(blocks.len(), 1);
         let BlockData::Paragraph { text } = &blocks[0].data else {
             panic!("expected paragraph");
@@ -2676,26 +2746,25 @@ mod tests {
             "space between inline elements must be preserved, got: {text}"
         );
         assert!(!text.contains("onetwo"));
+        Ok(())
     }
 
     /// Helper that imports a WordPress HTML fragment and returns the decoded blocks.
-    async fn import_wp_blocks(html: &str) -> Vec<NewContentBlock> {
-        let processor = make_processor();
-        let project = empty_project();
+    async fn import_wp_blocks(pool: &PgPool, html: &str) -> Vec<NewContentBlock> {
+        let project_id = seed_project(pool).await;
+        let processor = make_processor(pool.clone());
         processor
             .import_html_from_wp(
                 empty_section(),
                 html.to_string(),
-                project.clone(),
-                Uuid::new_v4(),
+                project_id,
                 false,
                 false,
                 false,
             )
             .await
             .unwrap();
-        let stored = project.read().unwrap();
-        decode_yjs_content(&stored.sections[0].content).unwrap()
+        imported_blocks(pool, &processor.settings, project_id).await
     }
 
     fn first_paragraph_text(blocks: &[NewContentBlock]) -> String {
@@ -2705,11 +2774,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn unsupported_span_wrapper_is_unwrapped_keeping_its_text() {
+    #[sqlx::test]
+    async fn unsupported_span_wrapper_is_unwrapped_keeping_its_text(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
         // Regression: the editor drops `<span>` together with its content, so the importer
         // must unwrap spans and keep the text (here the "EN-US" span text must survive).
         let blocks = import_wp_blocks(
+            &pool,
             r#"<p><i><span lang="EN-US">We</span></i> thank <span class="x">Ana</span>.</p>"#,
         )
         .await;
@@ -2723,20 +2795,25 @@ mod tests {
             "italic text must be kept, got: {text}"
         );
         assert!(text.contains("Ana"), "span text must be kept, got: {text}");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn script_tags_are_dropped_with_their_content() {
-        let blocks = import_wp_blocks(r#"<p>a<script>alert('x')</script>b</p>"#).await;
+    #[sqlx::test]
+    async fn script_tags_are_dropped_with_their_content(pool: PgPool) -> sqlx::Result<()> {
+        let blocks = import_wp_blocks(&pool, r#"<p>a<script>alert('x')</script>b</p>"#).await;
         let text = first_paragraph_text(&blocks);
         assert_eq!(text, "ab");
         assert!(!text.contains("alert"));
         assert!(!text.contains("script"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn data_and_event_and_nonstandard_attributes_are_stripped() {
+    #[sqlx::test]
+    async fn data_and_event_and_nonstandard_attributes_are_stripped(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
         let blocks = import_wp_blocks(
+            &pool,
             r#"<p><a href="https://x.example" data-foo="1" onclick="evil()" rel="nofollow" title="T">l</a></p>"#,
         )
         .await;
@@ -2758,11 +2835,13 @@ mod tests {
             !text.contains("rel="),
             "non-standard attr stripped, got: {text}"
         );
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn embedded_and_form_elements_are_reduced_to_text() {
+    #[sqlx::test]
+    async fn embedded_and_form_elements_are_reduced_to_text(pool: PgPool) -> sqlx::Result<()> {
         let blocks = import_wp_blocks(
+            &pool,
             r#"<p>before <button onclick="x">Click me</button> mid <iframe src="https://y">frame</iframe> end</p>"#,
         )
         .await;
@@ -2777,14 +2856,18 @@ mod tests {
         );
         assert!(text.contains("Click me"), "button text kept, got: {text}");
         assert!(text.contains("frame"), "iframe text kept, got: {text}");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn video_element_becomes_raw_block_linking_the_source() {
+    #[sqlx::test]
+    async fn video_element_becomes_raw_block_linking_the_source(pool: PgPool) -> sqlx::Result<()> {
         // `.invalid` never resolves, so the download fails fast and we fall back to the
         // original URL — the block is still produced and links the (external) source.
-        let blocks =
-            import_wp_blocks(r#"<video src="https://nonexistent.invalid/clip.mp4"></video>"#).await;
+        let blocks = import_wp_blocks(
+            &pool,
+            r#"<video src="https://nonexistent.invalid/clip.mp4"></video>"#,
+        )
+        .await;
         assert_eq!(blocks.len(), 1);
         let BlockData::Raw { html } = &blocks[0].data else {
             panic!("expected raw block, got {:?}", blocks[0].data);
@@ -2794,6 +2877,7 @@ mod tests {
             html.contains("clip.mp4"),
             "source must be linked, got: {html}"
         );
+        Ok(())
     }
 
     #[test]
@@ -2832,51 +2916,44 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn whitespace_around_text_only_element_is_preserved() {
+    #[sqlx::test]
+    async fn whitespace_around_text_only_element_is_preserved(pool: PgPool) -> sqlx::Result<()> {
         // The space between a reduced-to-text <button> and the following inline element must
         // survive so words are not joined.
-        let blocks = import_wp_blocks(r#"<p>a <button>b</button> <i>c</i></p>"#).await;
+        let blocks = import_wp_blocks(&pool, r#"<p>a <button>b</button> <i>c</i></p>"#).await;
         let text = first_paragraph_text(&blocks);
         assert!(
             text.contains("b <i>c</i>"),
             "space after text-only element must survive, got: {text}"
         );
+        Ok(())
     }
 
     /// Live integration test against verfassungsblog.de. Requires network access.
-    #[tokio::test]
-    async fn wp_import_real_verfassungsblog_post_produces_sanitized_blocks() {
+    #[sqlx::test]
+    async fn wp_import_real_verfassungsblog_post_produces_sanitized_blocks(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
         let data_dir = format!("/tmp/vb_import_test_{}", Uuid::new_v4());
         let mut settings = dummy_settings();
         settings.data_path = data_dir.clone();
         let processor = ImportProcessor {
-            settings,
-            project_storage: Arc::new(ProjectStorage::new()),
+            settings: settings.clone(),
+            pool: pool.clone(),
             job_queue: RwLock::new(VecDeque::new()),
             job_archive: RwLock::new(HashMap::new()),
         };
-        let project = empty_project();
 
         let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
         let post = api.get_post(79100).await.unwrap();
 
         processor
-            .import_wp_post(
-                post,
-                project.clone(),
-                Uuid::new_v4(),
-                false,
-                false,
-                false,
-                vec![],
-            )
+            .import_wp_post(post, project_id, false, false, false, vec![])
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        assert_eq!(stored.sections.len(), 1);
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &settings, project_id).await;
         assert!(!blocks.is_empty(), "expected imported content blocks");
 
         for block in &blocks {
@@ -2901,20 +2978,22 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&data_dir);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn import_produces_yrs_content_that_decodes_back_to_blocks() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn import_produces_yrs_content_that_decodes_back_to_blocks(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
         let section = empty_section();
 
         processor
             .import_html_from_wp(
                 section,
                 "<h2>H</h2><p>P</p>".to_string(),
-                project.clone(),
-                Uuid::new_v4(),
+                project_id,
                 false,
                 true,
                 false,
@@ -2922,29 +3001,30 @@ mod tests {
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         assert_eq!(blocks.len(), 2);
         assert!(matches!(blocks[0].data, BlockData::Heading { .. }));
         if let BlockData::Heading { level, .. } = blocks[0].data {
             assert_eq!(level, 1); // shifted up from h2
         }
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn ul_is_converted_to_list_block_and_css_classes_are_copied() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn ul_is_converted_to_list_block_and_css_classes_are_copied(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
 
         let html = r#"<ul class="my-list"><li>One</li><li><em>Two</em></li></ul>"#.to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
+            .import_html_from_pandoc(html, project_id, false, false, false)
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].css_classes, vec!["my-list".to_string()]);
 
@@ -2958,27 +3038,22 @@ mod tests {
 
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn blockquote_is_converted_to_quote_block() {
-        env_logger::init();
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn blockquote_is_converted_to_quote_block(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
 
         let html = r#"<blockquote class="q">Hello <em>world</em></blockquote>"#.to_string();
 
-        println!("Starting import");
         processor
-            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
+            .import_html_from_pandoc(html, project_id, false, false, false)
             .await
             .unwrap();
 
-        println!("Imported section: {:?}", project.read().unwrap().sections);
-        let stored = project.read().unwrap();
-        println!("Decoding yjs to blocks");
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
-        println!("Decoded blocks: {:?}", blocks);
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].css_classes, vec!["q".to_string()]);
 
@@ -2997,12 +3072,13 @@ mod tests {
 
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn figure_img_is_converted_to_image_block_with_caption() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn figure_img_is_converted_to_image_block_with_caption(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
 
         let html = r#"
 <figure class="img">
@@ -3013,12 +3089,11 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
+            .import_html_from_pandoc(html, project_id, false, false, false)
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].css_classes, vec!["img".to_string()]);
 
@@ -3031,12 +3106,15 @@ mod tests {
 
         // Verify UUID
         uuid::Uuid::parse_str(&blocks[0].id).expect("Block ID should be a valid UUID");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn img_inside_paragraph_is_split_into_its_own_image_block() {
-        let processor = make_processor();
-        let project = empty_project();
+    #[sqlx::test]
+    async fn img_inside_paragraph_is_split_into_its_own_image_block(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool.clone());
 
         // Text before and after the image, plus a linked image, all inside one <p>.
         let html = r#"
@@ -3046,12 +3124,11 @@ mod tests {
         .to_string();
 
         processor
-            .import_html_from_pandoc(html, project.clone(), Uuid::new_v4(), false, false, false)
+            .import_html_from_pandoc(html, project_id, false, false, false)
             .await
             .unwrap();
 
-        let stored = project.read().unwrap();
-        let blocks = decode_yjs_content(&stored.sections[0].content).unwrap();
+        let blocks = imported_blocks(&pool, &processor.settings, project_id).await;
 
         // First <p> -> paragraph, image, paragraph. Second <p> -> a single image block.
         assert_eq!(blocks.len(), 4);
@@ -3075,17 +3152,20 @@ mod tests {
             panic!("expected linked-image block, got {:?}", blocks[3].data);
         };
         assert_eq!(file.url, "https://example.com/linked.png");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn wp_leading_alignleft_image_in_paragraph_becomes_image_block() {
+    #[sqlx::test]
+    async fn wp_leading_alignleft_image_in_paragraph_becomes_image_block(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
         // A WordPress `alignleft` image is emitted as the first child of a `<p>`, directly
         // followed by the body text (with a large `srcset`). The image must be split out into
         // its own Image block instead of being flattened into the paragraph as inline `<img>`
         // markup (which the editor cannot render).
         let html = r#"<p><img decoding="async" class="size-medium wp-image-105086 alignleft" src="https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-184x300.jpg" alt="" width="184" height="300" srcset="https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-92x150.jpg 92w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-184x300.jpg 184w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-200x327.jpg 200w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-400x654.jpg 400w, https://verfassungsblog.de/wp-content/uploads/2026/07/DE_Ferrante-scaled.jpg 1567w" sizes="(max-width: 184px) 100vw, 184px">Daran dachte ich nicht. Ich griff zu.</p>"#;
 
-        let blocks = import_wp_blocks(html).await;
+        let blocks = import_wp_blocks(&pool, html).await;
 
         assert_eq!(
             blocks.len(),
@@ -3112,6 +3192,7 @@ mod tests {
             !text.contains("<img"),
             "image must not remain inline, got: {text}"
         );
+        Ok(())
     }
 
     #[test]
@@ -3165,10 +3246,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn convert_links_with_parents_preserves_parents() {
-        let _processor = make_processor();
-        let project_data = empty_project();
+    #[test]
+    fn convert_links_with_parents_preserves_parents() {
+        let mut bibliography = Bibliography::new();
 
         let mut parent = hayagriva::Entry::new("parent", hayagriva::types::EntryType::Book);
         parent.set_title("Parent".to_string().into());
@@ -3191,26 +3271,21 @@ mod tests {
 
         let main_uuid = *uuid_map.get(&main_key).unwrap();
 
-        {
-            let mut project = project_data.write().unwrap();
-            for (key, entry) in by_key.iter() {
-                let mut converted = BibEntryV3::from(entry);
-                converted.key = *uuid_map.get(key).unwrap();
-                converted.parents = entry
-                    .parents()
-                    .iter()
-                    .filter_map(|p| uuid_map.get(p.key()).copied())
-                    .collect();
+        for (key, entry) in by_key.iter() {
+            let mut converted = BibEntryV3::from(entry);
+            converted.key = *uuid_map.get(key).unwrap();
+            converted.parents = entry
+                .parents()
+                .iter()
+                .filter_map(|p| uuid_map.get(p.key()).copied())
+                .collect();
 
-                project.bibliography.add_entry(converted);
-            }
+            bibliography.add_entry(converted);
         }
 
-        let stored = project_data.read().unwrap();
-        assert_eq!(stored.bibliography.entries.len(), 2);
+        assert_eq!(bibliography.entries.len(), 2);
 
-        let child_entry_v3 = match stored
-            .bibliography
+        let child_entry_v3 = match bibliography
             .entries
             .get(&main_uuid)
             .expect("Child entry missing")
@@ -3222,8 +3297,8 @@ mod tests {
         assert_eq!(child_entry_v3.parents.len(), 1);
 
         let parent_uuid = child_entry_v3.parents[0];
-        assert!(stored.bibliography.entries.contains_key(&parent_uuid));
-        let parent_entry_v3 = match stored.bibliography.entries.get(&parent_uuid).unwrap() {
+        assert!(bibliography.entries.contains_key(&parent_uuid));
+        let parent_entry_v3 = match bibliography.entries.get(&parent_uuid).unwrap() {
             crate::storage::project_storage::current::BibEntryOrFolder::BibEntry(be) => be,
             _ => panic!("Expected BibEntry, found folder"),
         };

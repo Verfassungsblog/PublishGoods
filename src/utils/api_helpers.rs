@@ -1,12 +1,8 @@
-use crate::settings::Settings;
-use crate::storage::data_storage::current::DataStorageError;
-use crate::storage::project_storage::{ProjectData, ProjectStorage, ProjectStorageError};
 use rocket::http::{ContentType, Status};
 use rocket::response::Responder;
-use rocket::{Request, Response, State};
+use rocket::{Request, Response};
 use serde::Serialize;
 use std::io::{Cursor, Error, ErrorKind};
-use std::sync::{Arc, RwLock};
 
 /// Attempts to parse a string as a UUID.
 ///
@@ -24,28 +20,6 @@ pub fn parse_uuid(uuid: &str) -> Result<uuid::Uuid, ApiError> {
         }
     }
 }
-/// Asynchronously retrieves a project entry wrapped in an `Arc<RwLock<ProjectData>>` by its UUID.
-///
-/// Returns `Ok(project_entry)` if found, otherwise returns a not found error as JSON.
-///
-/// # Arguments
-/// * `project_id` - Reference to the project's UUID.
-/// * `settings` - State containing runtime settings.
-/// * `project_storage` - Shared project storage backend.
-pub async fn get_project(
-    project_id: &uuid::Uuid,
-    settings: &State<Settings>,
-    project_storage: Arc<ProjectStorage>,
-) -> Result<Arc<RwLock<ProjectData>>, ApiError> {
-    match project_storage.get_project(project_id, settings).await {
-        Ok(project_entry) => Ok(project_entry.clone()),
-        Err(e) => {
-            eprintln!("Couldn't get project with id {}: {:?}", project_id, e);
-            Err(ApiError::from(e))
-        }
-    }
-}
-
 /// Represents the new standard API result type, holding either a valid response or an error.
 pub type APIResult<T> = Result<APIResponse<T>, ApiError>;
 
@@ -143,49 +117,20 @@ impl From<uuid::Error> for ApiError {
     }
 }
 
-/// Converts project storage errors to the API error response format.
-impl From<ProjectStorageError> for ApiError {
-    fn from(value: ProjectStorageError) -> Self {
+/// Converts sqlx-repository-layer errors to the API error response format.
+impl From<crate::db::repositories::DbError> for ApiError {
+    fn from(value: crate::db::repositories::DbError) -> Self {
+        use crate::db::repositories::DbError;
         match value {
-            ProjectStorageError::ProjectNotFound => {
-                ApiErrorType::ResourceNotFound(String::from("project")).into()
+            DbError::NotFound(resource) => {
+                ApiErrorType::ResourceNotFound(resource.to_string()).into()
             }
-            _ => {
-                error!("Internal Server Error: {:?}", value);
+            DbError::Conflict(msg) => ApiErrorType::Conflict(msg).into(),
+            DbError::Sqlx(err) => {
+                error!("Database error: {:?}", err);
                 ApiErrorType::InternalServerError.into()
             }
-        }
-    }
-}
-
-/// Convert data storage errors to the API error response format to enable usage of ? operator
-impl From<DataStorageError> for ApiError {
-    fn from(value: DataStorageError) -> Self {
-        match value {
-            DataStorageError::NotFound(detail) => {
-                debug!("DataStorageError NotFound: {:?}", detail);
-                ApiErrorType::ResourceNotFound(detail).into()
-            }
-            DataStorageError::TokioJoinError(err) => {
-                error!("DataStorageError TokioJoinError: {:?}", err);
-                ApiErrorType::InternalServerError.into()
-            }
-            DataStorageError::IOError(err) => {
-                error!("DataStorageError IOError: {:?}", err);
-                ApiErrorType::InternalServerError.into()
-            }
-            DataStorageError::CouldntAcquireLock => {
-                error!("DataStorageError CouldntAcquireLock");
-                ApiErrorType::InternalServerError.into()
-            }
-            DataStorageError::BincodeDecodeError(err) => {
-                error!("DataStorageError BincodeDecodeError: {:?}", err);
-                ApiErrorType::InternalServerError.into()
-            }
-            DataStorageError::BincodeEncodeError(err) => {
-                error!("DataStorageError BincodeEncodeError: {:?}", err);
-                ApiErrorType::InternalServerError.into()
-            }
+            DbError::Io(err) => Self::from(err),
         }
     }
 }

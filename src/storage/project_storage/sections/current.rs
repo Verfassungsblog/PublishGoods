@@ -26,6 +26,25 @@ pub struct SectionV6 {
     pub metadata: SectionMetadataV6,
 }
 
+/// `sub_sections` is the recursive tree shape (assembled in-Rust from multiple flat rows, not
+/// a column) and `content` is the CRDT body, which never lives in Postgres at all (stays on
+/// the filesystem, see `db::section_content`) — both always come back empty/default here;
+/// [`crate::db::repositories::sections::get_tree_for_project`] fills them in afterward.
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for SectionV6 {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        let css_classes: Option<Vec<String>> = row.try_get("css_classes")?;
+        Ok(SectionV6 {
+            id: Some(row.try_get("id")?),
+            css_classes: css_classes.unwrap_or_default(),
+            sub_sections: vec![],
+            content: vec![],
+            visible_in_toc: row.try_get("visible_in_toc")?,
+            metadata: SectionMetadataV6::from_row(row)?,
+        })
+    }
+}
+
 /// Struct holds all metadata of a section
 #[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct SectionMetadataV6 {
@@ -48,18 +67,35 @@ pub struct SectionMetadataV6 {
     pub custom_fields: HashMap<String, String>,
 }
 
-impl Section {
-    pub fn clone_without_content(&self) -> Section {
-        Section {
-            id: self.id,
-            css_classes: self.css_classes.clone(),
-            sub_sections: self.sub_sections.clone(),
-            content: vec![],
-            visible_in_toc: self.visible_in_toc,
-            metadata: self.metadata.clone(),
-        }
+/// `authors`/`editors` come from the `persons_sections` join, not a plain column — always
+/// empty here; [`crate::db::repositories::sections::get_tree_for_project`] fetches them
+/// separately and fills the fields in afterward (same pattern as `PersonV2::bios`).
+/// `last_changed` has no backing column at all (see the schema-gap note in
+/// `db::repositories::sections`) — always round-trips as `None`.
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for SectionMetadataV6 {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        let identifiers: Option<sqlx::types::Json<Vec<Identifier>>> = row.try_get("identifiers")?;
+        let custom_fields: Option<sqlx::types::Json<HashMap<String, String>>> =
+            row.try_get("custom_fields")?;
+        let language: Option<String> = row.try_get("language")?;
+        Ok(SectionMetadataV6 {
+            title: row.try_get("title")?,
+            toc_title_subtitle_override: row.try_get("toc_title_subtitle_override")?,
+            subtitle: row.try_get("subtitle")?,
+            authors: vec![],
+            editors: vec![],
+            web_url: row.try_get("web_url")?,
+            identifiers: identifiers.map(|j| j.0).unwrap_or_default(),
+            published: row.try_get("publish_date")?,
+            last_changed: None,
+            lang: language.as_deref().and_then(Language::from_tag),
+            custom_fields: custom_fields.map(|j| j.0).unwrap_or_default(),
+        })
     }
+}
 
+impl Section {
     pub fn clone_without_subsections(&self) -> Section {
         Section {
             id: self.id,
@@ -69,74 +105,6 @@ impl Section {
             visible_in_toc: self.visible_in_toc,
             metadata: self.metadata.clone(),
         }
-    }
-
-    pub fn truncate_content_recursive(&mut self) {
-        self.content = vec![];
-        for sub_section in self.sub_sections.iter_mut() {
-            sub_section.truncate_content_recursive();
-        }
-    }
-
-    pub fn insert_child_section_after(
-        &mut self,
-        section_id: &uuid::Uuid,
-        new_section: &Section,
-    ) -> Option<()> {
-        for (i, section) in self.sub_sections.iter_mut().enumerate() {
-            if section.id == Some(*section_id) {
-                self.sub_sections.insert(i + 1, new_section.clone());
-                return Some(());
-            } else if section
-                .insert_child_section_after(section_id, new_section)
-                .is_some()
-            {
-                return Some(());
-            }
-        }
-        None
-    }
-
-    pub fn remove_child_section(&mut self, section_id: &uuid::Uuid) -> Option<Section> {
-        let mut index = None;
-        for (i, section) in self.sub_sections.iter_mut().enumerate() {
-            if section.id == Some(*section_id) {
-                index = Some(i);
-            } else if let Some(section) = section.remove_child_section(section_id) {
-                return Some(section);
-            }
-        }
-        match index {
-            Some(index) => {
-                let section = self.sub_sections.remove(index);
-                Some(section)
-            }
-            None => None,
-        }
-    }
-
-    pub fn get_section(&self, section_id: &uuid::Uuid) -> Option<&Section> {
-        if self.id == Some(*section_id) {
-            return Some(self);
-        }
-        for section in &self.sub_sections {
-            if let Some(found) = section.get_section(section_id) {
-                return Some(found);
-            }
-        }
-        None
-    }
-
-    pub fn get_section_mut(&mut self, section_id: &uuid::Uuid) -> Option<&mut Section> {
-        if self.id == Some(*section_id) {
-            return Some(self);
-        }
-        for section in &mut self.sub_sections {
-            if let Some(found) = section.get_section_mut(section_id) {
-                return Some(found);
-            }
-        }
-        None
     }
 }
 

@@ -1,8 +1,8 @@
+use crate::db::repositories::{bibliography, projects, sections, templates};
 use crate::export::preprocessing::prepare_project;
 use crate::export::zip::create_zip_from_bytes;
 use crate::settings::{ExportServer, Settings};
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::{ProjectData, ProjectStorage};
+use crate::storage::project_storage::ProjectData;
 use crate::utils::csl::CslData;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -33,13 +33,14 @@ pub struct LocalRenderingRequest {
     pub sections: Option<Vec<uuid::Uuid>>,
 }
 
+/// Coordinates local preparation and remote rendering of projects: owns the queue of
+/// pending [`LocalRenderingRequest`]s, tracks their status, and dispatches them to
+/// rendering servers over TLS.
 pub struct RenderingManager {
     /// Settings loaded from configuration files, containing global application settings such as titles, data paths, and server configurations.
     pub settings: Settings,
-    /// Persistent memory storage for small data such as users, passwords, or login attempts, shared between tasks.
-    pub data_storage: Arc<DataStorage>,
-    /// In-memory project storage, holding and managing the state of all projects loaded at startup.
-    pub project_storage: Arc<ProjectStorage>,
+    /// Postgres connection pool.
+    pub pool: sqlx::PgPool,
     /// Loaded Citation Style Language (CSL) data, including available locales and styles.
     pub csl_data: Arc<CslData>,
     /// Archive of rendering requests, storing their UUIDs with corresponding rendering status
@@ -53,17 +54,19 @@ pub struct RenderingManager {
 }
 
 impl RenderingManager {
+    /// Creates a new `RenderingManager` and spawns a background task that continuously
+    /// polls the rendering queue and dispatches queued requests to a rendering server
+    /// (up to `max_connections_to_rendering_server` concurrent tasks). Returns a shared
+    /// `Arc<RenderingManager>` handle for submitting and tracking rendering requests.
     pub fn start(
         settings: Settings,
-        data_storage: Arc<DataStorage>,
-        project_storage: Arc<ProjectStorage>,
+        pool: sqlx::PgPool,
         csl_data: Arc<CslData>,
         client_config: Arc<ClientConfig>,
     ) -> Arc<RenderingManager> {
         let rendering_manager = RenderingManager {
             settings: settings.clone(),
-            data_storage,
-            project_storage,
+            pool,
             csl_data,
             requests_archive: RwLock::new(HashMap::new()),
             rendering_queue: RwLock::new(VecDeque::new()),
@@ -153,35 +156,64 @@ impl RenderingManager {
 
         rendering_manager.clone()
     }
+    /// Loads a project (title, description, template, metadata, settings, sections and
+    /// bibliography) from the database, resolves the current template version, and hands
+    /// the assembled `ProjectData` off to [`prepare_project`] before sending it to a
+    /// rendering server.
     async fn prepare_and_send_to_server(
         rendering_manager: Arc<RenderingManager>,
         request: LocalRenderingRequest,
     ) -> Result<(), RenderingError> {
-        let project_data: ProjectData = match rendering_manager
-            .project_storage
-            .get_project(&request.project_id, &rendering_manager.settings)
+        let pool = &rendering_manager.pool;
+
+        let title = projects::get_title(pool, request.project_id)
             .await
-        {
-            Ok(project) => project.read().unwrap().clone(),
-            Err(_) => return Err(RenderingError::ProjectNotFound),
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let description = projects::get_description(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let template_id = projects::get_template_id(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?
+            .ok_or(RenderingError::TemplateNotFound)?;
+        let metadata = projects::get_metadata(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let settings = projects::get_settings(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let project_sections = sections::get_tree_for_project_with_content(
+            pool,
+            &rendering_manager.settings,
+            request.project_id,
+        )
+        .await
+        .map_err(|_| RenderingError::ProjectNotFound)?;
+        let bib = bibliography::get_all_for_project(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+
+        let project_data: ProjectData = ProjectData {
+            name: title,
+            description,
+            template_id,
+            last_interaction: 0,
+            metadata: Some(metadata),
+            settings: Some(settings),
+            sections: project_sections,
+            bibliography: bib,
         };
 
-        let template_id = project_data.template_id;
         // Get current version id of the template
-        let template_version_id = match rendering_manager
-            .data_storage
-            .data
-            .templates
-            .get(&template_id)
-        {
-            Some(template) => template.read().unwrap().version.unwrap(),
-            None => return Err(RenderingError::TemplateNotFound),
+        let template_version_id = match templates::get(pool, template_id).await {
+            Ok(template) => template.version,
+            Err(_) => return Err(RenderingError::TemplateNotFound),
         };
 
         // Prepare project
         let prepared_project = prepare_project(
             project_data,
-            rendering_manager.data_storage.clone(),
+            rendering_manager.pool.clone(),
             rendering_manager.csl_data.clone(),
             request.sections,
             &request.project_id,
@@ -386,20 +418,20 @@ impl RenderingManager {
                             }
                         };
 
-                        let export_formats: HashMap<String, ExportFormat> = match rendering_manager
-                            .data_storage
-                            .data
-                            .templates
-                            .get(&req.template_id)
+                        let export_formats: HashMap<String, ExportFormat> = match templates::get(
+                            &rendering_manager.pool,
+                            req.template_id,
+                        )
+                        .await
                         {
-                            None => {
+                            Err(_) => {
                                 error!(
                                     "Couldn't find template {} requested from rendering server.",
                                     req.template_id.clone()
                                 );
                                 return Err(RenderingError::TemplateNotFound);
                             }
-                            Some(template) => template.read().unwrap().export_formats.clone(),
+                            Ok(template) => template.export_formats,
                         };
 
                         let data = TemplateDataResult {

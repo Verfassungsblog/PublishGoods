@@ -10,7 +10,8 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2025.11"}
+#vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2025.11"}
+vb-exchange = {path = "/home/anghenfil/RustroverProjects/Verfassungsbooks-Exchange-Lib/", features = ["sqlx"]}
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.15"
@@ -53,6 +54,9 @@ dashmap = {version = "6.1", features = ["serde"] }
 yrs = "0.25.0"
 ws = { package = "rocket_ws", version = "0.1.1" }
 sqlx = { version = "0.9", features = ["runtime-tokio", "macros", "postgres", "migrate", "derive", "uuid", "chrono", "json"]}
+
+[profile.dev.package.sqlx-macros]
+opt-level = 3
 
 [features]
 default = ["language_detection"]

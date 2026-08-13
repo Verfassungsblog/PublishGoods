@@ -1,9 +1,9 @@
+use crate::db::repositories::persons;
 use crate::session::session_guard::Session;
-use crate::storage::data_storage::DataStorage;
 use rocket::State;
 use rocket_dyn_templates::Template;
 use serde::Serialize;
-use std::sync::Arc;
+use sqlx::PgPool;
 use vb_exchange::projects::Person;
 
 #[derive(Debug, PartialEq, FromFormField)]
@@ -23,20 +23,18 @@ struct ListData<'a> {
     limit: u32,
 }
 
+/// Renders a paginated, sortable listing of all persons. Persons are loaded in full and
+/// then sorted/paged in memory according to the `order`, `offset`, and `limit` query
+/// parameters (defaults: ascending by first name, offset 0, limit 10).
 #[get("/persons?<offset>&<limit>&<order>")]
-pub fn list_persons(
+pub async fn list_persons(
     _session: Session,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
     offset: Option<u32>,
     limit: Option<u32>,
     order: Option<OrderBy>,
 ) -> Template {
-    let mut persons: Vec<Person> = data_storage
-        .data
-        .persons
-        .iter()
-        .map(|x| x.value().read().unwrap().clone())
-        .collect();
+    let mut persons: Vec<Person> = persons::list_all(pool.inner()).await.unwrap_or_default();
 
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(10);
