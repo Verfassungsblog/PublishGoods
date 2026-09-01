@@ -290,7 +290,11 @@ mod integration_tests {
     }
 
     async fn test_client(pool: PgPool) -> Client {
-        let rocket = rocket::build()
+        // Force the debug profile so Rocket doesn't demand a configured secret_key, which it
+        // otherwise requires outside the debug profile (e.g. when tests are built with
+        // `cargo test --release`).
+        let figment = rocket::Config::figment().select(rocket::Config::DEBUG_PROFILE);
+        let rocket = rocket::custom(figment)
             .manage(pool)
             .manage(dummy_settings())
             .manage(SessionStorage::new())
