@@ -41,16 +41,14 @@ let currentEditorBinding: any = null;
  * - Creating the EditorJS instance.
  * - Wiring EditorJS `onChange` into the binding.
  *
- * @param content_path Colon-separated path from top-level section to leaf (ids joined by ':').
+ * @param section_id The section's uuid.
  */
-export async function showSectionEditor(content_path: string){
-    console.log("Loading section editor for section path: " + content_path);
-    const pathParts = (content_path || '').split(':').filter(Boolean);
-    const section_id = pathParts[pathParts.length - 1]; // leaf id for Yjs binding
+export async function showSectionEditor(section_id: string){
+    console.log("Loading section editor for section: " + section_id);
     state.active_section_id = section_id;
 
     if (!section_id) {
-        console.error('showSectionEditor: No leaf section_id could be derived from content_path:', content_path);
+        console.error('showSectionEditor: No section_id given');
         return;
     }
 
@@ -81,10 +79,10 @@ export async function showSectionEditor(content_path: string){
         currentEditorBinding = null;
     }
 
-    // Fetch section metadata (expand authors/editors for UI) using full content_path
+    // Fetch section metadata (expand authors/editors for UI)
     let sectionData: any = null;
     try{
-        const resp = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, {
+        const resp = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, {
             credentials: 'include'
         });
         if(!resp.ok){
@@ -117,14 +115,13 @@ export async function showSectionEditor(content_path: string){
     const actualData = sectionData?.data || sectionData;
     if (actualData && actualData.metadata) {
         try {
-            setupSectionMetadataUI(content_path, actualData);
+            setupSectionMetadataUI(section_id, actualData);
         } catch(e) {
             console.warn('setupSectionMetadataUI failed', e);
         }
     }
 
-    // Use the full content_path as the Yjs document id to match the backend route used for metadata
-    console.log('Initializing YjsBinding for documentId (content_path):', content_path);
+    console.log('Initializing YjsBinding for documentId (section_id):', section_id);
     const yjsBinding = YjsBinding(state.project_id, section_id);
     currentYjsBinding = yjsBinding;
     const doc = yjsBinding.getDoc();
@@ -1185,9 +1182,9 @@ function debounce<F extends (...args: any[]) => void>(fn: F, delay = 400) {
     };
 }
 
-async function patchSectionMeta(content_path: string, metadataPatch: any) {
+async function patchSectionMeta(section_id: string, metadataPatch: any) {
     try {
-        const resp = await fetch(`/api/projects/${state.project_id}/sections/${content_path}`, {
+        const resp = await fetch(`/api/projects/${state.project_id}/sections/${section_id}`, {
             method: 'PATCH',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
@@ -1201,7 +1198,7 @@ async function patchSectionMeta(content_path: string, metadataPatch: any) {
     }
 }
 
-function setupSectionMetadataUI(content_path: string, sectionData: any) {
+function setupSectionMetadataUI(section_id: string, sectionData: any) {
     if (!sectionData || !sectionData.metadata) {
         return;
     }
@@ -1229,8 +1226,6 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
 
     const onTitleChange = debounce((text: string) => {
         if (collapsedTitle) collapsedTitle.textContent = text;
-        const pathParts = (content_path || '').split(':').filter(Boolean);
-        const section_id = pathParts[pathParts.length - 1];
         const sidebarSection = document.querySelector(`.sidebar-contents-section[data-section-id="${section_id}"]`);
         if (sidebarSection) {
             const titleSpan = sidebarSection.querySelector('.section-title');
@@ -1238,11 +1233,11 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
                 titleSpan.textContent = text || '[No title]';
             }
         }
-        patchSectionMeta(content_path, { title: text });
+        patchSectionMeta(section_id, { title: text });
     });
     const onSubtitleChange = debounce((text: string) => {
         if (collapsedSubtitle) collapsedSubtitle.textContent = text || '';
-        patchSectionMeta(content_path, { subtitle: text && text.trim().length ? text : null });
+        patchSectionMeta(section_id, { subtitle: text && text.trim().length ? text : null });
     });
 
     const titleEl = document.getElementById('section_metadata_title');
@@ -1260,7 +1255,7 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
     if (tocOverride) {
         tocOverride.addEventListener('input', debounce(() => {
             const v = tocOverride.value?.trim();
-            patchSectionMeta(content_path, { toc_title_subtitle_override: v ? v : null });
+            patchSectionMeta(section_id, { toc_title_subtitle_override: v ? v : null });
         }));
     }
 
@@ -1268,7 +1263,7 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
     if (webUrl) {
         webUrl.addEventListener('input', debounce(() => {
             const v = webUrl.value?.trim();
-            patchSectionMeta(content_path, { web_url: v ? v : null });
+            patchSectionMeta(section_id, { web_url: v ? v : null });
         }));
     }
 
@@ -1276,7 +1271,7 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
     if (langSel) {
         langSel.addEventListener('change', () => {
             const v = langSel.value;
-            patchSectionMeta(content_path, { lang: v === 'none' ? null : v });
+            patchSectionMeta(section_id, { lang: v === 'none' ? null : v });
         });
     }
 
@@ -1284,7 +1279,7 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
     if (published) {
         const handler = debounce(() => {
             const v = published.value?.trim();
-            patchSectionMeta(content_path, { published: v ? v : null });
+            patchSectionMeta(section_id, { published: v ? v : null });
         });
         published.addEventListener('input', handler);
         published.addEventListener('change', handler);
@@ -1295,7 +1290,7 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
         delBtn.addEventListener('click', async () => {
             if (!confirm("Are you sure you want to delete this section and ALL its contents? This cannot be undone.")) return;
             try {
-                await sectionApi.delete_section(state.project_id, content_path);
+                await sectionApi.delete_section(state.project_id, section_id);
                 // Redirect to project root or reload project
                 init();
             } catch (e) {
@@ -1328,13 +1323,13 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
 
         const patch: any = {};
         patch[type] = next;
-        await patchSectionMeta(content_path, patch);
+        await patchSectionMeta(section_id, patch);
 
         // Keep local copy in sync
         sectionData.metadata[type] = next;
 
         // Refresh expanded data for stable rendering
-        const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+        const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
         if (r.ok) {
             const resp = await r.json();
             const data = resp?.data || resp;
@@ -1507,12 +1502,12 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
 
                 const patch: any = {};
                 patch[type] = currentList;
-                await patchSectionMeta(content_path, patch);
+                await patchSectionMeta(section_id, patch);
 
                 // Update local data and rerender
                 sectionData.metadata[type] = currentList;
                 // We need expanded data for rendering, so refetching is easiest
-                const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
                 if (r.ok) {
                     const resp = await r.json();
                     const data = resp?.data || resp;
@@ -1551,10 +1546,10 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
                     currentList.push({ PersonUuid: person_id });
                     const patch: any = {};
                     patch[type] = currentList;
-                    await patchSectionMeta(content_path, patch);
+                    await patchSectionMeta(section_id, patch);
 
                     // Update and rerender
-                    const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                    const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
                     if (r.ok) {
                         const resp = await r.json();
                         const data = resp?.data || resp;
@@ -1577,10 +1572,10 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
                 currentList.push({ NameString: value });
                 const patch: any = {};
                 patch[type] = currentList;
-                await patchSectionMeta(content_path, patch);
+                await patchSectionMeta(section_id, patch);
 
                 // Update and rerender
-                const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
                 if (r.ok) {
                     const resp = await r.json();
                     const data = resp?.data || resp;
@@ -1639,10 +1634,10 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
                     // fallback compare
                     return !(it.identifier_type === type && it.name === nameVal && it.value === valueVal);
                 });
-                await patchSectionMeta(content_path, { identifiers });
+                await patchSectionMeta(section_id, { identifiers });
                 // Refetch for fresh IDs
                 try {
-                    const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                    const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
                     if (r.ok) {
                         const resp = await r.json();
                         const data = resp?.data || resp;
@@ -1667,7 +1662,7 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
                     if (match) return { ...it, name: nameVal, value: valueVal };
                     return it;
                 });
-                await patchSectionMeta(content_path, { identifiers });
+                await patchSectionMeta(section_id, { identifiers });
             }, 400);
             if (nameEl) nameEl.addEventListener('input', applyChange);
             if (valueEl) valueEl.addEventListener('input', applyChange);
@@ -1691,13 +1686,13 @@ function setupSectionMetadataUI(content_path: string, sectionData: any) {
             const value = valueEl?.value?.trim() || '';
             if (!value) return;
             identifiers = [...identifiers, { id: null, name, value, identifier_type: type }];
-            await patchSectionMeta(content_path, { identifiers });
+            await patchSectionMeta(section_id, { identifiers });
             // Clear inputs
             if (nameEl) nameEl.value = '';
             if (valueEl) valueEl.value = '';
             // Refetch to get server-assigned ids
             try {
-                const r = await fetch(`/api/projects/${state.project_id}/sections/${content_path}?expand=authors,editors`, { credentials: 'include' });
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
                 if (r.ok) {
                     const resp = await r.json();
                     const data = resp?.data || resp;

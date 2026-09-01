@@ -350,7 +350,6 @@ export type ProjectContentsSectionMetadata = {
 export interface APISectionResult {
     id: string; // UUID represented as a string in JavaScript/TypeScript
     css_classes: string[];
-    sub_sections?: Section[];
     children: NewContentBlock[];
     visible_in_toc: boolean;
     metadata: APISectionMetadataResult;
@@ -1544,12 +1543,11 @@ export function SectionAPI(){
      * Requests the data for a section
      *
      * @param project_id
-     * @param section_path
+     * @param section_id
      * @param expand_authors boolean, if true also adds details for authors
      * @param expand_editors boolean, if true also adds details for editors
-     * @param expand_subsections boolean, if true also adds subsections
      */
-    async function read_section(project_id: string, section_path: string, expand_authors: boolean, expand_editors: boolean, expand_subsections: boolean) {
+    async function read_section(project_id: string, section_id: string, expand_authors: boolean, expand_editors: boolean) {
         let expand_query = "expand=";
 
         if(expand_authors){
@@ -1558,12 +1556,9 @@ export function SectionAPI(){
         if(expand_editors){
             expand_query += "editors,"
         }
-        if(expand_subsections){
-            expand_query += "subsections,"
-        }
         expand_query = expand_query.substring(0, expand_query.length -1);
 
-        const response = await fetch(`/api/projects/${project_id}/sections/${section_path}?${expand_query}`, {
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}?${expand_query}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -1585,8 +1580,8 @@ export function SectionAPI(){
 
         return response_data.data;
     }
-    async function patch_section(project_id: string, section_path: string, data: PatchSection){
-        const response = await fetch(`/api/projects/${project_id}/sections/${section_path}`, {
+    async function patch_section(project_id: string, section_id: string, data: PatchSection){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json'
@@ -1606,8 +1601,8 @@ export function SectionAPI(){
 
         return response_data.data;
     }
-    async function delete_section(project_id: string, section_path: string){
-        const response = await fetch(`/api/projects/${project_id}/sections/${section_path}`, {
+    async function delete_section(project_id: string, section_id: string){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'

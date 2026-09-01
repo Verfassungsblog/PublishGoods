@@ -146,27 +146,69 @@ async fn fill_content(sections: &mut [Section], settings: &Settings) -> Result<(
     Ok(())
 }
 
-/// Replaces [`crate::storage::project_storage::current::get_section_by_path`]: fetches the
-/// full project tree once and walks `path`, validating that each hop is truly a child of the
-/// previous one (matching the old behavior).
-pub async fn resolve_path(
+/// Loads author/editor links for a specific set of section ids, keyed by section id. Like
+/// [`fetch_links`] but scoped to individual ids instead of a whole project, for callers that
+/// fetch a single section directly rather than the whole tree.
+async fn fetch_links_for_ids(
+    pool: &PgPool,
+    ids: &[Uuid],
+) -> Result<HashMap<Uuid, (Vec<PersonUuidOrString>, Vec<PersonUuidOrString>)>, DbError> {
+    let rows = sqlx::query!(
+        "SELECT section_id, role, person_id, name
+         FROM persons_sections
+         WHERE section_id = ANY($1)
+         ORDER BY position",
+        ids
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut links: HashMap<Uuid, (Vec<PersonUuidOrString>, Vec<PersonUuidOrString>)> =
+        HashMap::new();
+    for row in rows {
+        let person = match row.person_id {
+            Some(id) => PersonUuidOrString::PersonUuid(id),
+            None => PersonUuidOrString::NameString(row.name.unwrap_or_default()),
+        };
+        let entry = links.entry(row.section_id).or_default();
+        match row.role.as_str() {
+            "author" => entry.0.push(person),
+            "editor" => entry.1.push(person),
+            _ => {}
+        }
+    }
+    Ok(links)
+}
+
+/// Fetches a single section by id, scoped to `project_id` (so an id from another project
+/// resolves to `NotFound` instead of leaking cross-project data), with author/editor links
+/// filled in. `sub_sections` is always empty — this is a flat single-row lookup, not a tree
+/// walk; callers that need the nav tree should use [`get_tree_for_project`] instead.
+pub async fn get_by_id(
     pool: &PgPool,
     project_id: Uuid,
-    path: &[Uuid],
+    section_id: Uuid,
 ) -> Result<Section, DbError> {
-    let tree = get_tree_for_project(pool, project_id).await?;
-    let mut current = tree
-        .iter()
-        .find(|s| s.id == Some(path[0]))
-        .ok_or(DbError::NotFound("section"))?;
-    for part in path.iter().skip(1) {
-        current = current
-            .sub_sections
-            .iter()
-            .find(|s| s.id == Some(*part))
-            .ok_or(DbError::NotFound("section"))?;
-    }
-    Ok(current.clone())
+    let row = sqlx::query(
+        r#"SELECT id, parent_section, visible_in_toc, css_classes, title,
+                  toc_title_subtitle_override, subtitle, web_url, publish_date, language,
+                  custom_fields, identifiers
+           FROM sections WHERE id = $1 AND project_id = $2"#,
+    )
+    .bind(section_id)
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::NotFound("section"))?;
+
+    let mut section = Section::from_row(&row)?;
+    let (authors, editors) = fetch_links_for_ids(pool, &[section_id])
+        .await?
+        .remove(&section_id)
+        .unwrap_or_default();
+    section.metadata.authors = authors;
+    section.metadata.editors = editors;
+    Ok(section)
 }
 
 /// Fetches the project id a section belongs to.
@@ -773,7 +815,9 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn resolve_path_validates_each_hop(pool: PgPool) -> sqlx::Result<()> {
+    async fn get_by_id_fetches_a_single_section_without_its_subtree(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
         let project_id = seed_project(&pool).await;
         let root = sample_section("Root");
         insert_at_end(&pool, &dummy_settings(), project_id, None, &root)
@@ -783,23 +827,29 @@ mod tests {
         insert_at_end(&pool, &dummy_settings(), project_id, root.id, &child)
             .await
             .unwrap();
-        let unrelated = sample_section("Unrelated");
-        insert_at_end(&pool, &dummy_settings(), project_id, None, &unrelated)
-            .await
-            .unwrap();
 
-        let found = resolve_path(&pool, project_id, &[root.id.unwrap(), child.id.unwrap()])
+        let found = get_by_id(&pool, project_id, child.id.unwrap())
             .await
             .unwrap();
         assert_eq!(found.metadata.title, "Child");
+        assert!(found.sub_sections.is_empty());
+        Ok(())
+    }
 
-        let not_found = resolve_path(
-            &pool,
-            project_id,
-            &[unrelated.id.unwrap(), child.id.unwrap()],
-        )
-        .await;
-        assert!(matches!(not_found, Err(DbError::NotFound("section"))));
+    #[sqlx::test]
+    async fn get_by_id_rejects_a_section_from_a_different_project(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_a = seed_project(&pool).await;
+        let project_b = seed_project(&pool).await;
+
+        let b_root = sample_section("B root");
+        insert_at_end(&pool, &dummy_settings(), project_b, None, &b_root)
+            .await
+            .unwrap();
+
+        let result = get_by_id(&pool, project_a, b_root.id.unwrap()).await;
+        assert!(matches!(result, Err(DbError::NotFound("section"))));
         Ok(())
     }
 

@@ -20,13 +20,12 @@ use vb_exchange::projects::Identifier;
 use vb_exchange::projects::PersonOrString;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`Section`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`Section`] with optional expansion of some metadata fields. Never
+/// carries subsections — use the project contents tree endpoint for navigation/display.
 pub struct APISectionResult {
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
-    /// Holds all subsections
-    pub sub_sections: Option<Vec<Section>>,
     /// If true, the section is visible in the table of contents
     pub visible_in_toc: bool,
     /// Metadata of the section
@@ -51,30 +50,31 @@ pub struct APISectionMetadataResult {
     pub custom_fields: HashMap<String, String>,
 }
 
-/// GET /api/projects/<project_id>/sections/<content_path>?<expand>
+/// GET /api/projects/<project_id>/sections/<section_id>?<expand>
 ///
 /// Parameters:
 /// * project_id (string) - the projects uuid
-/// * content_path (string) - path to a specific section, split by ':'
-/// * expand (string, optional) - optionally expand one of these fields: authors, editors, subsections
+/// * section_id (string) - the section's uuid
+/// * expand (string, optional) - optionally expand one of these fields: authors, editors
 ///
-/// By default strips out subsections & only returns id's for authors and editors.
+/// By default only returns id's for authors and editors.
 /// Use the optional expand query parameter to expand these fields
-/// E.g. ?expand=authors,editors,subsections will show the full data
+/// E.g. ?expand=authors,editors will show the full data
 ///
-#[get("/api/projects/<project_id>/sections/<content_path>?<expand>")]
+#[get("/api/projects/<project_id>/sections/<section_id>?<expand>")]
 pub async fn get_section(
     project_id: &str,
-    content_path: &str,
+    section_id: &str,
     expand: Option<&str>,
     _session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<APISectionResult> {
     debug!(
-        "get_section API request: project_id={:?}, content_path={:?}, expand={:?}",
-        project_id, content_path, expand
+        "get_section API request: project_id={:?}, section_id={:?}, expand={:?}",
+        project_id, section_id, expand
     );
     let project_id = uuid::Uuid::parse_str(project_id)?;
+    let section_id = uuid::Uuid::parse_str(section_id)?;
 
     // Parse expand:
     let expand_parts = if let Some(expand) = expand {
@@ -88,36 +88,15 @@ pub async fn get_section(
 
     let expand_authors = expand_parts.contains(&String::from("authors"));
     let expand_editors = expand_parts.contains(&String::from("editors"));
-    let expand_subsections = expand_parts.contains(&String::from("subsections"));
 
     debug!(
-        "Parsed expand options: expand_authors={:?}, expand_editors={:?}, expand_subsections={:?}",
-        expand_authors, expand_editors, expand_subsections
+        "Parsed expand options: expand_authors={:?}, expand_editors={:?}",
+        expand_authors, expand_editors
     );
-
-    let mut path = vec![];
-
-    for part in content_path.split(":") {
-        let part = uuid::Uuid::parse_str(part)?;
-        path.push(part)
-    }
-
-    debug!("Parsed content_path: {:?}", path);
-
-    if path.is_empty() {
-        warn!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter(String::from("content_path")).into());
-    }
 
     let pool = pool.inner();
 
-    let resolved = sections::resolve_path(pool, project_id, &path).await?;
-
-    let section = if expand_subsections {
-        resolved
-    } else {
-        resolved.clone_without_subsections()
-    };
+    let section = sections::get_by_id(pool, project_id, section_id).await?;
 
     // Check if all persons in section metadata are still valid
     let old_metadata = section.metadata.clone();
@@ -239,15 +218,9 @@ pub async fn get_section(
             return Err(ApiErrorType::InternalServerError.into());
         }
     };
-    let sub_sections = if section.sub_sections.is_empty() {
-        None
-    } else {
-        Some(section.sub_sections)
-    };
     let section_res = APISectionResult {
         id: section_id,
         css_classes: section.css_classes,
-        sub_sections,
         visible_in_toc: section.visible_in_toc,
         metadata: metadata_res,
     };
@@ -255,38 +228,25 @@ pub async fn get_section(
     Ok(section_res.into())
 }
 
-/// PATCH /api/projects/<project_id>/sections/<content_path>
+/// PATCH /api/projects/<project_id>/sections/<section_id>
 /// Patch a section, but without content (subsections / content blocks)
 /// Check [PatchSection] for more information
 #[patch(
-    "/api/projects/<project_id>/sections/<content_path>",
+    "/api/projects/<project_id>/sections/<section_id>",
     data = "<section_patch>"
 )]
 pub async fn update_section(
     project_id: String,
-    content_path: String,
+    section_id: String,
     section_patch: Json<PatchSection>,
     _session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
+    let section_id = uuid::Uuid::parse_str(&section_id)?;
     let pool = pool.inner();
 
-    let mut path = vec![];
-
-    for part in content_path.split(":") {
-        path.push(uuid::Uuid::parse_str(part)?);
-    }
-
-    if path.is_empty() {
-        println!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
-    }
-
-    let section = sections::resolve_path(pool, project_id, &path).await?;
-    let section_id = section
-        .id
-        .ok_or(ApiErrorType::ResourceNotFound("section".to_string()))?;
+    let section = sections::get_by_id(pool, project_id, section_id).await?;
 
     let mut new_section_data = section.clone().patch(section_patch.into_inner());
     // Check if new section data is valid
@@ -470,33 +430,22 @@ impl Patch<PatchSection, Section> for Section {
     }
 }
 
-/// DELETE /api/projects/<project_id>/sections/<content_path>
+/// DELETE /api/projects/<project_id>/sections/<section_id>
 /// Delete a section including all subsections and content blocks
-#[delete("/api/projects/<project_id>/sections/<content_path>")]
+#[delete("/api/projects/<project_id>/sections/<section_id>")]
 pub async fn delete_section(
     project_id: String,
-    content_path: String,
+    section_id: String,
     _session: Session,
     pool: &State<PgPool>,
     settings: &State<Settings>,
 ) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
+    let section_id = uuid::Uuid::parse_str(&section_id)?;
 
-    let mut path = vec![];
-    for part in content_path.split(":") {
-        let part = uuid::Uuid::parse_str(part)?;
-        path.push(part);
-    }
+    debug!("Deleting section {:?}", section_id);
 
-    if path.is_empty() {
-        warn!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter(String::from("content_path")).into());
-    }
-
-    debug!("Deleting section with path {:?}", path);
-
-    let deleted_ids =
-        sections::delete_subtree(pool.inner(), project_id, *path.last().unwrap()).await?;
+    let deleted_ids = sections::delete_subtree(pool.inner(), project_id, section_id).await?;
     for id in deleted_ids {
         if let Err(e) = section_content::delete(settings.inner(), id).await {
             warn!(

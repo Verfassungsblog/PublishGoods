@@ -1,5 +1,4 @@
 use crate::storage::project_storage::current::PersonUuidOrString;
-use crate::storage::project_storage::sections::Section;
 use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
@@ -95,22 +94,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for SectionMetadataV6 {
     }
 }
 
-impl Section {
-    pub fn clone_without_subsections(&self) -> Section {
-        Section {
-            id: self.id,
-            css_classes: self.css_classes.clone(),
-            sub_sections: Vec::new(),
-            content: self.content.clone(),
-            visible_in_toc: self.visible_in_toc,
-            metadata: self.metadata.clone(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::storage::project_storage::sections::Section;
 
     #[test]
     fn section_v6_deserializes_from_project_contents_payload() {
