@@ -13,10 +13,25 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
     - uses: actions/checkout@v4
       with:
@@ -30,7 +45,12 @@ jobs:
         echo "$git_branch-$git_hash" > version.txt
         echo "GIT_BRANCH=$git_branch" >> $GITHUB_ENV
         echo "GIT_HASH=$git_hash" >> $GITHUB_ENV
-
+    - name: Set up database schema
+      run: |
+        for f in migrations/*.sql; do
+          echo "Applying $f"
+          psql "$DATABASE_URL" -f "$f"
+        done
     - name: Build
       run: cargo build --release --verbose
     - name: Run tests
