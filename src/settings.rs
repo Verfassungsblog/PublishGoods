@@ -8,6 +8,8 @@ use std::env;
 pub struct Settings {
     /// Full app title shown in navbar
     pub app_title: String,
+    /// Publicly accessible URL of this instance
+    pub instance_url: String,
     /// How long should a project be kept in memory after it was last accessed in seconds
     pub project_cache_time: u64,
     /// Where should the app store the data
@@ -33,6 +35,20 @@ pub struct Settings {
     /// Rolling window (in minutes) used both to count recent failed login attempts and to
     /// lock the account.
     pub lockout_window_minutes: i64,
+    /// Connection string for smtp server
+    pub smtp_connection_url: String,
+    /// From Adress used for outgoing mails
+    pub mail_from_address: String,
+    /// SMTP minimum number of idle connections
+    pub smtp_pool_min_idle: u32,
+    /// SMTP maximum number of pooled connections
+    pub smtp_pool_max_size: u32,
+    /// SMTP connection idle timeout in seconds
+    pub smtp_pool_idle_timeout: u64,
+    /// Maximum number of times a failed mail job is retried before it is dropped
+    pub mail_max_retries: u8,
+    /// Base delay in seconds before the first retry attempt, multiplied by the retry attempt number for each subsequent retry
+    pub mail_base_retry_delay_seconds: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]

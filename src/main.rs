@@ -11,6 +11,7 @@
 #[macro_use]
 extern crate rocket;
 use crate::db::repositories::users;
+use crate::mailer::Mailer;
 use crate::projects::websocket::WebsocketManager;
 //noinspection RsMainFunctionNotFound
 use crate::session::session_storage::SessionStorage;
@@ -22,7 +23,7 @@ use crate::utils::csl::CslData;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHasher};
 use log::{debug, info};
-use rand::Rng;
+use rand::RngExt;
 use rocket::Request;
 use rocket::response::Redirect;
 use rocket_dyn_templates::Template;
@@ -35,6 +36,7 @@ pub mod cleaner;
 pub mod db;
 pub mod export;
 pub mod import;
+pub mod mailer;
 pub mod persons;
 pub mod projects;
 pub mod session;
@@ -128,9 +130,9 @@ async fn rocket() -> _ {
                 '|', '\\', ';', ':', '\'', '"', ',', '.', '<', '>', '/', '?',
             ];
             let password: String = {
-                let mut random = rand::thread_rng();
+                let mut random = rand::rng();
                 (0..20)
-                    .map(|_| PASSWORD_CHARACTERS[random.gen_range(0..PASSWORD_CHARACTERS.len())])
+                    .map(|_| PASSWORD_CHARACTERS[random.random_range(0..PASSWORD_CHARACTERS.len())])
                     .collect()
             };
             let password_hash = Argon2::default()
@@ -192,6 +194,13 @@ async fn rocket() -> _ {
         Arc::new(settings.clone()),
     ));
 
+    info!("Starting mail worker...");
+    let (mail_sender, mail_receiver) = tokio::sync::mpsc::channel(100);
+    let mailer = Mailer {
+        sender: mail_sender,
+    };
+    mailer::start_mail_worker(mail_receiver, settings.clone());
+
     info!("Starting web server...");
     rocket::build()
         .register("/", catchers![forward_to_login])
@@ -239,6 +248,10 @@ async fn rocket() -> _ {
                 utils::lobid_proxy::search_gnd,
                 session::logout::logout_page,
                 session::login::login_page,
+                session::login::process_pw_reset_page,
+                session::login::pw_reset_page,
+                session::login::pw_reset_confirmation_page,
+                session::login::pw_reset_confirmation_form,
                 session::login::process_login_form,
                 projects::create::show_create_project,
                 projects::api::delete_project_upload,
@@ -293,6 +306,7 @@ async fn rocket() -> _ {
         .manage(csl_data)
         .manage(rendering_manager)
         .manage(websocket_manager)
+        .manage(mailer)
 }
 
 //TODO: clean shutdown

@@ -16,14 +16,24 @@
                     Invalid email or password. Please try again.
                 </div>
             {{/if}}
-            {{#if error_contact_admin}}
+            {{#if error_contact-admin}}
                 <div class="alert alert-danger" role="alert">
                     Somethings wrong with your account, please contact the administrator!
                 </div>
             {{/if}}
-            {{#if error_too_many_attempts}}
+            {{#if error_too-many-attempts}}
                 <div class="alert alert-danger" role="alert">
                     Too many failed login attempts, please wait 15 minutes or reset your password!
+                </div>
+            {{/if}}
+            {{#if error_pw-reset}}
+                <div class="alert alert-success" role="alert">
+                    If an account with the specified email address exists, you will receive a password reset email soon.
+                </div>
+            {{/if}}
+            {{#if error_pw-reset-success}}
+                <div class="alert alert-success" role="alert">
+                    Your password was chanaged successfully! You can now login with your new password.
                 </div>
             {{/if}}
             <form method="post">
@@ -36,6 +46,7 @@
                     <input type="password" class="form-control" name="password" id="password" placeholder="Password">
                 </div>
                 <button type="submit" class="btn btn-primary">Login</button>
+                <a class="float-end" href="/pw-reset">Reset Password</a>
             </form>
 
         </div>

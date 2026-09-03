@@ -24,6 +24,8 @@ pub struct User {
     #[serde(skip_serializing)]
     pub password_hash: Option<String>,
     pub locked_until: Option<DateTime<Utc>>,
+    pub password_reset_token_hash: Option<String>,
+    pub password_reset_token_valid_until: Option<DateTime<Utc>>,
 }
 
 /// Returns the id of the single "Default" team, creating it if it doesn't exist yet.
@@ -49,7 +51,7 @@ pub async fn ensure_default_team(pool: &PgPool) -> Result<Uuid, DbError> {
 pub async fn find_by_email<'e>(exec: impl PgExecutor<'e>, email: &str) -> Result<User, DbError> {
     sqlx::query_as!(
         User,
-        "SELECT id, email, name, password_hash, locked_until FROM users WHERE email = $1",
+        "SELECT id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until FROM users WHERE email = $1",
         email
     )
     .fetch_optional(exec)
@@ -61,7 +63,7 @@ pub async fn find_by_email<'e>(exec: impl PgExecutor<'e>, email: &str) -> Result
 pub async fn get<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<User, DbError> {
     sqlx::query_as!(
         User,
-        "SELECT id, email, name, password_hash, locked_until FROM users WHERE id = $1",
+        "SELECT id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until FROM users WHERE id = $1",
         id
     )
     .fetch_optional(exec)
@@ -73,7 +75,7 @@ pub async fn get<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<User, DbErro
 pub async fn list_all<'e>(exec: impl PgExecutor<'e>) -> Result<Vec<User>, DbError> {
     let users = sqlx::query_as!(
         User,
-        "SELECT id, email, name, password_hash, locked_until FROM users ORDER BY email"
+        "SELECT id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until FROM users ORDER BY email"
     )
     .fetch_all(exec)
     .await?;
@@ -110,7 +112,7 @@ pub async fn insert(
     let user = sqlx::query_as!(
         User,
         "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, name, password_hash, locked_until",
+         RETURNING id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until",
         email,
         name,
         password_hash
@@ -131,26 +133,28 @@ pub async fn insert(
     Ok(user)
 }
 
-/// Updates whichever of email/name/password_hash are `Some`, leaving the rest unchanged.
-pub async fn update_profile<'e>(
-    exec: impl PgExecutor<'e>,
-    id: Uuid,
-    email: Option<&str>,
-    name: Option<&str>,
-    password_hash: Option<&str>,
-) -> Result<User, DbError> {
+/// Overwrites every field of the user with id `user.id` (except the id itself) with the
+/// values on `user`. Callers that want a partial update should first `get` the current row,
+/// mutate the fields they care about, and pass the result in here.
+pub async fn update<'e>(exec: impl PgExecutor<'e>, user: &User) -> Result<User, DbError> {
     sqlx::query_as!(
         User,
         "UPDATE users SET
-            email = COALESCE($2, email),
-            name = COALESCE($3, name),
-            password_hash = COALESCE($4, password_hash)
+            email = $2,
+            name = $3,
+            password_hash = $4,
+            locked_until = $5,
+            password_reset_token_hash = $6,
+            password_reset_token_valid_until = $7
          WHERE id = $1
-         RETURNING id, email, name, password_hash, locked_until",
-        id,
-        email,
-        name,
-        password_hash
+         RETURNING id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until",
+        user.id,
+        user.email,
+        user.name,
+        user.password_hash,
+        user.locked_until,
+        user.password_reset_token_hash,
+        user.password_reset_token_valid_until
     )
     .fetch_optional(exec)
     .await?
@@ -312,6 +316,44 @@ mod tests {
         .fetch_one(&pool)
         .await?;
         assert_eq!(remaining_attempts.unwrap_or(-1), 0);
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn update_overwrites_all_fields(pool: PgPool) -> sqlx::Result<()> {
+        let team_id = ensure_default_team(&pool).await.unwrap();
+        let user = insert(&pool, "erin@example.com", "Erin", "hash", team_id)
+            .await
+            .unwrap();
+
+        let mut changed = user.clone();
+        changed.email = "erin2@example.com".to_string();
+        changed.name = "Erin Changed".to_string();
+        changed.password_hash = Some("new-hash".to_string());
+        changed.locked_until = Some(Utc::now());
+        changed.password_reset_token_hash = Some("reset-hash".to_string());
+        changed.password_reset_token_valid_until = Some(Utc::now());
+
+        let updated = update(&pool, &changed).await.unwrap();
+        assert_eq!(updated.id, user.id);
+        assert_eq!(updated.email, "erin2@example.com");
+        assert_eq!(updated.name, "Erin Changed");
+        assert_eq!(updated.password_hash, Some("new-hash".to_string()));
+        assert!(updated.locked_until.is_some());
+        assert_eq!(
+            updated.password_reset_token_hash,
+            Some("reset-hash".to_string())
+        );
+        assert!(updated.password_reset_token_valid_until.is_some());
+
+        // Clearing an Option field back to None must also stick.
+        changed.locked_until = None;
+        changed.password_reset_token_hash = None;
+        changed.password_reset_token_valid_until = None;
+        let cleared = update(&pool, &changed).await.unwrap();
+        assert!(cleared.locked_until.is_none());
+        assert!(cleared.password_reset_token_hash.is_none());
+        assert!(cleared.password_reset_token_valid_until.is_none());
         Ok(())
     }
 

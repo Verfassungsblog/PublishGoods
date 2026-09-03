@@ -102,15 +102,17 @@ pub mod api {
             return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
         }
 
-        let password_hash = patch.password.as_deref().map(hash_password);
-        let user = users::update_profile(
-            pool,
-            id,
-            patch.email.as_deref(),
-            patch.name.as_deref(),
-            password_hash.as_deref(),
-        )
-        .await?;
+        let mut user = users::get(pool, id).await?;
+        if let Some(email) = patch.email {
+            user.email = email;
+        }
+        if let Some(name) = patch.name {
+            user.name = name;
+        }
+        if let Some(password) = &patch.password {
+            user.password_hash = Some(hash_password(password));
+        }
+        let user = users::update(pool, &user).await?;
 
         let user = if let Some(locked_until) = patch.locked_until {
             match locked_until {
