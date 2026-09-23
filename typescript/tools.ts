@@ -39,6 +39,80 @@ export function show_alert(message: string, type: string = "danger|warning|succe
     }, 5000);
 }
 
+let overlay_keydown_handler: ((e: KeyboardEvent) => void) | null = null;
+let overlay_on_close: (() => void) | null = null;
+
+/**
+ * Shows the page's faded-out-background overlay (#overlay-wrapper / #inner_overlay,
+ * see editor.html.hbs / bibliography.html.hbs) filled with the given content.
+ * Closes on Escape or via the overlay's close button; call hide_overlay() to close
+ * it programmatically (e.g. after a wizard step finishes).
+ *
+ * @param content - HTML string or element to render inside the overlay
+ * @param on_close - Optional callback invoked once, whenever the overlay closes
+ */
+export function show_overlay(content: string | HTMLElement, on_close?: () => void){
+    let overlay_wrapper = document.getElementById("overlay-wrapper");
+    let overlay_content = document.getElementById("inner_overlay");
+    let overlay_close_btn = document.getElementById("overlay_close_btn");
+
+    if(overlay_wrapper === null || overlay_content === null){
+        console.error("show_overlay: #overlay-wrapper / #inner_overlay not found on this page");
+        return;
+    }
+
+    if(typeof content === "string"){
+        overlay_content.innerHTML = content;
+    } else {
+        overlay_content.innerHTML = "";
+        overlay_content.appendChild(content);
+    }
+
+    overlay_on_close = on_close || null;
+    overlay_wrapper.classList.remove("hide");
+
+    if(overlay_close_btn){
+        overlay_close_btn.onclick = hide_overlay;
+    }
+
+    if(overlay_keydown_handler){
+        document.removeEventListener("keydown", overlay_keydown_handler);
+    }
+    overlay_keydown_handler = function(e: KeyboardEvent){
+        if(e.key === "Escape"){
+            hide_overlay();
+        }
+    };
+    document.addEventListener("keydown", overlay_keydown_handler);
+}
+
+/**
+ * Hides the overlay opened by show_overlay(), clears its content and fires the
+ * on_close callback (if one was given to show_overlay()).
+ */
+export function hide_overlay(){
+    let overlay_wrapper = document.getElementById("overlay-wrapper");
+    let overlay_content = document.getElementById("inner_overlay");
+
+    if(overlay_wrapper !== null){
+        overlay_wrapper.classList.add("hide");
+    }
+    if(overlay_content !== null){
+        overlay_content.innerHTML = "";
+    }
+
+    if(overlay_keydown_handler){
+        document.removeEventListener("keydown", overlay_keydown_handler);
+        overlay_keydown_handler = null;
+    }
+
+    let on_close = overlay_on_close;
+    overlay_on_close = null;
+    if(on_close){
+        on_close();
+    }
+}
+
 interface SearchAPIHandler{
     (search_query: string): Promise<any[]>;
 }

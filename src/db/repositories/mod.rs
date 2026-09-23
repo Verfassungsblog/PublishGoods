@@ -12,6 +12,8 @@ pub mod sections;
 pub mod templates;
 pub mod users;
 
+pub mod teams;
+
 /// Unified error type for the repository layer, convertible into [`crate::utils::api_helpers::ApiError`].
 #[derive(Debug)]
 pub enum DbError {

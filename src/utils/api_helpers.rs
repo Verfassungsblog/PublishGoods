@@ -28,6 +28,8 @@ pub type APIResult<T> = Result<APIResponse<T>, ApiError>;
 pub enum ApiErrorType {
     /// Session invalid or expired
     Unauthorized,
+    /// The session is valid, but the user lacks permission for this action.
+    Forbidden(String),
     /// A request parameter could not be parsed. Contains the parameter name.
     UnparsableParameter(String),
     /// The request couldn't be fulfilled due to user error, see string
@@ -72,6 +74,7 @@ impl<'r> Responder<'r, 'static> for ApiError {
 
         let status = match self.error {
             ApiErrorType::Unauthorized => Status::Unauthorized,
+            ApiErrorType::Forbidden(_) => Status::Forbidden,
             ApiErrorType::UnparsableParameter(_) => Status::BadRequest,
             ApiErrorType::BadRequest(_) => Status::BadRequest,
             ApiErrorType::ResourceNotFound(_) => Status::NotFound,
@@ -95,6 +98,7 @@ impl From<ApiErrorType> for ApiError {
     fn from(value: ApiErrorType) -> Self {
         let error_description = match &value{
             ApiErrorType::Unauthorized => Some("You session is invalid or expired. Please login.".to_string()),
+            ApiErrorType::Forbidden(msg) => Some(format!("Forbidden: {}", msg)),
             ApiErrorType::UnparsableParameter(parameter) => Some(format!("Value of parameter {} is not parsable.", parameter)),
             ApiErrorType::BadRequest(msg) => Some(format!("Bad request: {}", msg)),
             ApiErrorType::ResourceNotFound(resource_name) => Some(format!("The requested resource {} couldn't be found.", resource_name)),

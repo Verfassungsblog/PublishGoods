@@ -38,6 +38,7 @@ pub mod export;
 pub mod import;
 pub mod mailer;
 pub mod persons;
+pub mod profile_settings;
 pub mod projects;
 pub mod session;
 mod settings;
@@ -292,11 +293,26 @@ async fn rocket() -> _ {
                 import::api::import_from_wordpress,
                 export::download::download_rendering,
                 settings_page::settings_page,
+                settings_page::api::get_current_user,
                 settings_page::api::add_user,
                 settings_page::api::update_user,
                 settings_page::api::delete_user,
+                settings_page::api::delete_own_account,
                 import::api::import_from_upload,
                 projects::websocket::websocket,
+                profile_settings::profile_settings,
+                profile_settings::teams::list_teams,
+                profile_settings::teams::get_team,
+                profile_settings::teams::create_team,
+                profile_settings::teams::patch_team,
+                profile_settings::teams::leave_team,
+                profile_settings::teams::delete_team,
+                profile_settings::teams::create_invitation,
+                profile_settings::teams::list_invitations,
+                profile_settings::teams::decline_invitation,
+                profile_settings::teams::accept_invitation,
+                profile_settings::teams::list_my_invitations,
+                profile_settings::teams::decline_my_invitation,
             ],
         )
         .manage(SessionStorage::new())

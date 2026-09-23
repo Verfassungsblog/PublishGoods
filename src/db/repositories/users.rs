@@ -7,8 +7,9 @@ use sqlx::postgres::PgExecutor;
 use uuid::Uuid;
 
 /// A user's role within a team, backed by the `team_role` Postgres enum.
-#[derive(Debug, sqlx::Type, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, sqlx::Type, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[sqlx(type_name = "team_role", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum TeamRole {
     Owner,
     Admin,
@@ -26,6 +27,13 @@ pub struct User {
     pub locked_until: Option<DateTime<Utc>>,
     pub password_reset_token_hash: Option<String>,
     pub password_reset_token_valid_until: Option<DateTime<Utc>>,
+}
+
+// Public view of a user account
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UserProfile {
+    pub id: Uuid,
+    pub name: String,
 }
 
 /// Returns the id of the single "Default" team, creating it if it doesn't exist yet.

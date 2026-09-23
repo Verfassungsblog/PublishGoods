@@ -1,0 +1,37 @@
+<div class="card mb-3" data-team-id="{{id}}">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
+        <div class="d-flex align-items-center flex-grow-1 me-3">
+            {{#if can_manage}}
+                <input type="text" class="team_name_input" value="{{name}}">
+                <button type="button" class="btn btn-secondary btn-sm ms-2 save_team_name_btn">Save</button>
+            {{else}}
+                <strong>{{name}}</strong>
+            {{/if}}
+            <span class="badge bg-secondary ms-2">{{my_role}}</span>
+        </div>
+        <div>
+            {{#if can_manage}}
+                <button type="button" class="btn btn-primary btn-sm invite_member_btn">Invite</button>
+            {{/if}}
+            {{#if can_delete}}
+                <button type="button" class="btn btn-danger btn-sm delete_team_btn">Delete</button>
+            {{/if}}
+        </div>
+    </div>
+    <div class="card-body">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Role</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody class="team_members_body">
+                {{#each members}}
+                    {{> profile_settings_teams_tab_member_row}}
+                {{/each}}
+            </tbody>
+        </table>
+    </div>
+</div>

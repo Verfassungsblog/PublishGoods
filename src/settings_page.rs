@@ -17,6 +17,7 @@ pub mod api {
     use super::User;
     use crate::db::repositories::users;
     use crate::session::session_guard::Session;
+    use crate::session::session_storage::SessionStorage;
     use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
     use argon2::password_hash::rand_core::OsRng;
     use argon2::{Argon2, PasswordHasher};
@@ -39,6 +40,20 @@ pub mod api {
             .hash_password(password.as_bytes(), &salt)
             .unwrap()
             .to_string()
+    }
+
+    /// GET /api/users/me
+    ///
+    /// Returns the profile of the currently logged-in user.
+    #[get("/api/users/me")]
+    pub async fn get_current_user(session: Session, pool: &State<PgPool>) -> APIResult<User> {
+        let mut user = users::get(pool.inner(), session.user_id).await?;
+
+        user.password_hash = None;
+        user.password_reset_token_hash = None;
+        user.password_reset_token_valid_until = None;
+
+        Ok(APIResponse::from(user))
     }
 
     /// Insert a new user
@@ -144,6 +159,38 @@ pub mod api {
         }
 
         users::delete(pool.inner(), id).await?;
+        Ok(APIResponse::from(()))
+    }
+
+    /// Confirmation payload for [`delete_own_account`].
+    #[derive(serde::Deserialize)]
+    pub struct DeleteOwnAccount {
+        email: String,
+    }
+
+    /// Deletes the currently logged-in user's own account.
+    ///
+    /// Requires the account's email to be repeated as confirmation (checked against the
+    /// current DB value, not the possibly-stale email cached on the session), and
+    /// invalidates the session immediately on success.
+    #[delete("/api/users/me", data = "<confirm>")]
+    pub async fn delete_own_account(
+        confirm: Json<DeleteOwnAccount>,
+        session: Session,
+        pool: &State<PgPool>,
+        session_storage: &State<SessionStorage>,
+    ) -> APIResult<()> {
+        let user = users::get(pool.inner(), session.user_id).await?;
+
+        if !confirm.email.trim().eq_ignore_ascii_case(&user.email) {
+            return Err(
+                ApiErrorType::BadRequest("Email confirmation does not match.".to_string()).into(),
+            );
+        }
+
+        users::delete(pool.inner(), session.user_id).await?;
+        session_storage.remove_session(session.id.clone());
+
         Ok(APIResponse::from(()))
     }
 }

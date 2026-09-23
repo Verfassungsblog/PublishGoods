@@ -19,22 +19,9 @@ let project_api = ProjectAPI();
 let export_api = ExportAPI();
 let checker_timer: string | number | NodeJS.Timeout = null;
 
-let close_overlay = function(){
-    let overlay_wrapper = document.getElementById("overlay-wrapper");
-    let overlay_content = document.getElementById("inner_overlay");
-    overlay_wrapper.classList.add("hide");
-    overlay_content.innerHTML = "";
-
-}
 export async function add_listeners(){
-    document.getElementById("overlay_close_btn").addEventListener("click", close_overlay);
     document.getElementById("editor_render_project_btn").addEventListener("click", preview_project_listener);
     document.getElementById("editor_export_project_btn").addEventListener("click", export_project_listener);
-    addEventListener("keydown", function(e){
-        if(e.key === "Escape" && !document.getElementById("overlay-wrapper").classList.contains("hide")){
-            close_overlay();
-        }
-    });
 }
 
 async function preview_project_listener(){
@@ -281,16 +268,8 @@ export async function export_project_listener(){
 
     console.log(data);
 
-    let overlay_wrapper = document.getElementById("overlay-wrapper");
-    let overlay_content = document.getElementById("inner_overlay");
-    overlay_wrapper.classList.remove("hide");
-
-    document.getElementById("overlay_close_btn").addEventListener("click", function(){
-        overlay_wrapper.classList.add("hide");
-        overlay_content.innerHTML = "";
-    });
     // @ts-ignore
-    overlay_content.innerHTML = Handlebars.templates.editor_export_wizard(data);
+    Tools.show_overlay(Handlebars.templates.editor_export_wizard(data));
 
     // Add listener to export selection:
     document.getElementById("export-wizard-select-all").addEventListener("change", function(){
