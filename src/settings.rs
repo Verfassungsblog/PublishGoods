@@ -23,6 +23,7 @@ pub struct Settings {
     pub backup_to_file_interval: u64,
     pub max_connections_to_rendering_server: u64,
     pub max_import_threads: u64,
+    pub max_external_rendering_jobs: u64,
     pub zotero_translation_server: String,
     pub export_servers: Vec<ExportServer>,
     pub ca_cert_path: String,

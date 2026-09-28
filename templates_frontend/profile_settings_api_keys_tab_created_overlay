@@ -1,0 +1,9 @@
+<h1>API Key Created</h1>
+<p class="mt-3">Copy this key now &mdash; <span class="text-danger">it won't be shown again.</span></p>
+<div class="form-group">
+    <div class="input-group">
+        <input type="text" class="form-control" id="created_api_key_value" value="{{key}}" readonly>
+        <button type="button" class="btn btn-secondary" id="copy_api_key_btn">Copy</button>
+    </div>
+</div>
+<button type="button" class="btn btn-primary mt-3" id="close_created_api_key_btn">Done</button>

@@ -4,6 +4,7 @@
 //! function takes `impl sqlx::PgExecutor<'e>` so callers can pass either `&PgPool` for a
 //! standalone read, or `&mut *tx` for multi-statement atomic writes.
 
+pub mod api_keys;
 pub mod bibliography;
 pub mod folders;
 pub mod persons;

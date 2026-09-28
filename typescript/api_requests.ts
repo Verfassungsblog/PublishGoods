@@ -359,6 +359,20 @@ export interface PatchTeamData {
     members?: PatchTeamMember[];
 }
 
+export interface ApiKey {
+    id: string;
+    user_id: string;
+    name: string;
+    key_prefix: string;
+    created_at: string;
+}
+
+// Returned only once, by POST /api/api-keys: the full secret, which the server never
+// stores or returns again (only its Argon2 hash is kept).
+export interface CreatedApiKey extends ApiKey {
+    key: string;
+}
+
 export function TeamsAPI() {
     async function list_teams(): Promise<Team[]> {
         const response = await fetch(`/api/teams`, {
@@ -544,6 +558,62 @@ export function TeamsAPI() {
         list_my_invitations,
         accept_invitation,
         decline_my_invitation
+    };
+}
+
+export function ApiKeysAPI() {
+    async function list_api_keys(): Promise<ApiKey[]> {
+        const response = await fetch(`/api/api-keys`, {
+            method: 'GET',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to list API keys: ${response.status}`);
+        }
+        const response_data: ApiResult<ApiKey[]> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to list API keys: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data ?? [];
+    }
+
+    async function create_api_key(name: string): Promise<CreatedApiKey> {
+        const response = await fetch(`/api/api-keys`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name})
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to create API key: ${response.status}`);
+        }
+        const response_data: ApiResult<CreatedApiKey> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to create API key: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+        return response_data.data;
+    }
+
+    async function delete_api_key(key_id: string): Promise<void> {
+        const response = await fetch(`/api/api-keys/${key_id}`, {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to delete API key: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to delete API key: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    return {
+        list_api_keys,
+        create_api_key,
+        delete_api_key
     };
 }
 

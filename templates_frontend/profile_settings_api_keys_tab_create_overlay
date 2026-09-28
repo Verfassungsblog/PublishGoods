@@ -1,0 +1,6 @@
+<h1>Create API Key</h1>
+<div class="form-group mt-3">
+    <label for="new_api_key_name">Name</label>
+    <input type="text" id="new_api_key_name" autocomplete="off" placeholder="e.g. Rendering server">
+</div>
+<button type="button" class="btn btn-primary mt-3" id="confirm_create_api_key">Create API Key</button>

@@ -7,9 +7,23 @@ window.addEventListener("load", async function () {
 
 const profile_settings_nav_account = document.getElementById("profile_settings_nav_account");
 const profile_settings_nav_teams = document.getElementById("profile_settings_nav_teams");
+const profile_settings_nav_api_keys = document.getElementById("profile_settings_nav_api_keys");
 const tab_content = document.getElementById("tab-content");
 
 const teams_api = API.TeamsAPI();
+const api_keys_api = API.ApiKeysAPI();
+
+/**
+ * Marks exactly one of the three tab nav links as active, clearing the others. A plain
+ * `classList.add`/`classList.remove` pair per tab-switch function (as used to work for
+ * just Account/Teams) doesn't scale past two tabs: switching to a third tab would leave a
+ * previous tab's "active" class in place unless every switch function also clears it.
+ */
+function set_active_tab(tab: "account" | "teams" | "api_keys"){
+    profile_settings_nav_account.classList.toggle("active", tab === "account");
+    profile_settings_nav_teams.classList.toggle("active", tab === "teams");
+    profile_settings_nav_api_keys.classList.toggle("active", tab === "api_keys");
+}
 
 let current_user_id: string | null = null;
 let current_user_email: string | null = null;
@@ -38,11 +52,11 @@ async function init(){
 
     profile_settings_nav_account.addEventListener("click", show_account_settings);
     profile_settings_nav_teams.addEventListener("click", show_teams_settings)
+    profile_settings_nav_api_keys.addEventListener("click", show_api_keys_settings)
 }
 
 async function show_account_settings(){
-    profile_settings_nav_account.classList.add("active");
-    profile_settings_nav_teams.classList.remove("active");
+    set_active_tab("account");
 
     try {
         let user = await API.send_get_current_user();
@@ -148,8 +162,7 @@ async function save_account_settings(){
 }
 
 async function show_teams_settings(){
-    profile_settings_nav_teams.classList.add("active");
-    profile_settings_nav_account.classList.remove("active");
+    set_active_tab("teams");
 
     try {
         const [teams, pending_invitations] = await Promise.all([
@@ -496,4 +509,107 @@ function show_invite_overlay(team: API.Team, invitations: API.Invitation[]){
             }
         });
     });
+}
+
+async function show_api_keys_settings(){
+    set_active_tab("api_keys");
+
+    try {
+        const api_keys = await api_keys_api.list_api_keys();
+
+        // @ts-ignore
+        tab_content.innerHTML = Handlebars.templates.profile_settings_api_keys_tab({
+            api_keys: api_keys.map(key => ({
+                id: key.id,
+                name: key.name,
+                key_prefix: key.key_prefix,
+                created_at: new Date(key.created_at).toLocaleString()
+            }))
+        });
+
+        add_api_keys_settings_listeners();
+    } catch (e) {
+        Tools.show_alert("Failed to load API keys.", "danger");
+        console.error(e);
+    }
+}
+
+function add_api_keys_settings_listeners(){
+    document.getElementById("create_api_key_btn").addEventListener("click", start_create_api_key);
+
+    tab_content.querySelectorAll(".delete_api_key_btn").forEach(btn => {
+        btn.addEventListener("click", function (){
+            const row = btn.closest("[data-api-key-id]") as HTMLElement;
+            if (window.confirm("Delete this API key? Anything using it will stop working immediately.")){
+                delete_api_key(row.dataset.apiKeyId);
+            }
+        });
+    });
+}
+
+function start_create_api_key(){
+    // @ts-ignore
+    Tools.show_overlay(Handlebars.templates.profile_settings_api_keys_tab_create_overlay({}));
+
+    const overlay_content = document.getElementById("inner_overlay");
+    const name_input = <HTMLInputElement>overlay_content.querySelector("#new_api_key_name");
+    const confirm_btn = overlay_content.querySelector("#confirm_create_api_key");
+
+    confirm_btn.addEventListener("click", async function (){
+        const name = name_input.value.trim();
+        if (!name){
+            Tools.show_alert("Please enter a name.", "danger");
+            return;
+        }
+
+        try {
+            const created = await api_keys_api.create_api_key(name);
+            // Refresh the list behind the overlay first, so the new key is already there
+            // however the "key created" overlay that follows gets dismissed (Done button,
+            // the X button, or Escape all just close it without any extra handling).
+            await show_api_keys_settings();
+            show_created_api_key_overlay(created.key);
+        } catch (e) {
+            Tools.show_alert("Failed to create API key.", "danger");
+            console.error(e);
+        }
+    });
+}
+
+function show_created_api_key_overlay(key: string){
+    // @ts-ignore
+    Tools.show_overlay(Handlebars.templates.profile_settings_api_keys_tab_created_overlay({key: key}));
+
+    const overlay_content = document.getElementById("inner_overlay");
+    const key_input = <HTMLInputElement>overlay_content.querySelector("#created_api_key_value");
+    const copy_btn = overlay_content.querySelector("#copy_api_key_btn");
+    const close_btn = overlay_content.querySelector("#close_created_api_key_btn");
+
+    copy_btn.addEventListener("click", async function (){
+        try {
+            // @ts-ignore - navigator.clipboard is undefined on plain-HTTP non-localhost origins.
+            if (navigator.clipboard && navigator.clipboard.writeText){
+                await navigator.clipboard.writeText(key_input.value);
+                Tools.show_alert("API key copied to clipboard.", "success");
+                return;
+            }
+        } catch (e) {
+            console.error(e);
+        }
+        key_input.select();
+        Tools.show_alert("Couldn't copy automatically — the key is selected, press Ctrl+C.", "warning");
+    });
+
+    close_btn.addEventListener("click", Tools.hide_overlay);
+}
+
+async function delete_api_key(key_id: string){
+    try {
+        await api_keys_api.delete_api_key(key_id);
+        Tools.show_alert("API key deleted.", "success");
+        await show_api_keys_settings();
+    } catch (e) {
+        Tools.show_alert("Failed to delete API key.", "danger");
+        console.error(e);
+    }
 }
