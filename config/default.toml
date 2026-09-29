@@ -12,10 +12,27 @@ database_max_connections = 10
 file_lock_timeout = 1000
 # Time until in-memory database is written to file in seconds
 backup_to_file_interval = 20
-# Maximum number of concurrent rendering threads
+# Maximum number of concurrent rendering tasks
 max_connections_to_rendering_server = 10
-# Maximum number of concurrent import processing threads
+# Maximum number of concurrent import processing tasks
 max_import_threads = 4
+# Maximum number of concurrent external rendering api tasks
+max_external_rendering_jobs = 2
+# How long a finished external rendering job's results stay downloadable, in seconds. After this,
+# the job and its result files are removed.
+external_rendering_result_validity = 3600
+# Timeout in seconds for a rendering: counted from the moment the request is sent to the rendering server until the
+# result arrived. This includes transferring the template and any time the request waits in the rendering server's
+# own queue. A rendering that takes longer fails, but the rendering server is not told to cancel it. 0 disables the timeout.
+rendering_server_timeout = 600
+# Timeout in seconds for connecting to a single rendering server (including the TLS handshake). If a server doesn't
+# answer in time, the next configured server is tried. 0 disables the timeout.
+rendering_server_connect_timeout = 10
+# Timeout in seconds for preparing a project for rendering (rendering citations, resolving authors, reading uploads)
+# before it is sent to a rendering server. 0 disables the timeout.
+rendering_preprocessing_timeout = 300
+# Timeout in seconds for an import job (including the external rendering api's import step). 0 disables the timeout.
+import_timeout = 600
 # URL to the zotero translation server (https://github.com/zotero/translation-server) for importing zotero items.
 zotero_translation_server = "https://translation-server.anghenfil.de"
 

@@ -25,6 +25,7 @@ use crate::storage::project_storage::sections::content::current::NewContentBlock
 use crate::storage::project_storage::sections::migration::convert_contentblocks_to_yrs;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::utils::dedup::dedup_vec;
+use crate::utils::timeout::{limit_from_seconds, with_timeout};
 use log::{debug, error, warn};
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,55 @@ use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
 use vb_exchange::projects::{Identifier, IdentifierType};
 use yrs::{ReadTxn, StateVector, Transact};
+
+/// Where imported media files are stored and how content references them.
+#[derive(Debug, Clone)]
+pub struct MediaStore {
+    /// Directory downloaded files are written to
+    pub dir: PathBuf,
+    /// URL prefix (without trailing slash) content uses to reference the files in `dir`
+    pub url_prefix: String,
+}
+
+impl MediaStore {
+    /// The uploads directory of a project in the project storage.
+    pub fn for_project(settings: &Settings, project_id: uuid::Uuid) -> Self {
+        MediaStore {
+            dir: PathBuf::from(format!(
+                "{}/projects/{}/uploads",
+                settings.data_path, project_id
+            )),
+            url_prefix: format!("/api/projects/{}/uploads", project_id),
+        }
+    }
+}
+
+/// A section that was imported into memory (nothing was persisted), together with the
+/// bibliography entries its content cites.
+#[derive(Debug)]
+pub struct ImportedSection {
+    pub section: Section,
+    pub bib_entries: Vec<BibEntryV3>,
+}
+
+/// Where a WordPress post to import (or, for the external rendering api, render) is located.
+/// The external variant names are part of that api's request JSON.
+#[derive(Debug, Clone, Deserialize)]
+pub enum WordpressPostLocation {
+    /// Link to a post
+    WordPressByURL(String),
+    /// Host (without protocol) and slug of a single post
+    WordPressBySlug { host: String, slug: String },
+}
+
+/// Import options that are not specific to where the content comes from.
+#[derive(Debug, Clone, Copy)]
+pub struct ContentImportOptions {
+    pub convert_footnotes_to_endnotes: bool,
+    pub shift_headings_up: bool,
+    pub convert_links: bool,
+    pub import_author_names: bool,
+}
 
 /// Struct wrapping all import jobs
 pub struct ImportProcessor {
@@ -94,6 +144,20 @@ pub enum ImportError {
     ProjectNotFound,
     /// A database error occurred while persisting imported content
     DatabaseError(String),
+    /// The import took longer than the configured `import_timeout`
+    Timeout,
+}
+
+impl From<WordpressAPIError> for ImportError {
+    fn from(e: WordpressAPIError) -> Self {
+        ImportError::WordPressApiError(e)
+    }
+}
+
+impl From<crate::db::repositories::DbError> for ImportError {
+    fn from(e: crate::db::repositories::DbError) -> Self {
+        ImportError::DatabaseError(e.to_string())
+    }
 }
 
 /// Represents a import job with settings and an ['ImportJobData'] variant.
@@ -205,46 +269,63 @@ impl ImportProcessor {
     ///
     /// The background worker will run for the process lifetime, picking up and processing import jobs as
     /// they become available in the queue.
-    pub fn start(settings: Settings, pool: sqlx::PgPool) -> Arc<ImportProcessor> {
-        let processor = Arc::new(ImportProcessor {
+    /// Creates an `ImportProcessor` without starting the background worker. Useful for
+    /// importing content into memory via the `fetch_*` functions.
+    pub fn new(settings: Settings, pool: sqlx::PgPool) -> ImportProcessor {
+        ImportProcessor {
             settings,
             pool,
             job_queue: RwLock::new(VecDeque::new()),
             job_archive: RwLock::new(HashMap::new()),
-        });
+        }
+    }
+
+    pub fn start(settings: Settings, pool: sqlx::PgPool) -> Arc<ImportProcessor> {
+        let processor = Arc::new(ImportProcessor::new(settings, pool));
 
         let processor_clone = processor.clone();
         tokio::spawn(async move {
-            let running_threads: Arc<std::sync::atomic::AtomicU64> =
-                Arc::new(std::sync::atomic::AtomicU64::new(0));
+            // Limits how many import jobs are processed concurrently.
+            let slots = Arc::new(tokio::sync::Semaphore::new(
+                processor_clone.settings.max_import_threads as usize,
+            ));
 
             loop {
-                // Check if there are any new jobs
+                // Check if there are any new jobs and a slot is free
                 let job_queue_len = processor_clone.job_queue.read().unwrap().len();
                 if job_queue_len > 0
-                    && processor_clone.settings.max_import_threads
-                        > running_threads.load(std::sync::atomic::Ordering::SeqCst)
+                    && let Ok(permit) = Arc::clone(&slots).try_acquire_owned()
                 {
                     debug!("Starting new import job...");
 
                     let proc_clone = processor_clone.clone();
-                    let running_threads_cpy = running_threads.clone();
 
                     tokio::spawn(async move {
-                        running_threads_cpy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        // Held until the job finishes, freeing the slot again
+                        let _permit = permit;
                         let job = match proc_clone.job_queue.write().unwrap().pop_front() {
                             Some(job) => job,
-                            None => {
-                                running_threads_cpy
-                                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                                return;
-                            }
+                            None => return,
                         };
 
                         let total_to_process = match &job.import_data {
                             ImportJobData::WordpressLinks(data) => Some(data.len()),
                             ImportJobData::FileImport(data) => Some(data.files_to_process.len()),
                             ImportJobData::WordpressFilter(_data) => None,
+                        };
+
+                        // Uploaded files this job owns. `process_job` normally cleans these up
+                        // itself as it goes, but its future is dropped mid-execution on timeout,
+                        // skipping that cleanup, so keep our own copy of the paths to sweep
+                        // afterwards regardless of how the job ended.
+                        let temp_files: Vec<String> = match &job.import_data {
+                            ImportJobData::FileImport(data) => data
+                                .files_to_process
+                                .iter()
+                                .map(|(path, _)| path.clone())
+                                .chain(data.bib_file.clone())
+                                .collect(),
+                            _ => Vec::new(),
                         };
 
                         let status = ImportStatus::Processing(ProcessingDetails {
@@ -256,9 +337,34 @@ impl ImportProcessor {
                             .write()
                             .unwrap()
                             .insert(job.id, status);
-                        proc_clone.process_job(job).await;
+                        let job_id = job.id;
+                        let timeout_seconds = proc_clone.settings.import_timeout;
+                        if with_timeout(
+                            limit_from_seconds(timeout_seconds),
+                            proc_clone.process_job(job),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            warn!(
+                                "Import job {} timed out after {} seconds",
+                                job_id, timeout_seconds
+                            );
+                            proc_clone.update_import_status(
+                                &job_id,
+                                ImportStatus::Failed(ImportError::Timeout),
+                            );
+                        }
+
+                        for path in &temp_files {
+                            if let Err(e) = tokio::fs::remove_file(path).await
+                                && e.kind() != std::io::ErrorKind::NotFound
+                            {
+                                error!("Error removing temp file {}: {:?}", path, e);
+                            }
+                        }
+
                         debug!("Job finished");
-                        running_threads_cpy.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     });
                 } else {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -316,7 +422,7 @@ impl ImportProcessor {
             {
                 error!("Import failed: {:?}", e);
                 self.update_import_status(&job.id, ImportStatus::Failed(e));
-                break;
+                return;
             }
         }
         self.update_import_status(&job.id, ImportStatus::Complete);
@@ -369,6 +475,7 @@ impl ImportProcessor {
         }
 
         let total_num = job_data.files_to_process.len();
+        let mut failed = false;
 
         for (num, (file, content_type)) in job_data.files_to_process.iter().enumerate() {
             debug!("Processing file: {}", file);
@@ -399,6 +506,7 @@ impl ImportProcessor {
                 Err(e) => {
                     warn!("Error processing file: {:?}", e);
                     self.update_import_status(&job.id, ImportStatus::Failed(e));
+                    failed = true;
                     break;
                 }
             }
@@ -409,7 +517,9 @@ impl ImportProcessor {
                 error!("Error removing file from temp directory: {:?}", e);
             }
         }
-        self.update_import_status(&job.id, ImportStatus::Complete);
+        if !failed {
+            self.update_import_status(&job.id, ImportStatus::Complete);
+        }
     }
 
     /// Imports WordPress posts from a wordpress host by filter criteria
@@ -520,7 +630,7 @@ impl ImportProcessor {
             {
                 eprintln!("Error processing post for import: {:?}", e);
                 self.update_import_status(&job.id, ImportStatus::Failed(e));
-                break;
+                return;
             }
         }
         self.update_import_status(&job.id, ImportStatus::Complete);
@@ -563,13 +673,70 @@ impl ImportProcessor {
         convert_links: bool,
         import_author_names: bool,
     ) -> Result<(), ImportError> {
+        let media = MediaStore::for_project(&self.settings, project_id);
+        let imported = self
+            .fetch_by_url(
+                url,
+                &media,
+                ContentImportOptions {
+                    convert_footnotes_to_endnotes: endnotes,
+                    shift_headings_up,
+                    convert_links,
+                    import_author_names,
+                },
+            )
+            .await?;
+        for section in imported {
+            self.persist_imported(project_id, section).await?;
+        }
+        Ok(())
+    }
+
+    /// Fetches WordPress content from `location` and converts it into sections in memory,
+    /// without persisting anything. Media is downloaded into `media`.
+    pub async fn fetch_wordpress(
+        &self,
+        location: &WordpressPostLocation,
+        media: &MediaStore,
+        options: ContentImportOptions,
+    ) -> Result<Vec<ImportedSection>, ImportError> {
+        match location {
+            WordpressPostLocation::WordPressByURL(url) => {
+                self.fetch_by_url(url, media, options).await
+            }
+            WordpressPostLocation::WordPressBySlug { host, slug } => {
+                let host = normalize_host(host).ok_or(ImportError::WordPressApiError(
+                    WordpressAPIError::InvalidURL,
+                ))?;
+                let slug = slug.trim();
+                if slug.is_empty() {
+                    return Err(ImportError::WordPressApiError(
+                        WordpressAPIError::InvalidURL,
+                    ));
+                }
+                let api = WordpressAPI::new(host)?;
+                Ok(vec![
+                    self.fetch_single_post(&api, slug, media, options).await?,
+                ])
+            }
+        }
+    }
+
+    /// Like [`Self::import_by_url`], but returns the imported sections instead of persisting them.
+    async fn fetch_by_url(
+        &self,
+        url: &str,
+        media: &MediaStore,
+        options: ContentImportOptions,
+    ) -> Result<Vec<ImportedSection>, ImportError> {
         let url = if url.ends_with("/") {
             url[..url.len() - 1].to_string()
         } else {
             url.to_string()
         };
 
-        let parsed_url = url::Url::parse(&url).unwrap();
+        let parsed_url = url::Url::parse(&url)
+            .map_err(|_| ImportError::WordPressApiError(WordpressAPIError::InvalidURL))?;
         let host = match parsed_url.host() {
             Some(host) => host,
             None => {
@@ -579,17 +746,15 @@ impl ImportProcessor {
             }
         };
 
-        let api = match WordpressAPI::new(host.to_string()) {
-            Ok(api) => api,
-            Err(e) => return Err(ImportError::WordPressApiError(e)),
-        };
+        let api = WordpressAPI::new(host.to_string())?;
         let path = parsed_url.path();
 
         let slug = path.split("/").last().unwrap_or("");
 
+        let mut imported = vec![];
         if path.starts_with("/category/") {
             debug!("Found category link. Trying to import all posts within category");
-            let category = match api
+            let category = api
                 .get_categories(
                     None,
                     None,
@@ -601,16 +766,12 @@ impl ImportProcessor {
                     None,
                     None,
                 )
-                .await
-            {
-                Ok(categories) => categories,
-                Err(e) => return Err(ImportError::WordPressApiError(e)),
-            };
+                .await?;
             if category.len() != 1 {
                 return Err(ImportError::WordPressApiError(WordpressAPIError::NotFound));
             }
             let category = category.first().unwrap();
-            let mut posts = match api
+            let response = api
                 .get_posts(
                     WordpressAPIContext::View,
                     None,
@@ -623,15 +784,10 @@ impl ImportProcessor {
                     Some(vec![category.id]),
                     None,
                 )
-                .await
-            {
-                Ok(posts) => match posts.data {
-                    PostDataType::FullPosts(posts) => posts,
-                    _ => {
-                        unreachable!()
-                    }
-                },
-                Err(e) => return Err(ImportError::WordPressApiError(e)),
+                .await?;
+            let mut posts = match response.data {
+                PostDataType::FullPosts(posts) => posts,
+                _ => unreachable!(),
             };
 
             // Add co authors if any
@@ -640,43 +796,85 @@ impl ImportProcessor {
             }
 
             for post in posts {
-                let additional_author_names = if import_author_names {
-                    self.resolve_wp_authors(&post, &api).await
-                } else {
-                    vec![]
-                };
-                self.import_wp_post(
-                    post,
-                    project_id,
-                    endnotes,
-                    shift_headings_up,
-                    convert_links,
-                    additional_author_names,
-                )
-                .await?;
+                imported.push(
+                    self.build_wp_post_with_authors(post, &api, media, options)
+                        .await?,
+                );
             }
         } else {
             debug!("Found non-category link. Trying to import single post");
-
-            let post = self.get_wp_post_by_link(slug.to_string(), &api).await?;
-            debug!("Successfully downloaded wp post. Trying to resolve author names.");
-            let additional_author_names = if import_author_names {
-                self.resolve_wp_authors(&post, &api).await
-            } else {
-                vec![]
-            };
-
-            self.import_wp_post(
-                post,
-                project_id,
-                endnotes,
-                shift_headings_up,
-                convert_links,
-                additional_author_names,
-            )
-            .await?;
+            imported.push(self.fetch_single_post(&api, slug, media, options).await?);
         }
+        Ok(imported)
+    }
+
+    /// Fetches the post with the given slug and converts it into a section in memory.
+    async fn fetch_single_post(
+        &self,
+        api: &WordpressAPI,
+        slug: &str,
+        media: &MediaStore,
+        options: ContentImportOptions,
+    ) -> Result<ImportedSection, ImportError> {
+        let post = self.get_wp_post_by_link(slug.to_string(), api).await?;
+        debug!("Successfully downloaded wp post. Trying to resolve author names.");
+        self.build_wp_post_with_authors(post, api, media, options)
+            .await
+    }
+
+    /// Resolves author names (if requested) and converts the post into a section in memory.
+    async fn build_wp_post_with_authors(
+        &self,
+        post: Post,
+        api: &WordpressAPI,
+        media: &MediaStore,
+        options: ContentImportOptions,
+    ) -> Result<ImportedSection, ImportError> {
+        let additional_author_names = if options.import_author_names {
+            self.resolve_wp_authors(&post, api).await
+        } else {
+            vec![]
+        };
+        self.build_wp_post(
+            post,
+            media,
+            options.convert_footnotes_to_endnotes,
+            options.shift_headings_up,
+            options.convert_links,
+            additional_author_names,
+        )
+        .await
+    }
+
+    /// Persists an [`ImportedSection`] (and the bibliography entries it cites) into a project.
+    async fn persist_imported(
+        &self,
+        project_id: uuid::Uuid,
+        imported: ImportedSection,
+    ) -> Result<(), ImportError> {
+        self.persist_bib_entries(project_id, imported.bib_entries)
+            .await;
+        crate::db::repositories::sections::insert_at_end(
+            &self.pool,
+            &self.settings,
+            project_id,
+            None,
+            &imported.section,
+        )
+        .await?;
         Ok(())
+    }
+
+    /// Adds bibliography entries to a project. Failures are logged and skipped.
+    async fn persist_bib_entries(&self, project_id: uuid::Uuid, entries: Vec<BibEntryV3>) {
+        for entry in entries {
+            if let Err(e) =
+                bibliography::insert(&self.pool, project_id, &BibEntryOrFolder::BibEntry(entry))
+                    .await
+            {
+                warn!("Couldn't save imported bibliography entry: {:?}", e);
+            }
+        }
     }
 
     /// Tries to resolve the author id from the wordpress api
@@ -728,6 +926,30 @@ impl ImportProcessor {
         convert_links: bool,
         imported_authors: Vec<PersonUuidOrString>,
     ) -> Result<(), ImportError> {
+        let media = MediaStore::for_project(&self.settings, project_id);
+        let imported = self
+            .build_wp_post(
+                post,
+                &media,
+                endnotes,
+                shift_headings_up,
+                convert_links,
+                imported_authors,
+            )
+            .await?;
+        self.persist_imported(project_id, imported).await
+    }
+
+    /// Like [`Self::import_wp_post`], but returns the section instead of persisting it.
+    async fn build_wp_post(
+        &self,
+        post: Post,
+        media: &MediaStore,
+        endnotes: bool,
+        shift_headings_up: bool,
+        convert_links: bool,
+        imported_authors: Vec<PersonUuidOrString>,
+    ) -> Result<ImportedSection, ImportError> {
         let subtitle = match &post.acf {
             None => None,
             Some(acf) => acf.subheadline.clone(),
@@ -797,10 +1019,10 @@ impl ImportProcessor {
 
         debug!("{:?}", section);
 
-        self.import_html_from_wp(
+        self.build_section_from_wp_html(
             section,
             post.content.rendered.clone(),
-            project_id,
+            media,
             endnotes,
             shift_headings_up,
             convert_links,
@@ -813,7 +1035,7 @@ impl ImportProcessor {
         slug: String,
         api: &WordpressAPI,
     ) -> Result<Post, ImportError> {
-        let mut posts = match api
+        let response = api
             .get_posts(
                 WordpressAPIContext::default(),
                 None,
@@ -826,17 +1048,14 @@ impl ImportProcessor {
                 None,
                 None,
             )
-            .await
-        {
-            Ok(posts) => match posts.data {
-                PostDataType::FullPosts(posts) => posts,
-                _ => {
-                    return Err(ImportError::WordPressApiError(
-                        WordpressAPIError::InvalidURL,
-                    ));
-                }
-            },
-            Err(e) => return Err(ImportError::WordPressApiError(e)),
+            .await?;
+        let mut posts = match response.data {
+            PostDataType::FullPosts(posts) => posts,
+            _ => {
+                return Err(ImportError::WordPressApiError(
+                    WordpressAPIError::InvalidURL,
+                ));
+            }
         };
         // Add co authors if any
         for post in posts.iter_mut() {
@@ -1001,15 +1220,42 @@ impl ImportProcessor {
     /// # Errors
     /// Returns [`ImportError::HtmlConversionFailed`] if the input can't be parsed, or
     /// [`ImportError::DatabaseError`] if persisting the section fails.
+    #[cfg(test)]
     async fn import_html_from_wp(
         &self,
-        mut section: Section,
+        section: Section,
         input: String,
         project_id: uuid::Uuid,
         endnotes: bool,
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<(), ImportError> {
+        let media = MediaStore::for_project(&self.settings, project_id);
+        let imported = self
+            .build_section_from_wp_html(
+                section,
+                input,
+                &media,
+                endnotes,
+                shift_headings,
+                convert_links,
+            )
+            .await?;
+        debug!("Saving imported section");
+        self.persist_imported(project_id, imported).await
+    }
+
+    /// Like [`Self::import_html_from_wp`], but returns the section and cited bibliography
+    /// entries instead of persisting them. Media is downloaded into `media`.
+    async fn build_section_from_wp_html(
+        &self,
+        mut section: Section,
+        input: String,
+        media: &MediaStore,
+        endnotes: bool,
+        shift_headings: bool,
+        convert_links: bool,
+    ) -> Result<ImportedSection, ImportError> {
         debug!("Importing html from wp");
 
         // Phase 1 (sync): parse and collect the URLs that need asynchronous work (images/media to download). The
@@ -1033,8 +1279,8 @@ impl ImportProcessor {
 
         // Phase 2 (async): download external media and resolve links into citations. Works
         // only on owned `String`s, so no non-Send handles are alive across the awaits.
-        let media_map = self.download_all_media(&media_srcs, project_id).await;
-        let link_map = self.resolve_all_links(&hrefs, project_id).await;
+        let media_map = self.download_all_media(&media_srcs, media).await;
+        let (link_map, bib_entries) = self.resolve_all_links(&hrefs).await;
 
         // Phase 3 (sync): re-parse and build the content blocks using the precomputed maps.
         let blocks = {
@@ -1067,17 +1313,10 @@ impl ImportProcessor {
             section.metadata.lang = detect_language_for_section(&section);
         }
 
-        debug!("Saving imported section");
-        crate::db::repositories::sections::insert_at_end(
-            &self.pool,
-            &self.settings,
-            project_id,
-            None,
-            &section,
-        )
-        .await
-        .map_err(|e| ImportError::DatabaseError(e.to_string()))?;
-        Ok(())
+        Ok(ImportedSection {
+            section,
+            bib_entries,
+        })
     }
 
     /// Sanitizes pandoc-produced HTML into editor content blocks, builds a new `Section`
@@ -1119,8 +1358,10 @@ impl ImportProcessor {
             (dedup_vec(media), dedup_vec(hrefs))
         };
 
-        let media_map = self.download_all_media(&media_srcs, project_id).await;
-        let link_map = self.resolve_all_links(&hrefs, project_id).await;
+        let media = MediaStore::for_project(&self.settings, project_id);
+        let media_map = self.download_all_media(&media_srcs, &media).await;
+        let (link_map, bib_entries) = self.resolve_all_links(&hrefs).await;
+        self.persist_bib_entries(project_id, bib_entries).await;
 
         let mut section = Section {
             id: Some(uuid::Uuid::new_v4()),
@@ -1180,8 +1421,7 @@ impl ImportProcessor {
             None,
             &section,
         )
-        .await
-        .map_err(|e| ImportError::DatabaseError(e.to_string()))?;
+        .await?;
         Ok(())
     }
 
@@ -1193,7 +1433,7 @@ impl ImportProcessor {
     async fn download_all_media(
         &self,
         srcs: &[String],
-        project_id: uuid::Uuid,
+        media: &MediaStore,
     ) -> HashMap<String, (String, String)> {
         use futures::StreamExt;
 
@@ -1207,7 +1447,7 @@ impl ImportProcessor {
         // Owned `String`s are moved into each task so the futures don't borrow `srcs`.
         let results: Vec<(String, Option<(String, String)>)> = futures::stream::iter(srcs.to_vec())
             .map(|src| async move {
-                let local = self.download_media(client, &src, project_id).await;
+                let local = self.download_media(client, &src, media).await;
                 (src, local)
             })
             .buffer_unordered(8)
@@ -1225,15 +1465,15 @@ impl ImportProcessor {
         map
     }
 
-    /// Downloads a single media file into `{data_path}/projects/{project_id}/uploads`.
+    /// Downloads a single media file into `media.dir`.
     ///
-    /// Returns `(api_url, filename)` on success, where `api_url` is the project-internal URL
-    /// used to reference the stored file.
+    /// Returns `(api_url, filename)` on success, where `api_url` is the URL (below
+    /// `media.url_prefix`) used to reference the stored file.
     async fn download_media(
         &self,
         client: &reqwest::Client,
         url: &str,
-        project_id: uuid::Uuid,
+        media: &MediaStore,
     ) -> Option<(String, String)> {
         let response = client.get(url).send().await.ok()?;
         if !response.status().is_success() {
@@ -1241,63 +1481,59 @@ impl ImportProcessor {
         }
         let bytes = response.bytes().await.ok()?;
         let filename = format!("{}{}", uuid::Uuid::new_v4(), extension_from_url(url));
-        let dir = format!(
-            "{}/projects/{}/uploads",
-            self.settings.data_path, project_id
-        );
-        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            warn!("Couldn't create uploads directory {}: {}", dir, e);
+        if let Err(e) = tokio::fs::create_dir_all(&media.dir).await {
+            warn!("Couldn't create uploads directory {:?}: {}", media.dir, e);
             return None;
         }
-        let path = format!("{}/{}", dir, filename);
+        let path = media.dir.join(&filename);
         if let Err(e) = tokio::fs::write(&path, &bytes).await {
-            warn!("Couldn't write media file {}: {}", path, e);
+            warn!("Couldn't write media file {:?}: {}", path, e);
             return None;
         }
-        Some((
-            format!("/api/projects/{}/uploads/{}", project_id, filename),
-            filename,
-        ))
+        Some((format!("{}/{}", media.url_prefix, filename), filename))
     }
 
     /// Resolves every collected link into a citation replacement (when the Zotero translation
-    /// server recognizes it), adding the resulting bibliography entries to the project.
+    /// server recognizes it).
+    ///
+    /// Returns the map from link to `<citation>` replacement, and the bibliography entries
+    /// (including parents) those citations refer to.
     async fn resolve_all_links(
         &self,
         hrefs: &[String],
-        project_id: uuid::Uuid,
-    ) -> HashMap<String, String> {
+    ) -> (HashMap<String, String>, Vec<BibEntryV3>) {
         use futures::StreamExt;
 
         let mut map = HashMap::new();
+        let mut bib_entries = vec![];
         if hrefs.is_empty() {
-            return map;
+            return (map, bib_entries);
         }
 
-        // Resolve links concurrently (bounded): the translation round-trips overlap, while the
-        // bibliography inserts inside `convert_link_to_citation` each go through their own
-        // short-lived pool connection.
-        let results: Vec<(String, Option<String>)> = futures::stream::iter(hrefs.to_vec())
-            .map(|href| async move {
-                let citation = self.convert_link_to_citation(&href, project_id).await;
-                (href, citation)
-            })
-            .buffer_unordered(8)
-            .collect()
-            .await;
+        // Resolve links concurrently (bounded), so the translation round-trips overlap.
+        let results: Vec<(String, Option<(String, Vec<BibEntryV3>)>)> =
+            futures::stream::iter(hrefs.to_vec())
+                .map(|href| async move {
+                    let citation = self.convert_link_to_citation(&href).await;
+                    (href, citation)
+                })
+                .buffer_unordered(8)
+                .collect()
+                .await;
 
         for (href, citation) in results {
-            if let Some(citation) = citation {
+            if let Some((citation, entries)) = citation {
                 map.insert(href, citation);
+                bib_entries.extend(entries);
             }
         }
-        map
+        (map, bib_entries)
     }
 
     /// Tries to convert a single external link into a citation by resolving it via the Zotero
-    /// translation server. On success the referenced bibliography entries (and their parents)
-    /// are added to the project and a `<citation>` replacement string is returned.
-    async fn convert_link_to_citation(&self, href: &str, project_id: uuid::Uuid) -> Option<String> {
+    /// translation server. On success a `<citation>` replacement string is returned together
+    /// with the referenced bibliography entries (and their parents).
+    async fn convert_link_to_citation(&self, href: &str) -> Option<(String, Vec<BibEntryV3>)> {
         let entries = link_converter::get_translation(href, &self.settings).await?;
         let main_entry = entries.first()?;
         let main_key = main_entry.key().to_string();
@@ -1309,6 +1545,7 @@ impl ImportProcessor {
         }
         let main_uuid = *uuid_map.get(&main_key)?;
 
+        let mut converted_entries = vec![];
         for (key, entry) in by_key.iter() {
             let mut converted = BibEntryV3::from(entry);
             let entry_uuid = *uuid_map.get(key).unwrap();
@@ -1319,18 +1556,13 @@ impl ImportProcessor {
                 .filter_map(|p| uuid_map.get(p.key()).copied())
                 .filter(|&p_uuid| p_uuid != entry_uuid)
                 .collect();
-            if let Err(e) = bibliography::insert(
-                &self.pool,
-                project_id,
-                &BibEntryOrFolder::BibEntry(converted),
-            )
-            .await
-            {
-                warn!("Couldn't save imported bibliography entry: {:?}", e);
-            }
+            converted_entries.push(converted);
         }
 
-        Some(format!("<citation data-key=\"{}\">C</citation>", main_uuid))
+        Some((
+            format!("<citation data-key=\"{}\">C</citation>", main_uuid),
+            converted_entries,
+        ))
     }
 
     /// Parses a BibLaTeX file and inserts its entries (and any parent entries they
@@ -1414,12 +1646,27 @@ impl ImportProcessor {
                 project_id,
                 &BibEntryOrFolder::BibEntry(converted),
             )
-            .await
-            .map_err(|e| ImportError::DatabaseError(e.to_string()))?;
+            .await?;
         }
 
         Ok(())
     }
+}
+
+/// Returns the bare host (optionally with port) of `host`, which may be given with a protocol
+/// and trailing slash. Returns None if it doesn't look like a valid host.
+fn normalize_host(host: &str) -> Option<String> {
+    let host = host.trim();
+    let host = host
+        .strip_prefix("https://")
+        .or_else(|| host.strip_prefix("http://"))
+        .unwrap_or(host)
+        .trim_end_matches('/');
+    let valid = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'));
+    valid.then(|| host.to_string())
 }
 
 /// HTML parsing, sanitization and serialization helpers built on top of
@@ -2565,6 +2812,12 @@ mod tests {
             backup_to_file_interval: 0,
             max_connections_to_rendering_server: 0,
             max_import_threads: 0,
+            max_external_rendering_jobs: 0,
+            external_rendering_result_validity: 0,
+            rendering_server_timeout: 0,
+            rendering_server_connect_timeout: 0,
+            rendering_preprocessing_timeout: 0,
+            import_timeout: 0,
             zotero_translation_server: "".to_string(),
             export_servers: vec![ExportServer {
                 hostname: "".to_string(),
@@ -2782,6 +3035,183 @@ mod tests {
             BlockData::Paragraph { text } => text.clone(),
             other => panic!("expected paragraph, got {other:?}"),
         }
+    }
+
+    fn job(project_id: Uuid, import_data: ImportJobData) -> ImportJob {
+        ImportJob {
+            id: Uuid::new_v4(),
+            project_id,
+            convert_footnotes_to_endnotes: false,
+            shift_headings_up: false,
+            convert_links: false,
+            import_author_names: false,
+            import_data,
+        }
+    }
+
+    fn status_of(processor: &ImportProcessor, job_id: &Uuid) -> ImportStatus {
+        processor
+            .job_archive
+            .read()
+            .unwrap()
+            .get(job_id)
+            .cloned()
+            .expect("job has a status")
+    }
+
+    #[sqlx::test]
+    async fn failed_wordpress_links_import_stays_failed(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool);
+        let job = job(
+            project_id,
+            ImportJobData::WordpressLinks(vec!["not a url".to_string()]),
+        );
+        let job_id = job.id;
+        processor.process_wordpress_links(job).await;
+        assert!(matches!(
+            status_of(&processor, &job_id),
+            ImportStatus::Failed(ImportError::WordPressApiError(
+                WordpressAPIError::InvalidURL
+            ))
+        ));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn failed_file_import_stays_failed(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool);
+        let job = job(
+            project_id,
+            ImportJobData::FileImport(FileImportData {
+                files_to_process: VecDeque::from([(
+                    "/tmp/vb-test-does-not-exist".to_string(),
+                    ContentType::Plain,
+                )]),
+                bib_file: None,
+            }),
+        );
+        let job_id = job.id;
+        processor.process_file_import(job).await;
+        assert!(matches!(
+            status_of(&processor, &job_id),
+            ImportStatus::Failed(ImportError::InvalidFile)
+        ));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn successful_import_is_complete(pool: PgPool) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let processor = make_processor(pool);
+        let job = job(project_id, ImportJobData::WordpressLinks(vec![]));
+        let job_id = job.id;
+        processor.process_wordpress_links(job).await;
+        assert!(matches!(
+            status_of(&processor, &job_id),
+            ImportStatus::Complete
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn host_normalization_rejects_anything_that_could_alter_the_request_url() {
+        assert_eq!(normalize_host("example.org"), Some("example.org".into()));
+        assert_eq!(
+            normalize_host(" https://example.org:8443/ "),
+            Some("example.org:8443".into())
+        );
+        for bad in [
+            "",
+            "example.org/path",
+            "user@example.org",
+            "a b.org",
+            "https://",
+        ] {
+            assert_eq!(normalize_host(bad), None, "{bad}");
+        }
+    }
+
+    #[sqlx::test]
+    async fn fetch_wordpress_by_slug_rejects_invalid_host_or_empty_slug_without_network(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let processor = make_processor(pool);
+        let media = MediaStore {
+            dir: PathBuf::from("/tmp/vb-test-unused-media"),
+            url_prefix: "/unused".to_string(),
+        };
+        let options = ContentImportOptions {
+            convert_footnotes_to_endnotes: false,
+            shift_headings_up: false,
+            convert_links: false,
+            import_author_names: false,
+        };
+
+        let bad_host = processor
+            .fetch_wordpress(
+                &WordpressPostLocation::WordPressBySlug {
+                    host: "not a host".to_string(),
+                    slug: "post".to_string(),
+                },
+                &media,
+                options,
+            )
+            .await;
+        assert!(matches!(
+            bad_host,
+            Err(ImportError::WordPressApiError(
+                WordpressAPIError::InvalidURL
+            ))
+        ));
+
+        let empty_slug = processor
+            .fetch_wordpress(
+                &WordpressPostLocation::WordPressBySlug {
+                    host: "example.org".to_string(),
+                    slug: "   ".to_string(),
+                },
+                &media,
+                options,
+            )
+            .await;
+        assert!(matches!(
+            empty_slug,
+            Err(ImportError::WordPressApiError(
+                WordpressAPIError::InvalidURL
+            ))
+        ));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn building_a_section_in_memory_persists_nothing(pool: PgPool) -> sqlx::Result<()> {
+        let processor = make_processor(pool.clone());
+        let media = MediaStore {
+            dir: PathBuf::from("/tmp/vb-test-unused-media"),
+            url_prefix: "/unused".to_string(),
+        };
+        let imported = processor
+            .build_section_from_wp_html(
+                empty_section(),
+                "<p>Hello</p>".to_string(),
+                &media,
+                false,
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert!(!imported.section.content.is_empty());
+        let decoded = decode_yjs_content(&imported.section.content).unwrap();
+        assert_eq!(first_paragraph_text(&decoded), "Hello");
+        let sections = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sections")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(sections, 0);
+        Ok(())
     }
 
     #[sqlx::test]

@@ -40,6 +40,7 @@ pub mod mailer;
 pub mod persons;
 pub mod profile_settings;
 pub mod projects;
+pub mod render_api;
 pub mod session;
 mod settings;
 pub mod settings_page;
@@ -186,6 +187,13 @@ async fn rocket() -> _ {
         Arc::new(client_config),
     );
 
+    info!("Starting external rendering api...");
+    let external_render_manager = render_api::ExternalRenderManager::init(
+        settings.clone(),
+        db_pool.clone(),
+        rendering_manager.clone(),
+    );
+
     info!("Starting import processing worker...");
     let import_manager =
         import::processing::ImportProcessor::start(settings.clone(), db_pool.clone());
@@ -313,6 +321,12 @@ async fn rocket() -> _ {
                 profile_settings::teams::accept_invitation,
                 profile_settings::teams::list_my_invitations,
                 profile_settings::teams::decline_my_invitation,
+                profile_settings::api_keys::list_api_keys,
+                profile_settings::api_keys::create_api_key,
+                profile_settings::api_keys::delete_api_key,
+                render_api::add_render_job,
+                render_api::get_render_job_status,
+                render_api::download_render_result,
             ],
         )
         .manage(SessionStorage::new())
@@ -321,6 +335,7 @@ async fn rocket() -> _ {
         .manage(import_manager)
         .manage(csl_data)
         .manage(rendering_manager)
+        .manage(external_render_manager)
         .manage(websocket_manager)
         .manage(mailer)
 }

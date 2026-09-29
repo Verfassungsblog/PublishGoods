@@ -24,6 +24,21 @@ pub struct Settings {
     pub max_connections_to_rendering_server: u64,
     pub max_import_threads: u64,
     pub max_external_rendering_jobs: u64,
+    /// Seconds a finished external rendering job's results stay downloadable before the job and
+    /// its result files are removed.
+    pub external_rendering_result_validity: u64,
+    /// Seconds a rendering may take from the moment its request is sent to a rendering server
+    /// until the result arrived (including template transfer and the server's own queue) before
+    /// it is aborted. 0 disables the timeout.
+    pub rendering_server_timeout: u64,
+    /// Seconds connecting to a single rendering server may take before the next one is tried.
+    /// 0 disables the timeout.
+    pub rendering_server_connect_timeout: u64,
+    /// Seconds preparing a project for rendering (before it is sent to a rendering server) may
+    /// take before it is aborted. 0 disables the timeout.
+    pub rendering_preprocessing_timeout: u64,
+    /// Seconds an import job may take before it is aborted. 0 disables the timeout.
+    pub import_timeout: u64,
     pub zotero_translation_server: String,
     pub export_servers: Vec<ExportServer>,
     pub ca_cert_path: String,
@@ -63,7 +78,7 @@ impl Settings {
     pub fn builder() -> Result<Self, ConfigError> {
         let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
         // Read version String from version.txt
-        let version = std::fs::read_to_string("version.txt").unwrap_or_else(|_| "unknown".into());
+        let version = env!("CARGO_PKG_VERSION");
 
         let s = Config::builder()
             .add_source(File::with_name("config/default"))

@@ -380,6 +380,9 @@ async function show_import_status(import_job_id: string){
                         case "ProjectNotFound":
                             error_msg = "Couldn't find the project to import into. Was it deleted in the meantime?";
                             break;
+                        case "Timeout":
+                            error_msg = "The import took too long and was aborted.";
+                            break;
                     }
                 }else if ("WordpressApiError" in error){
                     let details = error.WordPressApiError as string;

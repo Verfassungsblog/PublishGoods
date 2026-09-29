@@ -24,7 +24,7 @@ use markup5ever::{Attribute, local_name, ns};
 use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use vb_exchange::RenderingError;
 use vb_exchange::projects::PreparedProject;
@@ -53,7 +53,7 @@ use vb_exchange::projects::{
 /// * `pool` - PostgreSQL connection pool used for resolving person UUIDs.
 /// * `csl_data` - Shared reference for citation style language data required for rendering citations.
 /// * `sections_to_include` - Optional list of UUIDs representing the sections to include in preparation.
-/// * `project_id` - The UUID of the current project.
+/// * `uploads_dir` - Directory containing the files uploaded to the project (e.g. images referenced by content blocks).
 ///
 /// # Returns
 /// Returns `Ok(PreparedProject)` on success with all relevant data ready for export or further processing.
@@ -63,7 +63,7 @@ pub async fn prepare_project(
     pool: sqlx::PgPool,
     csl_data: Arc<CslData>,
     sections_to_include: Option<Vec<uuid::Uuid>>,
-    project_id: &uuid::Uuid,
+    uploads_dir: &Path,
 ) -> Result<PreparedProject, RenderingError> {
     let citation_bib = render_citations(&project_data, csl_data);
 
@@ -136,7 +136,7 @@ pub async fn prepare_project(
                                 section,
                                 pool.clone(),
                                 &citation_bib,
-                                project_id,
+                                uploads_dir,
                                 add_soft_hyphens,
                             )
                             .await,
@@ -148,7 +148,7 @@ pub async fn prepare_project(
                         section,
                         pool.clone(),
                         &citation_bib,
-                        project_id,
+                        uploads_dir,
                         add_soft_hyphens,
                     )
                     .await,
@@ -327,7 +327,7 @@ pub fn render_citations(project: &ProjectData, csl_data: Arc<CslData>) -> HashMa
 /// * `section` - The section to render.
 /// * `pool` - PostgreSQL connection pool, used for resolving author/editor UUIDs.
 /// * `citation_bib` - A map from citation keys to their corresponding bibliography data.
-/// * `project_id` - The UUID identifying the project this section belongs to.
+/// * `uploads_dir` - Directory containing the files uploaded to the project.
 /// * `add_soft_hyphens` - If true, adds soft hyphens to title and subtitle based on the detected language.
 ///
 /// # Returns
@@ -337,7 +337,7 @@ pub async fn render_section(
     section: Section,
     pool: sqlx::PgPool,
     citation_bib: &HashMap<String, String>,
-    project_id: &uuid::Uuid,
+    uploads_dir: &Path,
     add_soft_hyphens: bool,
 ) -> PreparedSection {
     let published = section.metadata.published.map(|date| date.into());
@@ -430,7 +430,7 @@ pub async fn render_section(
                 &mut endnote_storage,
                 &dict,
                 citation_bib,
-                project_id,
+                uploads_dir,
                 add_soft_hyphens,
             )
             .await,
@@ -444,7 +444,7 @@ pub async fn render_section(
                 sub_section,
                 pool.clone(),
                 citation_bib,
-                project_id,
+                uploads_dir,
                 add_soft_hyphens,
             )
             .await,
@@ -669,7 +669,7 @@ pub fn hyphenate_text(text: String, dict: &hyphenation::Standard) -> String {
 /// * `endnote_storage` - A mutable vector for endnote references, used in paragraph and text blocks.
 /// * `dict` - Dictionary used for text rendering and possible hyphenation.
 /// * `citation_bib` - Mapping for citations occurring in the content.
-/// * `project_id` - The UUID of the project, needed to locate uploaded image files.
+/// * `uploads_dir` - Directory containing the uploaded image files.
 /// * `add_soft_hyphens` - If true, optionally insert soft hyphens in rendered text for hyphenation if vivliostyle is used (weasyprint supports hyphenation out of the box).
 ///
 /// Returns a `PreparedContentBlock` containing the HTML string and associated metadata.
@@ -678,7 +678,7 @@ pub async fn render_content_block(
     endnote_storage: &mut Vec<(uuid::Uuid, String)>,
     dict: &Standard,
     citation_bib: &HashMap<String, String>,
-    project_id: &uuid::Uuid,
+    uploads_dir: &Path,
     add_soft_hyphens: bool,
 ) -> PreparedContentBlock {
     let css_classes_raw = block.css_classes.join(" ");
@@ -779,11 +779,11 @@ pub async fn render_content_block(
             stretched: _,
         } => {
             // Load image and convert to base64
-            let file = tokio::fs::read(PathBuf::from(format!(
-                "data/projects/{}/uploads/{}",
-                project_id, file.filename
-            )))
-            .await;
+            // Only the final path component is used, so a filename can't escape `uploads_dir`.
+            let file = match Path::new(&file.filename).file_name() {
+                Some(name) => tokio::fs::read(uploads_dir.join(name)).await,
+                None => Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)),
+            };
             match file {
                 Ok(file) => {
                     let img = image::load_from_memory(file.as_slice());

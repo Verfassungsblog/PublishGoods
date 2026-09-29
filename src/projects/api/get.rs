@@ -274,6 +274,12 @@ mod integration_tests {
             backup_to_file_interval: 0,
             max_connections_to_rendering_server: 0,
             max_import_threads: 0,
+            max_external_rendering_jobs: 0,
+            external_rendering_result_validity: 0,
+            rendering_server_timeout: 0,
+            rendering_server_connect_timeout: 0,
+            rendering_preprocessing_timeout: 0,
+            import_timeout: 0,
             zotero_translation_server: "".to_string(),
             export_servers: vec![ExportServer {
                 hostname: "".to_string(),

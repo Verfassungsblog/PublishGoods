@@ -2102,6 +2102,7 @@ export type ImportError =
     | "PandocError"
     | "HtmlConversionFailed"
     | "ProjectNotFound"
+    | "Timeout"
     | { WordPressApiError: WordpressAPIError };
 
 export interface ProcessingDetails{

@@ -38,13 +38,6 @@ jobs:
         ref: ${{ github.event.inputs.commit_hash }}
     - name: Setup
       run: npm install -g handlebars typescript@6.0.3 webpack webpack-cli && cd typescript && npm install
-    - name: Create version.txt
-      run: |
-        git_hash=$(git rev-parse --short "${{ github.event.inputs.commit_hash }}")
-        git_branch=$(git branch --contains "${{ github.event.inputs.commit_hash }}" | grep '*' | awk '{print $2}')
-        echo "$git_branch-$git_hash" > version.txt
-        echo "GIT_BRANCH=$git_branch" >> $GITHUB_ENV
-        echo "GIT_HASH=$git_hash" >> $GITHUB_ENV
     - name: Set up database schema
       run: |
         for f in migrations/*.sql; do
@@ -64,8 +57,7 @@ jobs:
         cp -R data/csl_styles packaged/data/ 
         cp -R templates packaged/templates 
         cp config/default.toml packaged/config/ 
-        cp Rocket.toml packaged/ 
-        cp version.txt packaged/ 
+        cp Rocket.toml packaged/
         cp -R static packaged/static 
         cd packaged
         tar -vczf ../publishgoods-bundled.tar.gz *
