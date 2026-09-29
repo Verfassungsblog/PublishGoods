@@ -16,10 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::time::SystemTime;
 
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::ProjectStorage;
 use unic_langid_impl::LanguageIdentifier;
 use vb_exchange::export_formats::ExportFormat;
 
@@ -56,49 +53,6 @@ pub trait MultipleFileLocks {
             time_waited += 10;
             if time_waited > settings.file_lock_timeout {
                 error!(
-                    "error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.",
-                    time_waited
-                );
-                return Err(());
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
-        Ok(())
-    }
-}
-
-#[async_trait]
-pub trait SingleFileLock {
-    fn get_file_lock(&self) -> &AtomicBool;
-
-    fn create_file_lock(&self) -> Result<(), ()> {
-        if self
-            .get_file_lock()
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            // file already locked
-            Err(())
-        } else {
-            // file not locked, lock it
-            self.get_file_lock()
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    fn remove_file_lock(&self) {
-        self.get_file_lock()
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    async fn wait_for_file_lock(&self, settings: &Settings) -> Result<(), ()> {
-        let mut time_waited = 0;
-        while self.create_file_lock().is_err() {
-            time_waited += 10;
-            if time_waited > settings.file_lock_timeout {
-                eprintln!(
                     "error while waiting for file lock: waiting for file lock timed out. Waited for {} ms, exceeding the configured limit.",
                     time_waited
                 );
@@ -1008,50 +962,6 @@ pub struct ProjectTemplateV2 {
     pub name: String,
     pub description: String,
     pub export_formats: HashMap<String, ExportFormat>,
-}
-
-pub async fn save_data_worker(
-    data_storage: Arc<DataStorage>,
-    project_storage: Arc<ProjectStorage>,
-    settings: Settings,
-) {
-    tokio::spawn(async move {
-        let mut last_save = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(
-                settings.backup_to_file_interval,
-            ))
-            .await;
-            // Save DataStorage to disk
-            println!("Saving DataStorage to disk");
-            data_storage.save_to_disk(&settings).await.unwrap();
-
-            // Save ProjectStorage to disk
-            let mut projects_to_save = Vec::new();
-            for entry in project_storage.projects.iter() {
-                let project_id = entry.key();
-                let project = entry.value();
-                if project.read().unwrap().last_interaction > last_save {
-                    projects_to_save.push(*project_id);
-                }
-            }
-            for project_id in projects_to_save {
-                println!("Saving changed project {} to disk", project_id);
-                project_storage
-                    .save_project_to_disk(&project_id, &settings)
-                    .await
-                    .unwrap(); //TODO: shutdown if this fails to avoid data loss
-            }
-            last_save = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            println!("Finished saving projects to disk");
-        }
-    });
 }
 
 impl From<MyFormatString> for FormatString {

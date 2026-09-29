@@ -1,0 +1,4 @@
+<div class="d-flex justify-content-between align-items-center mb-1" data-invitation-id="{{id}}">
+    <div>{{label}} <span class="badge bg-secondary">{{role}}</span></div>
+    <button type="button" class="btn btn-secondary btn-sm revoke_invitation_btn">Revoke</button>
+</div>

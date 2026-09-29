@@ -1,15 +1,17 @@
+use crate::db::repositories::{bibliography, projects, sections, templates};
 use crate::export::preprocessing::prepare_project;
 use crate::export::zip::create_zip_from_bytes;
 use crate::settings::{ExportServer, Settings};
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::{ProjectData, ProjectStorage};
+use crate::storage::project_storage::ProjectData;
 use crate::utils::csl::CslData;
+use crate::utils::timeout::{limit_from_seconds, with_timeout};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::net::TcpStream;
+use tokio::sync::Semaphore;
 use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::{TlsConnector, TlsStream};
@@ -33,13 +35,55 @@ pub struct LocalRenderingRequest {
     pub sections: Option<Vec<uuid::Uuid>>,
 }
 
+/// A fully loaded project that is ready to be prepared and sent to a rendering server.
+///
+/// Unlike a [`LocalRenderingRequest`] it doesn't reference a project in the database, so it can
+/// also be used for projects that only exist in memory (e.g. external rendering jobs).
+pub struct RenderingJob {
+    /// Id under which status updates are stored in [`RenderingManager::requests_archive`]
+    pub request_id: uuid::Uuid,
+    /// The project to render. `template_id` must reference an existing template.
+    pub project_data: ProjectData,
+    /// Directory containing the files uploaded to the project
+    pub uploads_dir: PathBuf,
+    /// list of section ids to be prepared, or None if all should be prepared
+    pub sections: Option<Vec<uuid::Uuid>>,
+    /// list of export formats slugs that should be rendered
+    pub export_formats: Vec<String>,
+    /// If set, every result file is written to this directory individually (no zip is created).
+    /// If None, results are written to a fresh directory in `data/temp` and zipped if there are multiple.
+    pub result_dir: Option<PathBuf>,
+}
+
+/// Returns `name`, or `name` with a numeric suffix before the extension (`main-2.pdf`) if a file
+/// with that name was already used. Different export formats can produce equally named files.
+fn unique_file_name(
+    name: &std::ffi::OsStr,
+    used: &mut std::collections::HashSet<String>,
+) -> String {
+    let path = std::path::Path::new(name);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = path.extension().and_then(|e| e.to_str());
+    let mut candidate = name.to_string_lossy().into_owned();
+    let mut n = 1;
+    while !used.insert(candidate.clone()) {
+        n += 1;
+        candidate = match ext {
+            Some(ext) => format!("{stem}-{n}.{ext}"),
+            None => format!("{stem}-{n}"),
+        };
+    }
+    candidate
+}
+
+/// Coordinates local preparation and remote rendering of projects: owns the queue of
+/// pending [`LocalRenderingRequest`]s, tracks their status, and dispatches them to
+/// rendering servers over TLS.
 pub struct RenderingManager {
     /// Settings loaded from configuration files, containing global application settings such as titles, data paths, and server configurations.
     pub settings: Settings,
-    /// Persistent memory storage for small data such as users, passwords, or login attempts, shared between tasks.
-    pub data_storage: Arc<DataStorage>,
-    /// In-memory project storage, holding and managing the state of all projects loaded at startup.
-    pub project_storage: Arc<ProjectStorage>,
+    /// Postgres connection pool.
+    pub pool: sqlx::PgPool,
     /// Loaded Citation Style Language (CSL) data, including available locales and styles.
     pub csl_data: Arc<CslData>,
     /// Archive of rendering requests, storing their UUIDs with corresponding rendering status
@@ -50,25 +94,34 @@ pub struct RenderingManager {
     pub next_rendering_server_to_use: Arc<AtomicU64>,
     /// Loaded configuration for the rendering client, including certificates, paths, and connection settings.
     pub client_config: Arc<ClientConfig>,
+    /// Limits how many rendering requests are prepared & sent to a rendering server concurrently,
+    /// shared by both the internal queue and [`Self::prepare_and_send`] callers outside of it (e.g.
+    /// external rendering jobs), so `max_connections_to_rendering_server` is enforced globally.
+    pub slots: Arc<Semaphore>,
 }
 
 impl RenderingManager {
+    /// Creates a new `RenderingManager` and spawns a background task that continuously
+    /// polls the rendering queue and dispatches queued requests to a rendering server
+    /// (up to `max_connections_to_rendering_server` concurrent tasks). Returns a shared
+    /// `Arc<RenderingManager>` handle for submitting and tracking rendering requests.
     pub fn start(
         settings: Settings,
-        data_storage: Arc<DataStorage>,
-        project_storage: Arc<ProjectStorage>,
+        pool: sqlx::PgPool,
         csl_data: Arc<CslData>,
         client_config: Arc<ClientConfig>,
     ) -> Arc<RenderingManager> {
         let rendering_manager = RenderingManager {
             settings: settings.clone(),
-            data_storage,
-            project_storage,
+            pool,
             csl_data,
             requests_archive: RwLock::new(HashMap::new()),
             rendering_queue: RwLock::new(VecDeque::new()),
             next_rendering_server_to_use: Arc::new(AtomicU64::new(0)),
             client_config,
+            slots: Arc::new(Semaphore::new(
+                settings.max_connections_to_rendering_server as usize,
+            )),
         };
 
         let rendering_manager = Arc::new(rendering_manager);
@@ -76,18 +129,14 @@ impl RenderingManager {
 
         // Start thread that checks for new rendering requests and sends them to a rendering server.
         tokio::spawn(async move {
-            let running_threads: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+            let slots = rendering_manager_cpy.slots.clone();
 
             loop {
-                // Check if there are any new rendering requests
-
+                // Check if there are any new rendering requests and a slot is free
                 let rendering_requests_len =
                     rendering_manager_cpy.rendering_queue.read().unwrap().len();
                 if rendering_requests_len > 0
-                    && rendering_manager_cpy
-                        .settings
-                        .max_connections_to_rendering_server
-                        > running_threads.load(std::sync::atomic::Ordering::Relaxed)
+                    && let Ok(permit) = Arc::clone(&slots).try_acquire_owned()
                 {
                     debug!("Starting new thread to prepare & send rendering data");
                     {
@@ -97,6 +146,7 @@ impl RenderingManager {
                         // Move the rendering request out of the vector, put it into the archive and start rendering
                         let request = match rendering_queue.pop_front() {
                             Some(req) => req,
+                            // Permit is dropped here, freeing the slot again
                             None => continue,
                         };
 
@@ -116,11 +166,10 @@ impl RenderingManager {
 
                         let rendering_manager_cpy2 = rendering_manager_cpy.clone();
 
-                        running_threads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let running_threads_clone = Arc::clone(&running_threads);
-
                         // Start rendering in a new thread
                         tokio::spawn(async move {
+                            // Held until the job finishes, freeing the slot again
+                            let _permit = permit;
                             match Self::prepare_and_send_to_server(
                                 Arc::clone(&rendering_manager_cpy2),
                                 request,
@@ -141,8 +190,6 @@ impl RenderingManager {
                                     }
                                 }
                             }
-                            running_threads_clone
-                                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         });
                     }
                 }
@@ -153,65 +200,137 @@ impl RenderingManager {
 
         rendering_manager.clone()
     }
+    /// Loads a project (title, description, template, metadata, settings, sections and
+    /// bibliography) from the database and hands it off to [`Self::prepare_and_send`].
     async fn prepare_and_send_to_server(
         rendering_manager: Arc<RenderingManager>,
         request: LocalRenderingRequest,
     ) -> Result<(), RenderingError> {
-        let project_data: ProjectData = match rendering_manager
-            .project_storage
-            .get_project(&request.project_id, &rendering_manager.settings)
+        let pool = &rendering_manager.pool;
+
+        let title = projects::get_title(pool, request.project_id)
             .await
-        {
-            Ok(project) => project.read().unwrap().clone(),
-            Err(_) => return Err(RenderingError::ProjectNotFound),
-        };
-
-        let template_id = project_data.template_id;
-        // Get current version id of the template
-        let template_version_id = match rendering_manager
-            .data_storage
-            .data
-            .templates
-            .get(&template_id)
-        {
-            Some(template) => template.read().unwrap().version.unwrap(),
-            None => return Err(RenderingError::TemplateNotFound),
-        };
-
-        // Prepare project
-        let prepared_project = prepare_project(
-            project_data,
-            rendering_manager.data_storage.clone(),
-            rendering_manager.csl_data.clone(),
-            request.sections,
-            &request.project_id,
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let description = projects::get_description(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let template_id = projects::get_template_id(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?
+            .ok_or(RenderingError::TemplateNotFound)?;
+        let metadata = projects::get_metadata(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let settings = projects::get_settings(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
+        let project_sections = sections::get_tree_for_project_with_content(
+            pool,
+            &rendering_manager.settings,
+            request.project_id,
         )
-        .await?;
+        .await
+        .map_err(|_| RenderingError::ProjectNotFound)?;
+        let bib = bibliography::get_all_for_project(pool, request.project_id)
+            .await
+            .map_err(|_| RenderingError::ProjectNotFound)?;
 
-        // Pack uploaded files
-        // Check if upload directory exists:
-        let upload_dir = PathBuf::from(format!("data/projects/{}/uploads", &request.project_id));
-        let uploads = if upload_dir.exists() {
-            match vb_exchange::recursive_read_dir_async(upload_dir).await {
-                Ok(uploads) => uploads,
-                Err(e) => {
-                    return Err(RenderingError::Other(format!(
-                        "IO Error packing uploaded files: {}",
-                        e
-                    )));
-                }
-            }
-        } else {
-            Vec::new()
+        let project_data: ProjectData = ProjectData {
+            name: title,
+            description,
+            template_id,
+            last_interaction: 0,
+            metadata: Some(metadata),
+            settings: Some(settings),
+            sections: project_sections,
+            bibliography: bib,
         };
+
+        Self::prepare_and_send(
+            rendering_manager,
+            RenderingJob {
+                request_id: request.request_id,
+                project_data,
+                uploads_dir: PathBuf::from(format!("data/projects/{}/uploads", request.project_id)),
+                sections: request.sections,
+                export_formats: request.export_formats,
+                result_dir: None,
+            },
+        )
+        .await
+    }
+
+    /// Prepares `job.project_data` for rendering, packs its uploads, sends everything to the next
+    /// available rendering server and waits until the rendering finished or failed.
+    ///
+    /// Status updates and the final result are stored in `requests_archive` under `job.request_id`.
+    pub async fn prepare_and_send(
+        rendering_manager: Arc<RenderingManager>,
+        job: RenderingJob,
+    ) -> Result<(), RenderingError> {
+        let template_id = job.project_data.template_id;
+        let project_data = job.project_data;
+
+        // Get current version id of the template
+        let template_version_id = match templates::get(&rendering_manager.pool, template_id).await {
+            Ok(template) => template.version,
+            Err(_) => return Err(RenderingError::TemplateNotFound),
+        };
+
+        let RenderingJob {
+            request_id,
+            uploads_dir,
+            sections,
+            export_formats,
+            result_dir,
+            ..
+        } = job;
+
+        // Prepare project and pack uploaded files
+        let preprocessing_timeout = rendering_manager.settings.rendering_preprocessing_timeout;
+        let preprocessing = async {
+            let prepared_project = prepare_project(
+                project_data,
+                rendering_manager.pool.clone(),
+                rendering_manager.csl_data.clone(),
+                sections,
+                &uploads_dir,
+            )
+            .await?;
+
+            // Check if upload directory exists:
+            let uploads = if uploads_dir.exists() {
+                vb_exchange::recursive_read_dir_async(uploads_dir)
+                    .await
+                    .map_err(|e| {
+                        RenderingError::Other(format!("IO Error packing uploaded files: {}", e))
+                    })?
+            } else {
+                Vec::new()
+            };
+            Ok::<_, RenderingError>((prepared_project, uploads))
+        };
+        let (prepared_project, uploads) =
+            with_timeout(limit_from_seconds(preprocessing_timeout), preprocessing)
+                .await
+                .map_err(|_| {
+                    error!(
+                        "Preprocessing timed out after {} seconds.",
+                        preprocessing_timeout
+                    );
+                    RenderingError::Other(format!(
+                        "Preprocessing timed out after {} seconds.",
+                        preprocessing_timeout
+                    ))
+                })??;
 
         let request = RenderingRequest {
-            request_id: request.request_id,
+            request_id,
             prepared_project,
             project_uploaded_files: FilesOnMemoryOrHarddrive::Memory(uploads),
             template_id,
             template_version_id,
-            export_formats: request.export_formats,
+            export_formats,
         };
 
         // Update status
@@ -249,6 +368,11 @@ impl RenderingManager {
 
         debug!("Using rendering server no {}", next_rendering_server);
 
+        let rendering_server_timeout =
+            limit_from_seconds(rendering_manager.settings.rendering_server_timeout);
+        let connect_timeout =
+            limit_from_seconds(rendering_manager.settings.rendering_server_connect_timeout);
+
         let tls_stream;
         loop {
             let export_server_data = rendering_manager
@@ -258,7 +382,14 @@ impl RenderingManager {
                 .unwrap();
 
             debug!("Connection to Server.");
-            match Self::connect_to_server(rendering_manager.clone(), export_server_data).await {
+            // A server that doesn't answer in time is treated like an unreachable one, so the next is tried
+            let connection = with_timeout(
+                connect_timeout,
+                Self::connect_to_server(rendering_manager.clone(), export_server_data),
+            )
+            .await
+            .unwrap_or(Err(RenderingError::ConnectionToRenderingServerFailed));
+            match connection {
                 Ok(res) => {
                     tls_stream = res;
                     break;
@@ -294,7 +425,21 @@ impl RenderingManager {
 
         debug!("Connected, sending request to server.");
 
-        Self::send_to_server(tls_stream, request, rendering_manager.clone()).await?;
+        with_timeout(
+            rendering_server_timeout,
+            Self::send_to_server(tls_stream, request, rendering_manager.clone(), result_dir),
+        )
+        .await
+        .map_err(|_| {
+            error!(
+                "Rendering timed out after {} seconds.",
+                rendering_manager.settings.rendering_server_timeout
+            );
+            RenderingError::Other(format!(
+                "Rendering timed out after {} seconds.",
+                rendering_manager.settings.rendering_server_timeout
+            ))
+        })??;
         Ok(())
     }
 
@@ -337,6 +482,7 @@ impl RenderingManager {
         mut tls_stream: TlsStream<TcpStream>,
         request: RenderingRequest,
         rendering_manager: Arc<RenderingManager>,
+        result_dir: Option<PathBuf>,
     ) -> Result<(), RenderingError> {
         let request_id = request.request_id;
         if let Err(_) = send_message(&mut tls_stream, Message::RenderingRequest(request)).await {
@@ -386,20 +532,20 @@ impl RenderingManager {
                             }
                         };
 
-                        let export_formats: HashMap<String, ExportFormat> = match rendering_manager
-                            .data_storage
-                            .data
-                            .templates
-                            .get(&req.template_id)
+                        let export_formats: HashMap<String, ExportFormat> = match templates::get(
+                            &rendering_manager.pool,
+                            req.template_id,
+                        )
+                        .await
                         {
-                            None => {
+                            Err(_) => {
                                 error!(
                                     "Couldn't find template {} requested from rendering server.",
                                     req.template_id.clone()
                                 );
                                 return Err(RenderingError::TemplateNotFound);
                             }
-                            Some(template) => template.read().unwrap().export_formats.clone(),
+                            Ok(template) => template.export_formats,
                         };
 
                         let data = TemplateDataResult {
@@ -423,13 +569,15 @@ impl RenderingManager {
                         match status {
                             RenderingStatus::Finished(mut res) => {
                                 // Finished, update status and save files to file system, generate zip if necessary
-                                let res_dir =
-                                    PathBuf::from(format!("data/temp/{}", uuid::Uuid::new_v4()));
-                                if let Err(e) = tokio::fs::create_dir(&res_dir).await {
+                                let individual_files_only = result_dir.is_some();
+                                let res_dir = result_dir.clone().unwrap_or_else(|| {
+                                    PathBuf::from(format!("data/temp/{}", uuid::Uuid::new_v4()))
+                                });
+                                if let Err(e) = tokio::fs::create_dir_all(&res_dir).await {
                                     error!("Couldn't create dir: {}", e);
                                 }
 
-                                if res.files.len() > 1 {
+                                if res.files.len() > 1 && !individual_files_only {
                                     // More than 1 file -> load files into res_dir + create zip
                                     let res_path = res_dir.join("result.zip");
 
@@ -494,6 +642,38 @@ impl RenderingManager {
                                                 );
                                         }
                                     }
+                                } else if individual_files_only && !res.files.is_empty() {
+                                    let mut first_file_path = None;
+                                    let mut used_names = std::collections::HashSet::new();
+                                    for file in res.files {
+                                        let Some(name) =
+                                            std::path::Path::new(&file.name).file_name()
+                                        else {
+                                            continue;
+                                        };
+                                        let file_path =
+                                            res_dir.join(unique_file_name(name, &mut used_names));
+                                        if let Err(e) =
+                                            tokio::fs::write(&file_path, file.content).await
+                                        {
+                                            error!("Couldn't save rendering result to file: {}", e);
+                                            return Err(RenderingError::Other(
+                                                "Couldn't save rendering output.".to_string(),
+                                            ));
+                                        }
+                                        first_file_path.get_or_insert(file_path);
+                                    }
+                                    let status = match first_file_path {
+                                        Some(path) => RenderingStatus::SavedOnLocal(path, res_dir),
+                                        None => {
+                                            RenderingStatus::Failed(RenderingError::NoResultFiles)
+                                        }
+                                    };
+                                    rendering_manager
+                                        .requests_archive
+                                        .write()
+                                        .unwrap()
+                                        .insert(request_id, status);
                                 } else if let Some(file) = res.files.pop() {
                                     let file_path = res_dir.join(file.name);
                                     if let Err(e) = tokio::fs::write(&file_path, file.content).await
@@ -548,5 +728,30 @@ impl RenderingManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn equally_named_result_files_get_numbered() {
+        let mut used = std::collections::HashSet::new();
+        assert_eq!(
+            unique_file_name(OsStr::new("main.pdf"), &mut used),
+            "main.pdf"
+        );
+        assert_eq!(
+            unique_file_name(OsStr::new("main.pdf"), &mut used),
+            "main-2.pdf"
+        );
+        assert_eq!(
+            unique_file_name(OsStr::new("main.pdf"), &mut used),
+            "main-3.pdf"
+        );
+        assert_eq!(unique_file_name(OsStr::new("book"), &mut used), "book");
+        assert_eq!(unique_file_name(OsStr::new("book"), &mut used), "book-2");
     }
 }

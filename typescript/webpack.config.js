@@ -9,6 +9,8 @@ module.exports = {
         user_tools: { import: './UserTools.ts', dependOn: 'vendor' },
         template_editor: { import: './TemplateEditor.ts', dependOn: 'vendor' },
         export: { import: './Export.ts', dependOn: 'vendor' },
+        profile_settings: {import: './ProfileSettings', dependOn: 'vendor'},
+        dashboard: {import: './Dashboard.ts', dependOn: 'vendor'},
         vendor: ['yjs', 'pdfjs-dist', 'handlebars', '@editorjs/editorjs'],
     },
     devtool: false,

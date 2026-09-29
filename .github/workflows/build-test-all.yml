@@ -8,19 +8,35 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
     - uses: actions/checkout@v4
     - name: Setup
       run: npm install -g handlebars typescript@6.0.3 webpack webpack-cli && cd typescript && npm install
-    - name: Create version.txt
+    - name: Set up database schema
       run: |
-        git_hash=$(git rev-parse --short "$GITHUB_SHA")
-        git_branch=${GITHUB_REF#refs/heads/}
-        echo "$git_branch-$git_hash" > version.txt
+        for f in migrations/*.sql; do
+          echo "Applying $f"
+          psql "$DATABASE_URL" -f "$f"
+        done
     - name: Build
       run: cargo build --release --verbose
     - name: Run tests
@@ -35,7 +51,6 @@ jobs:
         cp -R templates packaged/templates 
         cp config/default.toml packaged/config/ 
         cp Rocket.toml packaged/ 
-        cp version.txt packaged/ 
         cp -R static packaged/static 
         cd packaged
         tar -vczf ../publishgoods-bundled.tar.gz *

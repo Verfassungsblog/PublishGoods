@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE export_formats SET slug = $3, name = $4, preview_pdf_path = $5\n         WHERE project_template_id = $1 AND slug = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3262ffcbf908b4b5943762d8188819f250dfb76979fb957806003817b518b79"
+}

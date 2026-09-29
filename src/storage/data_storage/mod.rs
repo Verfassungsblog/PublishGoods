@@ -1,5 +1,4 @@
 use bincode::error::DecodeError;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 pub mod current;
@@ -13,7 +12,6 @@ static CURRENT_VERSION: u64 = 4;
 /// This data is stored in memory permanently and doesn't get unloaded
 pub struct DataStorage {
     pub data: Arc<InnerDataStorage>,
-    file_locked: AtomicBool,
 }
 
 #[derive(Debug)]

@@ -1,0 +1,21 @@
+<tr data-user-id="{{user_id}}">
+    <td>{{name}}{{#if is_self}} <span class="text-muted">(you)</span>{{/if}}</td>
+    <td>
+        {{#if can_edit_role}}
+            <select class="member_role_select">
+                {{#each roles}}
+                    <option value="{{value}}" {{#if selected}}selected{{/if}}>{{label}}</option>
+                {{/each}}
+            </select>
+        {{else}}
+            {{role_label}}
+        {{/if}}
+    </td>
+    <td>
+        {{#if can_remove}}
+            <button type="button" class="btn btn-secondary btn-sm remove_member_btn">Remove</button>
+        {{else if show_leave}}
+            <button type="button" class="btn btn-secondary btn-sm leave_team_btn">Leave</button>
+        {{/if}}
+    </td>
+</tr>

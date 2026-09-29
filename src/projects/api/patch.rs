@@ -1,10 +1,8 @@
+use crate::db::repositories::DbError;
+use crate::db::repositories::projects;
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
-use crate::settings::Settings;
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::current::{Bibliography, PersonUuidOrString};
-use crate::storage::project_storage::sections::Section;
-use crate::storage::project_storage::{ProjectData, ProjectMetadata, ProjectStorage};
+use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::utils::api_helpers::APIResult;
 use bincode::{Decode, Encode};
 use chrono::NaiveDate;
@@ -12,10 +10,13 @@ use language::Language;
 use rocket::State;
 use rocket::serde::json::Json;
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::collections::HashMap;
-use std::sync::Arc;
 use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
+/// Request body for [`patch_project`]: any field left as `None` is left untouched.
+/// Sections and bibliography are no longer patchable through this endpoint — they have
+/// their own dedicated routes now that they live in separate DB tables.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PatchProjectData {
     /// Optionally patched Project Title
@@ -43,55 +44,17 @@ pub struct PatchProjectData {
         with = "::serde_with::rust::double_option"
     )]
     pub settings: Option<Option<PatchProjectSettings>>,
-    /// Optionally patched sections
-    pub sections: Option<Vec<Section>>,
-    /// Optionally patched bibliography
-    pub bibliography: Option<Bibliography>,
 }
 
-impl Patch<PatchProjectData, ProjectData> for ProjectData {
-    fn patch(&mut self, patch: PatchProjectData) -> ProjectData {
-        let mut new = self.clone();
-
-        if let Some(name) = patch.name {
-            new.name = name;
-        } else if let Some(metadata) = &patch.metadata
-            && let Some(metadata) = &metadata
-            && let Some(title) = &metadata.title
-        {
-            new.name = title.clone();
-        }
-
-        if let Some(description) = patch.description {
-            new.description = description;
-        }
-
-        if let Some(template_id) = patch.template_id {
-            new.template_id = template_id;
-        }
-
-        if let Some(patch_metadata) = patch.metadata {
-            new.metadata = new.metadata.patch(patch_metadata);
-        }
-
-        if let Some(patch_settings) = patch.settings {
-            new.settings = new.settings.patch(patch_settings);
-        }
-
-        if let Some(sections) = patch.sections {
-            new.sections = sections;
-        }
-
-        if let Some(bibliography) = patch.bibliography {
-            new.bibliography = bibliography;
-        }
-
-        new
-    }
-}
-
-impl Patch<PatchProjectMetadata, ProjectMetadata> for ProjectMetadata {
-    fn patch(&mut self, patch: PatchProjectMetadata) -> ProjectMetadata {
+/// Applies a [`PatchProjectMetadata`] onto a `ProjectMetadataV5`, leaving any field not
+/// present in the patch at its current value.
+impl Patch<PatchProjectMetadata, crate::storage::project_storage::current::ProjectMetadataV5>
+    for crate::storage::project_storage::current::ProjectMetadataV5
+{
+    fn patch(
+        &mut self,
+        patch: PatchProjectMetadata,
+    ) -> crate::storage::project_storage::current::ProjectMetadataV5 {
         let mut new_metadata = self.clone();
 
         if let Some(title) = patch.title {
@@ -391,36 +354,59 @@ pub struct PatchProjectSettings {
     pub add_soft_hyphens: Option<bool>,
 }
 
-/// PATCH /api/projects/<project_id>
+/// Applies a partial update to a project's title, description, template id, metadata
+/// and/or settings. All writes for this request run inside a single DB transaction, so
+/// if any individual update fails the whole patch is rolled back rather than leaving the
+/// project partially updated. An explicit `name` takes precedence over a patched
+/// `metadata.title`, but either one renames the project.
 #[patch("/api/projects/<project_id>", data = "<patch>")]
 pub async fn patch_project(
     project_id: &str,
     patch: Json<PatchProjectData>,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     let id = uuid::Uuid::parse_str(project_id)?;
-    let project = project_storage.get_project(&id, settings).await?.clone();
+    let pool = pool.inner();
+    let patch = patch.into_inner();
 
-    let mut project_cpy = project.read().unwrap().clone();
-    project_cpy = project_cpy.patch(patch.into_inner());
+    // Applied as one transaction so a failure partway through (e.g. an invalid template_id)
+    // rolls back every field already written in this request instead of leaving the project
+    // in a partially-patched state.
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
 
-    // Update the project in the data storage
-    let project_list = data_storage.data.projects.clone();
-    let read_lock = project_list.read().unwrap();
-
-    if let Some(project) = read_lock.get(&id)
-        && project.name() != project_cpy.name
-    {
-        drop(read_lock);
-        if let Some(project) = project_list.write().unwrap().get_mut(&id) {
-            project.set_name(project_cpy.name.clone());
-        }
+    // Resolve the (now-unified) title: an explicit `name` wins, otherwise a patched
+    // `metadata.title` also renames the project — matches the old behavior where
+    // `ProjectData.name` and `ProjectData.metadata.title` could set each other.
+    let title_from_metadata = match &patch.metadata {
+        Some(Some(m)) => m.title.clone(),
+        _ => None,
+    };
+    if let Some(name) = patch.name.or(title_from_metadata) {
+        projects::update_title(&mut *tx, id, &name).await?;
     }
 
-    let mut project_state = project.write().unwrap();
-    *project_state = project_cpy;
+    if let Some(description) = patch.description {
+        projects::update_description(&mut *tx, id, description.as_deref()).await?;
+    }
+
+    if let Some(template_id) = patch.template_id {
+        projects::update_template(&mut *tx, id, Some(template_id)).await?;
+    }
+
+    if let Some(Some(metadata_patch)) = patch.metadata {
+        let mut metadata = projects::get_metadata_in_tx(&mut tx, id).await?;
+        metadata = metadata.patch(metadata_patch);
+        projects::update_metadata_in_tx(&mut tx, id, &metadata).await?;
+    }
+
+    if let Some(Some(settings_patch)) = patch.settings {
+        let mut settings = projects::get_settings_in_tx(&mut tx, id).await?;
+        settings = settings.patch(settings_patch);
+        projects::update_settings(&mut *tx, id, &settings).await?;
+    }
+
+    tx.commit().await.map_err(DbError::from)?;
+
     Ok(().into())
 }

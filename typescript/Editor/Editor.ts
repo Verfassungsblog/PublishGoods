@@ -89,20 +89,9 @@ export async function init() {
                 e.stopPropagation();
                 const target = e.currentTarget as HTMLElement | null;
                 if(!target) return;
-                // Build full content_path as colon-separated ids from root to this section
-                const ids: string[] = [];
-                let cur: HTMLElement | null = target;
-                while(cur){
-                    const id = cur.getAttribute('data-section-id');
-                    if(id){ ids.push(id); }
-                    // move to the nearest ancestor section (skip current)
-                    const parent = cur.parentElement;
-                    cur = parent ? (parent.closest('.sidebar-contents-section') as HTMLElement | null) : null;
-                }
-                ids.reverse();
-                const content_path = ids.join(':');
-                // @ts-ignore - showSectionEditor now accepts content_path string
-                showSectionEditor(content_path);
+                const section_id = target.getAttribute('data-section-id');
+                if(!section_id) return;
+                showSectionEditor(section_id);
             }
             section.addEventListener("click", navigateToSection);
         }

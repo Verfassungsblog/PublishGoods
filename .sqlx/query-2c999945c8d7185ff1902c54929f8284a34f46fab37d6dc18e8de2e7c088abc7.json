@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE sections SET\n            visible_in_toc = $2, css_classes = $3, title = $4, toc_title_subtitle_override = $5,\n            subtitle = $6, web_url = $7, publish_date = $8, language = $9,\n            custom_fields = $10, identifiers = $11\n           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "TextArray",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Date",
+        "Text",
+        "Jsonb",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2c999945c8d7185ff1902c54929f8284a34f46fab37d6dc18e8de2e7c088abc7"
+}

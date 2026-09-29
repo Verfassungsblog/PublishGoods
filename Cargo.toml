@@ -1,39 +1,36 @@
 [package]
 name = "PublishGoods"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Keanu Dölle <kd@verfassungsblog.de>"]
 repository = "https://github.com/Verfassungsblog/PublishGoods"
-license = "MIT"
+license = "AGPL-3"
 build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2025.11"}
+vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2026.8", features = ["sqlx"]}
+#vb-exchange = {path = "/home/anghenfil/RustroverProjects/Verfassungsbooks-Exchange-Lib/", features = ["sqlx"]}
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"
 config = "0.15"
 serde = { version = "1.0.197", features = ["rc", "derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
-rand = "0.8.5"
+rand = "0.10.2"
 rocket_dyn_templates = { version = "=0.2.0", features = ["handlebars"] }
 argon2 = "0.5.2"
 uuid = { version = "1.6.1", features = ["serde", "v4"] }
 chrono = { version = "0.4.31", features = ["serde"] }
-schemars = { version = "0.8.16", features = ["chrono", "uuid1"] }
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 tokio = { version = "1.35.0", features = ["full"] }
 async-trait = "0.1.74"
 reqwest = { version = "0.13.2", features=["json", "query"] }
 serde_with = "3.6"
 regex = "1.10.3"
-handlebars = {version = "6.3.1", features = ["dir_source"]}
 hyphenation = {version = "0.8.4", features = ["embed_all"]}
-qrcode = "0.14"
 image = "0.24.9"
 base64 = "0.22.0"
-num-integer = "0.1.46"
 pandoc = "0.8"
 hayagriva= "0.9.1"
 unic-langid-impl = "0.9.4"
@@ -52,6 +49,11 @@ markup5ever_rcdom = "0.38.0"
 dashmap = {version = "6.1", features = ["serde"] }
 yrs = "0.25.0"
 ws = { package = "rocket_ws", version = "0.1.1" }
+sqlx = { version = "0.9", features = ["runtime-tokio", "macros", "postgres", "migrate", "derive", "uuid", "chrono", "json"]}
+lettre = { version = "0.11.23", default-features = false, features = ["tokio1", "tokio1-native-tls", "pool", "smtp-transport", "builder"] }
+
+[profile.dev.package.sqlx-macros]
+opt-level = 3
 
 [features]
 default = ["language_detection"]

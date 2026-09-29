@@ -1,17 +1,62 @@
 app_title = "Verfassungsbooks"
+# publicly accessible URL of this instance
+instance_url = "http://127.0.0.1:8000"
 project_cache_time = 1800
-#WARNING: CURRENTLY NOT USED IN ALL PLACES, leave it on data for now
+# WARNING: CURRENTLY NOT USED IN ALL PLACES, leave it on data for now
 data_path = "data"
+# PostgreSQL connection string. Override in config/local.toml (or the APP_DATABASE_URL env var) for your environment.
+database_url = "postgresql://postgres@localhost:5432/publishgoods"
+# Maximum concurrent postgresql connections
+database_max_connections = 10
 # Time until data storage write fails in ms
 file_lock_timeout = 1000
 # Time until in-memory database is written to file in seconds
 backup_to_file_interval = 20
-# Maximum number of concurrent rendering threads
+# Maximum number of concurrent rendering tasks
 max_connections_to_rendering_server = 10
-# Maximum number of concurrent import processing threads
+# Maximum number of concurrent import processing tasks
 max_import_threads = 4
+# Maximum number of concurrent external rendering api tasks
+max_external_rendering_jobs = 2
+# How long a finished external rendering job's results stay downloadable, in seconds. After this,
+# the job and its result files are removed.
+external_rendering_result_validity = 3600
+# Timeout in seconds for a rendering: counted from the moment the request is sent to the rendering server until the
+# result arrived. This includes transferring the template and any time the request waits in the rendering server's
+# own queue. A rendering that takes longer fails, but the rendering server is not told to cancel it. 0 disables the timeout.
+rendering_server_timeout = 600
+# Timeout in seconds for connecting to a single rendering server (including the TLS handshake). If a server doesn't
+# answer in time, the next configured server is tried. 0 disables the timeout.
+rendering_server_connect_timeout = 10
+# Timeout in seconds for preparing a project for rendering (rendering citations, resolving authors, reading uploads)
+# before it is sent to a rendering server. 0 disables the timeout.
+rendering_preprocessing_timeout = 300
+# Timeout in seconds for an import job (including the external rendering api's import step). 0 disables the timeout.
+import_timeout = 600
 # URL to the zotero translation server (https://github.com/zotero/translation-server) for importing zotero items.
 zotero_translation_server = "https://translation-server.anghenfil.de"
+
+# How many failed login attempts within lockout_window_minutes trigger a lockout.
+max_login_attempts = 5
+# Rolling window (in minutes) used both to count recent failed login attempts and to lock the account.
+lockout_window_minutes = 15
+
+# E-Mail SMTP settings
+
+# SMTP connection url
+smtp_connection_url = "smtps://username%40example.com:password@smtp.example.com:465"
+# From Adress used for mails
+mail_from_address = "Publish Goods <example@example.com>"
+# Minimum number of idle connections
+smtp_pool_min_idle = 0
+# Maximum number of pooled connections
+smtp_pool_max_size = 10
+# Connection idle timeout in seconds
+smtp_pool_idle_timeout = 60
+# Maximum number of times a failed mail job is retried before it is dropped
+mail_max_retries = 3
+# Base delay in seconds before the first retry attempt, multiplied by the retry attempt number for each subsequent retry
+mail_base_retry_delay_seconds = 30
 
 # Export Server Settings
 

@@ -1,11 +1,9 @@
+use crate::db::repositories::{persons, sections};
+use crate::db::section_content;
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::data_storage::DataStorage;
-use crate::storage::project_storage::ProjectStorage;
-use crate::storage::project_storage::current::{
-    PersonUuidOrString, get_section_by_path, get_section_by_path_mut,
-};
+use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::utils::api_helpers::{APIResult, ApiErrorType};
 use crate::utils::dedup::dedup_vec;
@@ -13,23 +11,21 @@ use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
 use rocket::State;
-use rocket::form::validate::Contains;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::collections::HashMap;
 /// Contains API routes to view and modify sections inside a project
-use std::sync::Arc;
 use vb_exchange::projects::Identifier;
 use vb_exchange::projects::PersonOrString;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-/// API struct variant for [`Section`] with optional expansion of sub_sections and some metadata fields
+/// API struct variant for [`Section`] with optional expansion of some metadata fields. Never
+/// carries subsections — use the project contents tree endpoint for navigation/display.
 pub struct APISectionResult {
     pub id: uuid::Uuid,
     /// Additional classes to style the Section
     pub css_classes: Vec<String>,
-    /// Holds all subsections
-    pub sub_sections: Option<Vec<Section>>,
     /// If true, the section is visible in the table of contents
     pub visible_in_toc: bool,
     /// Metadata of the section
@@ -54,32 +50,31 @@ pub struct APISectionMetadataResult {
     pub custom_fields: HashMap<String, String>,
 }
 
-/// GET /api/projects/<project_id>/sections/<content_path>?<expand>
+/// GET /api/projects/<project_id>/sections/<section_id>?<expand>
 ///
 /// Parameters:
 /// * project_id (string) - the projects uuid
-/// * content_path (string) - path to a specific section, split by ':'
-/// * expand (string, optional) - optionally expand one of these fields: authors, editors, subsections
+/// * section_id (string) - the section's uuid
+/// * expand (string, optional) - optionally expand one of these fields: authors, editors
 ///
-/// By default strips out subsections & only returns id's for authors and editors.
+/// By default only returns id's for authors and editors.
 /// Use the optional expand query parameter to expand these fields
-/// E.g. ?expand=authors,editors,subsections will show the full data
+/// E.g. ?expand=authors,editors will show the full data
 ///
-#[get("/api/projects/<project_id>/sections/<content_path>?<expand>")]
+#[get("/api/projects/<project_id>/sections/<section_id>?<expand>")]
 pub async fn get_section(
     project_id: &str,
-    content_path: &str,
+    section_id: &str,
     expand: Option<&str>,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<APISectionResult> {
     debug!(
-        "get_section API request: project_id={:?}, content_path={:?}, expand={:?}",
-        project_id, content_path, expand
+        "get_section API request: project_id={:?}, section_id={:?}, expand={:?}",
+        project_id, section_id, expand
     );
     let project_id = uuid::Uuid::parse_str(project_id)?;
+    let section_id = uuid::Uuid::parse_str(section_id)?;
 
     // Parse expand:
     let expand_parts = if let Some(expand) = expand {
@@ -93,84 +88,72 @@ pub async fn get_section(
 
     let expand_authors = expand_parts.contains(&String::from("authors"));
     let expand_editors = expand_parts.contains(&String::from("editors"));
-    let expand_subsections = expand_parts.contains(&String::from("subsections"));
 
     debug!(
-        "Parsed expand options: expand_authors={:?}, expand_editors={:?}, expand_subsections={:?}",
-        expand_authors, expand_editors, expand_subsections
+        "Parsed expand options: expand_authors={:?}, expand_editors={:?}",
+        expand_authors, expand_editors
     );
 
-    let mut path = vec![];
+    let pool = pool.inner();
 
-    for part in content_path.split(":") {
-        let part = uuid::Uuid::parse_str(part)?;
-        path.push(part)
-    }
-
-    debug!("Parsed content_path: {:?}", path);
-
-    if path.is_empty() {
-        warn!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter(String::from("content_path")).into());
-    }
-
-    let project_storage = Arc::clone(project_storage);
-    let data_storage = Arc::clone(data_storage);
-
-    let project_entry = project_storage.get_project(&project_id, settings).await?;
-
-    let section = {
-        let project_read_guard = project_entry.read().unwrap();
-
-        let section = get_section_by_path(&project_read_guard, &path)?;
-
-        if expand_subsections {
-            section.clone()
-        } else {
-            section.clone_without_subsections()
-        }
-    };
+    let section = sections::get_by_id(pool, project_id, section_id).await?;
 
     // Check if all persons in section metadata are still valid
     let old_metadata = section.metadata.clone();
-
     let mut metadata = section.metadata.clone();
-    metadata.authors.retain_mut(|x| match x {
-        PersonUuidOrString::PersonUuid(id) => data_storage.person_exists(id),
-        PersonUuidOrString::NameString(_) => true,
-    });
-    metadata.editors.retain_mut(|x| match x {
-        PersonUuidOrString::PersonUuid(id) => data_storage.person_exists(id),
-        PersonUuidOrString::NameString(_) => true,
-    });
+
+    let mut valid_authors = Vec::new();
+    for author in section.metadata.authors.iter() {
+        match author {
+            PersonUuidOrString::PersonUuid(id) => {
+                if persons::exists(pool, *id).await.unwrap_or(false) {
+                    valid_authors.push(author.clone());
+                }
+            }
+            PersonUuidOrString::NameString(_) => valid_authors.push(author.clone()),
+        }
+    }
+    let mut valid_editors = Vec::new();
+    for editor in section.metadata.editors.iter() {
+        match editor {
+            PersonUuidOrString::PersonUuid(id) => {
+                if persons::exists(pool, *id).await.unwrap_or(false) {
+                    valid_editors.push(editor.clone());
+                }
+            }
+            PersonUuidOrString::NameString(_) => valid_editors.push(editor.clone()),
+        }
+    }
+    metadata.authors = valid_authors;
+    metadata.editors = valid_editors;
 
     if metadata != old_metadata {
         // Save edited metadata
-        let mut project_write_guard = project_entry.write().unwrap();
-        let mut_section = get_section_by_path_mut(&mut project_write_guard, &path)?;
-        mut_section.metadata = metadata.clone();
+        let mut updated_section = section.clone();
+        updated_section.metadata = metadata.clone();
+        if let Some(section_id) = section.id {
+            sections::update_metadata(pool, section_id, &updated_section).await?;
+        }
     }
 
     let mut authors_detailed: Vec<PersonOrString> = Vec::new();
     if expand_authors {
         for person_or_string in metadata.authors.iter() {
             match person_or_string {
-                PersonUuidOrString::PersonUuid(id) => {
-                    match data_storage.get_person_cloned(id).await {
-                        Ok(person) => authors_detailed.push(PersonOrString::Person(person)),
-                        Err(_) => {
-                            error!(
-                                "Couldn't extend author details, author_id {} not found.",
-                                id
-                            );
-                            return Err(ApiErrorType::ResourceNotFound(format!(
-                                "author with id {}",
-                                id
-                            ))
-                            .into());
-                        }
+                PersonUuidOrString::PersonUuid(id) => match persons::get(pool, *id).await {
+                    Ok(person) => authors_detailed.push(PersonOrString::Person(person)),
+                    Err(_) => {
+                        error!(
+                            "Couldn't extend author details, author_id {} not found.",
+                            id
+                        );
+                        return Err(ApiErrorType::ResourceNotFound(format!(
+                            "author with id {}",
+                            id
+                        ))
+                        .into());
                     }
-                }
+                },
                 PersonUuidOrString::NameString(namestr) => {
                     authors_detailed.push(PersonOrString::NameString(namestr.clone()))
                 }
@@ -187,22 +170,20 @@ pub async fn get_section(
     if expand_editors {
         for person_or_string in metadata.editors.iter() {
             match person_or_string {
-                PersonUuidOrString::PersonUuid(id) => {
-                    match data_storage.get_person_cloned(id).await {
-                        Ok(person) => editors_detailed.push(PersonOrString::Person(person)),
-                        Err(_) => {
-                            error!(
-                                "Couldn't extend author details, author_id {} not found.",
-                                id
-                            );
-                            return Err(ApiErrorType::ResourceNotFound(format!(
-                                "editor with id {}",
-                                id
-                            ))
-                            .into());
-                        }
+                PersonUuidOrString::PersonUuid(id) => match persons::get(pool, *id).await {
+                    Ok(person) => editors_detailed.push(PersonOrString::Person(person)),
+                    Err(_) => {
+                        error!(
+                            "Couldn't extend author details, author_id {} not found.",
+                            id
+                        );
+                        return Err(ApiErrorType::ResourceNotFound(format!(
+                            "editor with id {}",
+                            id
+                        ))
+                        .into());
                     }
-                }
+                },
                 PersonUuidOrString::NameString(namestr) => {
                     editors_detailed.push(PersonOrString::NameString(namestr.clone()))
                 }
@@ -237,15 +218,9 @@ pub async fn get_section(
             return Err(ApiErrorType::InternalServerError.into());
         }
     };
-    let sub_sections = if section.sub_sections.is_empty() {
-        None
-    } else {
-        Some(section.sub_sections)
-    };
     let section_res = APISectionResult {
         id: section_id,
         css_classes: section.css_classes,
-        sub_sections,
         visible_in_toc: section.visible_in_toc,
         metadata: metadata_res,
     };
@@ -253,49 +228,32 @@ pub async fn get_section(
     Ok(section_res.into())
 }
 
-/// PATCH /api/projects/<project_id>/sections/<content_path>
+/// PATCH /api/projects/<project_id>/sections/<section_id>
 /// Patch a section, but without content (subsections / content blocks)
 /// Check [PatchSection] for more information
 #[patch(
-    "/api/projects/<project_id>/sections/<content_path>",
+    "/api/projects/<project_id>/sections/<section_id>",
     data = "<section_patch>"
 )]
 pub async fn update_section(
     project_id: String,
-    content_path: String,
+    section_id: String,
     section_patch: Json<PatchSection>,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
-    data_storage: &State<Arc<DataStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
+    let section_id = uuid::Uuid::parse_str(&section_id)?;
+    let pool = pool.inner();
 
-    let mut path = vec![];
+    let section = sections::get_by_id(pool, project_id, section_id).await?;
 
-    for part in content_path.split(":") {
-        path.push(uuid::Uuid::parse_str(part)?);
-    }
-
-    if path.is_empty() {
-        println!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter("content_path".to_string()).into());
-    }
-
-    let project_storage = Arc::clone(project_storage);
-
-    let project = project_storage.get_project(&project_id, settings).await?;
-
-    let mut project = project.write().unwrap();
-
-    let section = get_section_by_path_mut(&mut project, &path)?;
-
-    let mut new_section_data = section.patch(section_patch.into_inner());
+    let mut new_section_data = section.clone().patch(section_patch.into_inner());
     // Check if new section data is valid
     // Check authors
     for author in new_section_data.metadata.authors.iter() {
         if let PersonUuidOrString::PersonUuid(id) = author
-            && !data_storage.person_exists(id)
+            && !persons::exists(pool, *id).await.unwrap_or(false)
         {
             return Err(ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into());
         }
@@ -304,7 +262,7 @@ pub async fn update_section(
     // Check editors
     for editor in new_section_data.metadata.editors.iter() {
         if let PersonUuidOrString::PersonUuid(id) = editor
-            && !data_storage.person_exists(id)
+            && !persons::exists(pool, *id).await.unwrap_or(false)
         {
             return Err(ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into());
         }
@@ -321,10 +279,7 @@ pub async fn update_section(
         }
     }
 
-    // Set last changed to now
-    new_section_data.metadata.last_changed = Some(chrono::Utc::now().naive_utc());
-
-    *section = new_section_data.clone();
+    sections::update_metadata(pool, section_id, &new_section_data).await?;
 
     Ok(().into())
 }
@@ -475,39 +430,31 @@ impl Patch<PatchSection, Section> for Section {
     }
 }
 
-/// DELETE /api/projects/<project_id>/sections/<content_path>
+/// DELETE /api/projects/<project_id>/sections/<section_id>
 /// Delete a section including all subsections and content blocks
-#[delete("/api/projects/<project_id>/sections/<content_path>")]
+#[delete("/api/projects/<project_id>/sections/<section_id>")]
 pub async fn delete_section(
     project_id: String,
-    content_path: String,
+    section_id: String,
     _session: Session,
+    pool: &State<PgPool>,
     settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
 ) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
+    let section_id = uuid::Uuid::parse_str(&section_id)?;
 
-    let mut path = vec![];
-    for part in content_path.split(":") {
-        let part = uuid::Uuid::parse_str(part)?;
-        path.push(part);
+    debug!("Deleting section {:?}", section_id);
+
+    let deleted_ids = sections::delete_subtree(pool.inner(), project_id, section_id).await?;
+    for id in deleted_ids {
+        if let Err(e) = section_content::delete(settings.inner(), id).await {
+            warn!(
+                "Couldn't delete CRDT content file for section {}: {}",
+                id, e
+            );
+        }
     }
-
-    if path.is_empty() {
-        warn!("Couldn't parse content path: path is empty");
-        return Err(ApiErrorType::UnparsableParameter(String::from("content_path")).into());
-    }
-
-    let project_entry = project_storage.get_project(&project_id, settings).await?;
-
-    debug!("Deleting section with path {:?}", path);
-
-    let mut project = project_entry.write().unwrap();
-
-    match project.remove_section(path.last().unwrap()) {
-        Some(_) => Ok(().into()),
-        None => Err(ApiErrorType::ResourceNotFound(String::from("section")).into()),
-    }
+    Ok(().into())
 }
 
 /// PUT /api/projects/<project_id>/sections/<section_id>/move/after/<after_id>
@@ -518,32 +465,14 @@ pub async fn move_section_after(
     section_id: String,
     after_id: String,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     let section_id = uuid::Uuid::parse_str(&section_id)?;
     let after_id = uuid::Uuid::parse_str(&after_id)?;
     let project_id = uuid::Uuid::parse_str(&project_id)?;
 
-    let project = project_storage.get_project(&project_id, settings).await?;
-
-    let mut project = project.write().unwrap();
-
-    // Remove section from current location
-    let section = match project.remove_section(&section_id) {
-        Some(section) => section,
-        None => return Err(ApiErrorType::ResourceNotFound(String::from("section")).into()),
-    };
-
-    // Insert after the target
-    match project.insert_section_after(&after_id, section.clone()) {
-        Ok(_) => Ok(().into()),
-        Err(_) => {
-            // rollback: append to root to avoid data loss
-            project.sections.push(section);
-            Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
-        }
-    }
+    sections::move_after(pool.inner(), project_id, section_id, after_id).await?;
+    Ok(().into())
 }
 
 /// PUT /api/projects/<project_id>/sections/<section_id>/move/child_of/<parent_id>
@@ -554,30 +483,12 @@ pub async fn move_section_child_of(
     section_id: String,
     parent_id: String,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     let section_id = uuid::Uuid::parse_str(&section_id)?;
     let parent_id = uuid::Uuid::parse_str(&parent_id)?;
     let project_id = uuid::Uuid::parse_str(&project_id)?;
 
-    let project = project_storage.get_project(&project_id, settings).await?;
-
-    let mut project = project.write().unwrap();
-
-    // Remove section from current location
-    let section = match project.remove_section(&section_id) {
-        Some(section) => section,
-        None => return Err(ApiErrorType::ResourceNotFound(String::from("section")).into()),
-    };
-
-    // Insert as first child of parent
-    match project.insert_section_as_first_child(&parent_id, section.clone()) {
-        Ok(_) => Ok(().into()),
-        Err(_) => {
-            // rollback: append to root to avoid data loss
-            project.sections.push(section);
-            Err(ApiErrorType::ResourceNotFound(String::from("section")).into())
-        }
-    }
+    sections::move_child_of(pool.inner(), project_id, section_id, parent_id).await?;
+    Ok(().into())
 }

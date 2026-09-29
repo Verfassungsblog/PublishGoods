@@ -30,30 +30,8 @@ function get_project_id(): string | null {
  * and attaches event handlers for further interactions within the wizard.
  */
 function import_btn_handler() {
-    let overlay_wrapper = document.getElementById("overlay-wrapper");
-    let overlay_content = document.getElementById("inner_overlay");
-    overlay_wrapper.classList.remove("hide");
-
-    let close_overlay = function(){
-        overlay_wrapper.classList.add("hide");
-        overlay_content.innerHTML = "";
-    }
-
-    // Ensure the overlay close button works for import wizard too
-    let overlay_close_btn = document.getElementById("overlay_close_btn");
-    if(overlay_close_btn){
-        overlay_close_btn.onclick = close_overlay;
-    }
-
-    // Close with Escape
-    document.onkeydown = function(e: KeyboardEvent){
-        if(e.key === "Escape" && !overlay_wrapper.classList.contains("hide")){
-            close_overlay();
-        }
-    };
-
     // @ts-ignore
-    overlay_content.innerHTML = Handlebars.templates.editor_import_wizard();
+    Tools.show_overlay(Handlebars.templates.editor_import_wizard());
 
     Tools.add_event_listeners("#wizard-pandoc-btn", "click", function () {
         document.getElementById("wizard-start").classList.add("hide");
@@ -96,7 +74,7 @@ async function wordpress_filter_load_categories(): Promise<void> {
         let category_tree = await api.load_category_tree(host);
         await wordpress_filter_show_filter_mask(category_tree, host);
     } catch (e) {
-        document.getElementById("overlay-wrapper").classList.add("hide");
+        Tools.hide_overlay();
         Tools.show_alert(e, "danger");
     }
 }
@@ -345,7 +323,6 @@ async function show_import_status(import_job_id: string){
 
     let status_text = document.getElementById("wizard-upload-progress-status");
     let status_bar = document.getElementById("wizard-upload-progress") as HTMLProgressElement;
-    let overlay_wrapper = document.getElementById("overlay-wrapper");
 
     let api = API.ImportAPI();
 
@@ -365,7 +342,7 @@ async function show_import_status(import_job_id: string){
                     case "Complete":
                         status_text.innerText = "Import completed!";
                         clearInterval(update_status);
-                        overlay_wrapper.classList.add("hide");
+                        Tools.hide_overlay();
                         location.reload();
                         //Tools.show_alert("Import completed!", "success");
                 }
@@ -403,6 +380,9 @@ async function show_import_status(import_job_id: string){
                         case "ProjectNotFound":
                             error_msg = "Couldn't find the project to import into. Was it deleted in the meantime?";
                             break;
+                        case "Timeout":
+                            error_msg = "The import took too long and was aborted.";
+                            break;
                     }
                 }else if ("WordpressApiError" in error){
                     let details = error.WordPressApiError as string;
@@ -427,7 +407,7 @@ async function show_import_status(import_job_id: string){
 
                 status_text.innerText = "Import failed :(";
                 clearInterval(update_status);
-                overlay_wrapper.classList.add("hide");
+                Tools.hide_overlay();
                 Tools.show_alert("Import failed: "+error_msg, "danger");
             }
         }catch(e){

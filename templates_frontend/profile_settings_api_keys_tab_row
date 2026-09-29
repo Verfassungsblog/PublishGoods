@@ -1,0 +1,6 @@
+<tr data-api-key-id="{{id}}">
+    <td>{{name}}</td>
+    <td><code>vb_{{key_prefix}}&hellip;</code></td>
+    <td>{{created_at}}</td>
+    <td><button type="button" class="btn btn-secondary btn-sm delete_api_key_btn">Delete</button></td>
+</tr>

@@ -1,12 +1,13 @@
 :root {
-    --dark-blue: #1b1b30;
+    --blue: #4357AD;
     --red: #d62839ff;
     --light-blue: #caf0ff;
     --green: #81f495ff;
     --silver: #bfafa6ff;
-    --light-gray: #f5f5f5ff;
+    --light-gray: #F9F9F9;
     --grey: #808080ff;
     --white: #ffffffff;
+    --dark-blue: #1b1b30;
 }
 
 body {
@@ -65,16 +66,9 @@ h3 {
     margin-right: 50px;
     font-size: initial;
 }
-.nav-item{
-    margin-right: 10px;
-}
 .nav-link {
-    padding: 1px;
+    padding: 5px;
 }
-.nav-link.active{
-    padding: 0 !important;
-}
-
 #editor-sidebar {
     display: flex;
     flex-direction: column;
@@ -507,7 +501,7 @@ customstyle{
 }
 .faded-out-background{
     background: rgba(128,128,128,0.7);
-    position: absolute;
+    position: fixed;
     z-index: 1000;
     left: 0;
     right: 0;
@@ -515,7 +509,7 @@ customstyle{
     bottom: 0;
 }
 .overlay{
-    position: absolute;
+    position: fixed;
     background-color: white;
     width: 80vw;
     height: 80vh;
@@ -715,4 +709,97 @@ customstyle{
 #section_metadata_editors_first_dropzone.dragover{
     width: 40px;
     background-color: var(--light-blue);
+}
+input[type=text],input[type=url],input[type=email],input[type=number],input[type=password],input[type=date]{
+    height:30px;
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+    width: 100%;
+}
+.form-group{
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    justify-content: center;
+    padding-right: 10px;
+}
+.form-group-inline{
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+.form-group label{
+    min-width: fit-content;
+    margin-right: 10px;
+}
+.form-group select{
+    width: 100%;
+    max-width: fit-content;
+}
+label{
+    font-size: 14px;
+    color: var(--blue);
+    font-variant: small-caps;
+}
+select{
+    height:30px;
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+}
+
+.btn{
+    cursor: pointer;
+    border-radius: 2px;
+    background-color: white;
+    padding: 4px;
+}
+.btn-primary{
+    border: 1px solid var(--blue);
+    color: var(--blue);
+}
+
+.btn-primary:hover{
+    background-color: var(--blue);
+    color: white;
+}
+.btn-danger{
+    border: 1px solid #dc3545;
+    color: #dc3545;
+}
+
+.btn-danger:hover{
+    background-color: #dc3545;
+    color: white;
+}
+
+.btn-warning{
+    border: 1px solid #ffc107;
+    color: #ffc107;
+}
+
+.btn-warning:hover{
+    background-color: #ffc107;
+    color: white;
+}
+
+.btn-secondary{
+    border: 1px solid lightgray;
+    color: lightgray;
+}
+
+.btn-secondary:hover{
+    background-color: lightgray;
+    color: white;
+}
+
+.btn-success{
+    border: 1px solid var(--green);
+    color: var(--green);
+}
+.btn-success:hover{
+    background-color: var(--green);
+    color: white;
 }

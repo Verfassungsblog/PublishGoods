@@ -1,15 +1,14 @@
+use crate::db::repositories::bibliography;
 use crate::session::session_guard::Session;
-use crate::settings::Settings;
-use crate::storage::project_storage::ProjectStorage;
 use crate::storage::project_storage::current::{BibEntryOrFolder, Bibliography};
 use crate::utils::api_helpers::{APIResult, ApiError, ApiErrorType};
 use hayagriva::types::EntryType;
 use rocket::State;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -27,24 +26,17 @@ pub struct BibTreeEntry {
     pub children: Vec<BibTreeEntry>,
 }
 
+/// Returns the project's bibliography as a tree of folders and entries, sorted with
+/// folders first and then alphabetically (case-insensitive) by name at each level.
 #[get("/api/project/<project_id>/bibliography")]
 pub async fn get_bibliography_tree(
     project_id: &str,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<Vec<BibTreeEntry>> {
     let project_uuid = Uuid::parse_str(project_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
-    let project_lock = project_storage
-        .get_project(&project_uuid, settings)
-        .await
-        .map_err(ApiError::from)?;
-    let project = project_lock
-        .read()
-        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
-    let bibliography = &project.bibliography;
+    let bibliography = bibliography::get_all_for_project(pool.inner(), project_uuid).await?;
 
     // Build the tree
     let mut tree = Vec::new();
@@ -61,9 +53,9 @@ pub async fn get_bibliography_tree(
     if let Some(root_ids) = by_parent.get(&None) {
         // Sort: folders first, then entries; both alphabetically by name (case-insensitive)
         let mut root_ids_sorted = root_ids.clone();
-        sort_ids_by_folder_then_name(&mut root_ids_sorted, bibliography);
+        sort_ids_by_folder_then_name(&mut root_ids_sorted, &bibliography);
         for id in root_ids_sorted {
-            tree.push(build_tree_node(id, bibliography, &by_parent));
+            tree.push(build_tree_node(id, &bibliography, &by_parent));
         }
     }
 
@@ -108,8 +100,9 @@ fn build_tree_node(
     }
 }
 
-// Helper: sort IDs so that folders come first, then entries; both groups sorted alphabetically (case-insensitive)
-fn sort_ids_by_folder_then_name(ids: &mut Vec<Uuid>, bib: &Bibliography) {
+/// Sorts IDs in place so that folders come first, then entries; both groups sorted
+/// alphabetically (case-insensitive) by name.
+fn sort_ids_by_folder_then_name(ids: &mut [Uuid], bib: &Bibliography) {
     ids.sort_by(|a, b| {
         let (ka, na) = entry_sort_key(*a, bib);
         let (kb, nb) = entry_sort_key(*b, bib);
@@ -136,36 +129,27 @@ fn entry_sort_key(id: Uuid, bib: &Bibliography) -> (u8, String) {
     }
 }
 
+/// Returns a single bibliography entry or folder by id, looked up from the project's
+/// full bibliography.
 #[get("/api/project/<project_id>/bibliography/<entry_id>")]
 pub async fn get_bibliography_entry(
     project_id: &str,
     entry_id: &str,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<BibEntryOrFolder> {
     let project_uuid = Uuid::parse_str(project_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
     let entry_uuid = Uuid::parse_str(entry_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("entry_id".to_string())))?;
-    let project_lock = project_storage
-        .get_project(&project_uuid, settings)
-        .await
-        .map_err(ApiError::from)?;
-    let project = project_lock
-        .read()
-        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
 
-    let entry = project
-        .bibliography
-        .entries
-        .get(&entry_uuid)
-        .ok_or_else(|| {
-            ApiError::new(
-                ApiErrorType::ResourceNotFound("Bibliography entry not found".to_string()),
-                None,
-            )
-        })?;
+    let bibliography = bibliography::get_all_for_project(pool.inner(), project_uuid).await?;
+    let entry = bibliography.entries.get(&entry_uuid).ok_or_else(|| {
+        ApiError::new(
+            ApiErrorType::ResourceNotFound("Bibliography entry not found".to_string()),
+            None,
+        )
+    })?;
 
     Ok(entry.clone().into())
 }
@@ -183,20 +167,11 @@ pub async fn search_bibliography_entries(
     project_id: &str,
     q: &str,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<Vec<BibSearchResult>> {
     let project_uuid = Uuid::parse_str(project_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
-    let project_lock = project_storage
-        .get_project(&project_uuid, settings)
-        .await
-        .map_err(ApiError::from)?;
-    let project = project_lock
-        .read()
-        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
-    let bibliography = &project.bibliography;
+    let bibliography = bibliography::get_all_for_project(pool.inner(), project_uuid).await?;
     let needle = q.to_lowercase();
 
     let mut results: Vec<BibSearchResult> = Vec::new();
@@ -254,141 +229,55 @@ pub async fn search_bibliography_entries(
     Ok(results.into())
 }
 
+/// Inserts a new bibliography entry or folder into the project, generating a fresh
+/// id for it if one wasn't supplied, and returns the id of the created row.
 #[post("/api/project/<project_id>/bibliography", data = "<entry>")]
 pub async fn post_bibliography_entry(
     project_id: &str,
     entry: Json<BibEntryOrFolder>,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<Uuid> {
     let project_uuid = Uuid::parse_str(project_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
-    let project_lock = project_storage
-        .get_project(&project_uuid, settings)
-        .await
-        .map_err(ApiError::from)?;
 
-    let id = {
-        let mut project = project_lock
-            .write()
-            .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
-        let mut new_entry = entry.into_inner();
-        let id = match &mut new_entry {
-            BibEntryOrFolder::BibEntry(e) => {
-                if e.key == Uuid::nil() {
-                    e.key = Uuid::new_v4();
-                }
-                e.key
-            }
-            BibEntryOrFolder::BibFolder(_) => Uuid::new_v4(),
-        };
-
-        project.bibliography.entries.insert(id, new_entry);
-        id
-    };
-
-    project_storage
-        .save_project_to_disk(&project_uuid, settings)
-        .await
-        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
+    let id = bibliography::insert(pool.inner(), project_uuid, &entry.into_inner()).await?;
     Ok(id.into())
 }
 
+/// Replaces an existing bibliography entry or folder with the given patch data.
+/// Returns a not-found error if the entry doesn't exist in the project.
 #[patch("/api/project/<project_id>/bibliography/<entry_id>", data = "<patch>")]
 pub async fn patch_bibliography_entry(
     project_id: &str,
     entry_id: &str,
     patch: Json<BibEntryOrFolder>,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     let project_uuid = Uuid::parse_str(project_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
     let entry_uuid = Uuid::parse_str(entry_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("entry_id".to_string())))?;
-    let project_lock = project_storage
-        .get_project(&project_uuid, settings)
-        .await
-        .map_err(ApiError::from)?;
 
-    {
-        let mut project = project_lock
-            .write()
-            .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
-        if !project.bibliography.entries.contains_key(&entry_uuid) {
-            return Err(ApiError::new(
-                ApiErrorType::ResourceNotFound("Bibliography entry not found".to_string()),
-                None,
-            ));
-        }
-
-        project
-            .bibliography
-            .entries
-            .insert(entry_uuid, patch.into_inner());
-    }
-
-    project_storage
-        .save_project_to_disk(&project_uuid, settings)
-        .await
-        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
+    bibliography::update(pool.inner(), project_uuid, entry_uuid, &patch.into_inner()).await?;
     Ok(().into())
 }
 
+/// Deletes a bibliography entry or folder from the project, cleaning up any
+/// references to it from other entries' parent links.
 #[delete("/api/project/<project_id>/bibliography/<entry_id>")]
 pub async fn delete_bibliography_entry(
     project_id: &str,
     entry_id: &str,
     _session: Session,
-    settings: &State<Settings>,
-    project_storage: &State<Arc<ProjectStorage>>,
+    pool: &State<PgPool>,
 ) -> APIResult<()> {
     let project_uuid = Uuid::parse_str(project_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("project_id".to_string())))?;
     let entry_uuid = Uuid::parse_str(entry_id)
         .map_err(|_| ApiError::from(ApiErrorType::UnparsableParameter("entry_id".to_string())))?;
-    let project_lock = project_storage
-        .get_project(&project_uuid, settings)
-        .await
-        .map_err(ApiError::from)?;
 
-    {
-        let mut project = project_lock
-            .write()
-            .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
-        if project.bibliography.entries.remove(&entry_uuid).is_none() {
-            return Err(ApiError::new(
-                ApiErrorType::ResourceNotFound("Bibliography entry not found".to_string()),
-                None,
-            ));
-        }
-
-        // Clean up references in other entries
-        for entry in project.bibliography.entries.values_mut() {
-            match entry {
-                BibEntryOrFolder::BibEntry(e) => {
-                    e.parents.retain(|&id| id != entry_uuid);
-                }
-                BibEntryOrFolder::BibFolder(f) => {
-                    if f.parent == Some(entry_uuid) {
-                        f.parent = None;
-                    }
-                }
-            }
-        }
-    }
-
-    project_storage
-        .save_project_to_disk(&project_uuid, settings)
-        .await
-        .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
-
+    bibliography::delete(pool.inner(), project_uuid, entry_uuid).await?;
     Ok(().into())
 }

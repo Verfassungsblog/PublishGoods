@@ -877,7 +877,7 @@ mod tests {
                 None,
                 None,
                 None,
-                None,
+                Some(5),
             )
             .await
             .unwrap();

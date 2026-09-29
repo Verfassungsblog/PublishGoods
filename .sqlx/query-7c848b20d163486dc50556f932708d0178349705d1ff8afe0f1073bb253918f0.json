@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sections (\n            id, project_id, parent_section, position, visible_in_toc, css_classes,\n            title, toc_title_subtitle_override, subtitle, web_url, publish_date, language,\n            custom_fields, identifiers\n        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Float8",
+        "Bool",
+        "TextArray",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Date",
+        "Text",
+        "Jsonb",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7c848b20d163486dc50556f932708d0178349705d1ff8afe0f1073bb253918f0"
+}

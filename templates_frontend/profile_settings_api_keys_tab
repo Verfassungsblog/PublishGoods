@@ -1,0 +1,23 @@
+<div class="col-12 d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">API Keys</h2>
+    <button type="button" class="btn btn-primary" id="create_api_key_btn">+ Create API Key</button>
+</div>
+<div class="col-12">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Key</th>
+                <th>Created</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody id="api_keys_list">
+            {{#each api_keys}}
+                {{> profile_settings_api_keys_tab_row}}
+            {{else}}
+                <tr><td colspan="4" class="text-muted">You don't have any API keys yet.</td></tr>
+            {{/each}}
+        </tbody>
+    </table>
+</div>

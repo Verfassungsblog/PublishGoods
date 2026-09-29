@@ -99,6 +99,25 @@ export async function send_get_content_blocks(project_id: string, section_path: 
     }
 }
 
+export async function send_get_current_user() {
+    const response = await fetch(`/api/users/me`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to get current user: ${response.status}`);
+    } else {
+        let response_data = await response.json();
+        if (response_data.hasOwnProperty("error")) {
+            throw new Error(`Failed to get current user: ${response_data["error"]}`);
+        } else {
+            return response_data.data;
+        }
+    }
+}
+
 export async function send_add_user(user_data: object) {
     const response = await fetch(`/api/users/`, {
         method: 'POST',
@@ -133,6 +152,26 @@ export async function send_update_user(user_id: string, patch_data: object) {
         let response_data = await response.json();
         if (response_data.hasOwnProperty("error")) {
             throw new Error(`Failed to update user: ${response_data["error"]}`);
+        } else {
+            return response_data;
+        }
+    }
+}
+
+export async function send_delete_own_account(email: string) {
+    const response = await fetch(`/api/users/me`, {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({email: email})
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to delete account: ${response.status}`);
+    } else {
+        let response_data = await response.json();
+        if (response_data.hasOwnProperty("error")) {
+            throw new Error(`Failed to delete account: ${response_data["error"]}`);
         } else {
             return response_data;
         }
@@ -272,6 +311,312 @@ export function apiErrorToString(error: ApiError): string {
     return errorMessage ? `${errorMessage}` : errorType;
 }
 
+export interface UserProfile {
+    id: string;
+    name: string;
+}
+
+export type TeamRole = "owner" | "admin" | "member";
+
+export interface TeamMember {
+    user: UserProfile;
+    role: TeamRole;
+}
+
+export interface Team {
+    id: string;
+    name: string;
+    members: TeamMember[];
+}
+
+export interface Invitation {
+    id: string;
+    team_id: string;
+    role: TeamRole;
+    user_id: string | null;
+    email: string | null;
+    timestamp: string;
+}
+
+// Returned by GET /api/invitations: invitations addressed to the current user, each
+// enriched with the invited team's name (the invitee usually isn't a member yet, so
+// they have no other way to look the team up).
+export interface InvitationWithTeam {
+    id: string;
+    team_id: string;
+    team_name: string;
+    role: TeamRole;
+    timestamp: string;
+}
+
+export interface PatchTeamMember {
+    user_id: string;
+    role: TeamRole;
+}
+
+export interface PatchTeamData {
+    name?: string;
+    members?: PatchTeamMember[];
+}
+
+export interface ApiKey {
+    id: string;
+    user_id: string;
+    name: string;
+    key_prefix: string;
+    created_at: string;
+}
+
+// Returned only once, by POST /api/api-keys: the full secret, which the server never
+// stores or returns again (only its Argon2 hash is kept).
+export interface CreatedApiKey extends ApiKey {
+    key: string;
+}
+
+export function TeamsAPI() {
+    async function list_teams(): Promise<Team[]> {
+        const response = await fetch(`/api/teams`, {
+            method: 'GET',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to list teams: ${response.status}`);
+        }
+        const response_data: ApiResult<Team[]> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to list teams: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data ?? [];
+    }
+
+    async function create_team(name: string): Promise<Team> {
+        const response = await fetch(`/api/teams`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name})
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to create team: ${response.status}`);
+        }
+        const response_data: ApiResult<Team> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to create team: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+        return response_data.data;
+    }
+
+    async function patch_team(team_id: string, patch: PatchTeamData): Promise<Team> {
+        const response = await fetch(`/api/teams/${team_id}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(patch)
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to update team: ${response.status}`);
+        }
+        const response_data: ApiResult<Team> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to update team: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+        return response_data.data;
+    }
+
+    async function leave_team(team_id: string): Promise<void> {
+        const response = await fetch(`/api/teams/${team_id}/leave`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to leave team: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to leave team: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    async function delete_team(team_id: string): Promise<void> {
+        const response = await fetch(`/api/teams/${team_id}`, {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to delete team: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to delete team: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    async function create_invitation(team_id: string, role: TeamRole, email: string): Promise<Invitation> {
+        const response = await fetch(`/api/teams/${team_id}/invitations`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({role: role, email: email})
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to create invitation: ${response.status}`);
+        }
+        const response_data: ApiResult<Invitation> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to create invitation: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+        return response_data.data;
+    }
+
+    async function list_invitations(team_id: string): Promise<Invitation[]> {
+        const response = await fetch(`/api/teams/${team_id}/invitations`, {
+            method: 'GET',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to list invitations: ${response.status}`);
+        }
+        const response_data: ApiResult<Invitation[]> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to list invitations: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data ?? [];
+    }
+
+    async function revoke_invitation(team_id: string, invitation_id: string): Promise<void> {
+        const response = await fetch(`/api/teams/${team_id}/invitations/${invitation_id}`, {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to revoke invitation: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to revoke invitation: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    async function list_my_invitations(): Promise<InvitationWithTeam[]> {
+        const response = await fetch(`/api/invitations`, {
+            method: 'GET',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to list invitations: ${response.status}`);
+        }
+        const response_data: ApiResult<InvitationWithTeam[]> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to list invitations: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data ?? [];
+    }
+
+    async function accept_invitation(invitation_id: string): Promise<void> {
+        const response = await fetch(`/api/invitations/${invitation_id}/accept`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to accept invitation: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to accept invitation: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    async function decline_my_invitation(invitation_id: string): Promise<void> {
+        const response = await fetch(`/api/invitations/${invitation_id}/decline`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to decline invitation: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to decline invitation: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    return {
+        list_teams,
+        create_team,
+        patch_team,
+        leave_team,
+        delete_team,
+        create_invitation,
+        list_invitations,
+        revoke_invitation,
+        list_my_invitations,
+        accept_invitation,
+        decline_my_invitation
+    };
+}
+
+export function ApiKeysAPI() {
+    async function list_api_keys(): Promise<ApiKey[]> {
+        const response = await fetch(`/api/api-keys`, {
+            method: 'GET',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to list API keys: ${response.status}`);
+        }
+        const response_data: ApiResult<ApiKey[]> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to list API keys: ${apiErrorToString(response_data.error)}`);
+        }
+        return response_data.data ?? [];
+    }
+
+    async function create_api_key(name: string): Promise<CreatedApiKey> {
+        const response = await fetch(`/api/api-keys`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name})
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to create API key: ${response.status}`);
+        }
+        const response_data: ApiResult<CreatedApiKey> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to create API key: ${apiErrorToString(response_data.error)}`);
+        }
+        if (!response_data.data) {
+            throw new Error('No data received');
+        }
+        return response_data.data;
+    }
+
+    async function delete_api_key(key_id: string): Promise<void> {
+        const response = await fetch(`/api/api-keys/${key_id}`, {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to delete API key: ${response.status}`);
+        }
+        const response_data: ApiResult<null> = await response.json();
+        if (response_data.error) {
+            throw new Error(`Failed to delete API key: ${apiErrorToString(response_data.error)}`);
+        }
+    }
+
+    return {
+        list_api_keys,
+        create_api_key,
+        delete_api_key
+    };
+}
+
 interface ExportFormat {
     slug: string;
     name: string;
@@ -350,7 +695,6 @@ export type ProjectContentsSectionMetadata = {
 export interface APISectionResult {
     id: string; // UUID represented as a string in JavaScript/TypeScript
     css_classes: string[];
-    sub_sections?: Section[];
     children: NewContentBlock[];
     visible_in_toc: boolean;
     metadata: APISectionMetadataResult;
@@ -1544,12 +1888,11 @@ export function SectionAPI(){
      * Requests the data for a section
      *
      * @param project_id
-     * @param section_path
+     * @param section_id
      * @param expand_authors boolean, if true also adds details for authors
      * @param expand_editors boolean, if true also adds details for editors
-     * @param expand_subsections boolean, if true also adds subsections
      */
-    async function read_section(project_id: string, section_path: string, expand_authors: boolean, expand_editors: boolean, expand_subsections: boolean) {
+    async function read_section(project_id: string, section_id: string, expand_authors: boolean, expand_editors: boolean) {
         let expand_query = "expand=";
 
         if(expand_authors){
@@ -1558,12 +1901,9 @@ export function SectionAPI(){
         if(expand_editors){
             expand_query += "editors,"
         }
-        if(expand_subsections){
-            expand_query += "subsections,"
-        }
         expand_query = expand_query.substring(0, expand_query.length -1);
 
-        const response = await fetch(`/api/projects/${project_id}/sections/${section_path}?${expand_query}`, {
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}?${expand_query}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
@@ -1585,8 +1925,8 @@ export function SectionAPI(){
 
         return response_data.data;
     }
-    async function patch_section(project_id: string, section_path: string, data: PatchSection){
-        const response = await fetch(`/api/projects/${project_id}/sections/${section_path}`, {
+    async function patch_section(project_id: string, section_id: string, data: PatchSection){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json'
@@ -1606,8 +1946,8 @@ export function SectionAPI(){
 
         return response_data.data;
     }
-    async function delete_section(project_id: string, section_path: string){
-        const response = await fetch(`/api/projects/${project_id}/sections/${section_path}`, {
+    async function delete_section(project_id: string, section_id: string){
+        const response = await fetch(`/api/projects/${project_id}/sections/${section_id}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
@@ -1762,6 +2102,7 @@ export type ImportError =
     | "PandocError"
     | "HtmlConversionFailed"
     | "ProjectNotFound"
+    | "Timeout"
     | { WordPressApiError: WordpressAPIError };
 
 export interface ProcessingDetails{

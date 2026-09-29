@@ -1,7 +1,6 @@
 use crate::session::session_guard::Session;
-use rand::distributions::Alphanumeric;
-use rand::distributions::Distribution;
-use rand::thread_rng;
+use rand::distr::Alphanumeric;
+use rand::distr::Distribution;
 use rocket::serde::Deserialize;
 use std::collections::HashMap;
 use std::ops::Add;
@@ -81,7 +80,7 @@ impl SessionStorage {
 }
 
 fn generate_random_string() -> String {
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     Alphanumeric
         .sample_iter(&mut rng)
         .take(32)

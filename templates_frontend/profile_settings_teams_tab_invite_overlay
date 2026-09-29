@@ -1,0 +1,23 @@
+<h1>Invite to {{team_name}}</h1>
+<div class="form-group mt-3">
+    <label for="invite_email">Email Address</label>
+    <input type="email" id="invite_email" autocomplete="off">
+</div>
+<div class="form-group">
+    <label for="invite_role">Role</label>
+    <select id="invite_role">
+        <option value="member">Member</option>
+        <option value="admin">Admin</option>
+        <option value="owner">Owner</option>
+    </select>
+</div>
+<button type="button" class="btn btn-primary" id="send_invite_btn">Send Invitation</button>
+
+<h3 class="mt-4">Pending Invitations</h3>
+<div id="team_invitations_list">
+    {{#each invitations}}
+        {{> profile_settings_teams_tab_sent_invitation_row}}
+    {{else}}
+        <p class="text-muted">No pending invitations.</p>
+    {{/each}}
+</div>
