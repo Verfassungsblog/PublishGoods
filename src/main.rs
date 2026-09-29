@@ -1,9 +1,4 @@
-//! Verfassungsbooks serves as a web application for the creation of books including
-//! import and export from various formats.
-//!
-//! # Settings
-//! You have to create a new configuration file in the config folder to change the default settings.
-//! The default settings pub(crate)are stored in the file config/default.toml, create a new file named "local.toml" in the same folder.
+//! Publish Goods serves as a web application for the creation of books, journals and other publications.
 
 // #![warn(missing_docs)]
 // #![warn(clippy::missing_docs_in_private_items)]
@@ -32,20 +27,33 @@ use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use vb_exchange::certs::{load_client_cert, load_crl, load_private_key, load_root_ca};
 
+#[doc(hidden)]
 pub mod cleaner;
+#[doc(hidden)]
 pub mod db;
+#[doc(hidden)]
 pub mod export;
+#[doc(hidden)]
 pub mod import;
+#[doc(hidden)]
 pub mod mailer;
+#[doc(hidden)]
 pub mod persons;
+#[doc(hidden)]
 pub mod profile_settings;
+#[doc(hidden)]
 pub mod projects;
 pub mod render_api;
+#[doc(hidden)]
 pub mod session;
 mod settings;
+#[doc(hidden)]
 pub mod settings_page;
+#[doc(hidden)]
 pub mod storage;
+#[doc(hidden)]
 pub mod templates_editor;
+#[doc(hidden)]
 pub mod utils;
 
 /// This is the catch-all route that redirects all 401 errors to the login page.

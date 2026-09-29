@@ -1,0 +1,69 @@
+name: Publish rustdoc to GitHub Pages
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup
+        run: |
+          npm install -g handlebars typescript@6.0.3 webpack webpack-cli
+          cd typescript && npm install
+      - name: Set up database schema
+        run: |
+          for f in migrations/*.sql; do
+            echo "Applying $f"
+            psql "$DATABASE_URL" -f "$f"
+          done
+      - name: Build rustdoc (no dependencies)
+        run: cargo doc --no-deps --document-private-items --verbose
+      - name: Add index.html redirect
+        run: echo '<meta http-equiv="refresh" content="0; url=PublishGoods/index.html">' > target/doc/index.html
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
