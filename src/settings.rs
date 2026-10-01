@@ -1,6 +1,7 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use std::env;
+use url::{Origin, ParseError, Url};
 
 /// Stores settings read from config files.
 #[derive(Debug, Deserialize, Clone)]
@@ -88,6 +89,23 @@ impl Settings {
             .set_override("version", version)?
             .build()?;
 
-        s.try_deserialize()
+        let settings: Settings = s.try_deserialize()?;
+
+        // Check if instance url is valid and make sure to remove a trailing slash
+        match settings.instance_url.parse::<Url>() {
+            Ok(mut instance_url) => {
+                instance_url.path_segments_mut().unwrap().pop_if_empty();
+            }
+            Err(e) => {
+                error!("Invalid instance url: {}", e);
+                panic!()
+            }
+        }
+
+        Ok(settings)
+    }
+
+    pub fn get_instance_url(&self) -> Url {
+        self.instance_url.parse().expect("Instance URL is invalid!")
     }
 }

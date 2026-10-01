@@ -44,6 +44,7 @@ pub struct Invitation {
     pub role: TeamRole,
     pub user_id: Option<uuid::Uuid>,
     pub email: Option<String>,
+    pub email_token: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -346,7 +347,7 @@ pub async fn create_invitation_for_user<'e>(
     let invitation = sqlx::query_as!(
         Invitation,
         r#"INSERT INTO invitations (team_id, role, user_id) VALUES ($1, $2, $3)
-           RETURNING id, team_id, role as "role: TeamRole", user_id, email, timestamp"#,
+           RETURNING id, team_id, role as "role: TeamRole", user_id, email, timestamp, email_token"#,
         team_id,
         role as TeamRole,
         user_id
@@ -362,14 +363,16 @@ pub async fn create_invitation_for_email<'e>(
     team_id: Uuid,
     role: TeamRole,
     email: &str,
+    email_token: &str,
 ) -> Result<Invitation, DbError> {
     let invitation = sqlx::query_as!(
         Invitation,
-        r#"INSERT INTO invitations (team_id, role, email) VALUES ($1, $2, $3)
-           RETURNING id, team_id, role as "role: TeamRole", user_id, email, timestamp"#,
+        r#"INSERT INTO invitations (team_id, role, email, email_token) VALUES ($1, $2, $3, $4)
+           RETURNING id, team_id, role as "role: TeamRole", user_id, email, email_token, timestamp"#,
         team_id,
         role as TeamRole,
-        email
+        email,
+        email_token
     )
     .fetch_one(exec)
     .await?;
@@ -383,7 +386,7 @@ pub async fn get_invitation<'e>(
 ) -> Result<Invitation, DbError> {
     sqlx::query_as!(
         Invitation,
-        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp FROM invitations WHERE id = $1"#,
+        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp, email_token FROM invitations WHERE id = $1"#,
         id
     )
     .fetch_optional(exec)
@@ -398,7 +401,7 @@ pub async fn list_invitations_for_team<'e>(
 ) -> Result<Vec<Invitation>, DbError> {
     let invitations = sqlx::query_as!(
         Invitation,
-        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp FROM invitations WHERE team_id = $1 ORDER BY timestamp"#,
+        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp, email_token FROM invitations WHERE team_id = $1 ORDER BY timestamp"#,
         team_id
     )
     .fetch_all(exec)
@@ -418,7 +421,7 @@ pub async fn list_pending_invitations<'e>(
 ) -> Result<Vec<Invitation>, DbError> {
     let invitations = sqlx::query_as!(
         Invitation,
-        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp FROM invitations
+        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp, email_token FROM invitations
            WHERE user_id = $1 OR LOWER(email) = LOWER($2)
            ORDER BY timestamp"#,
         user_id,
@@ -471,7 +474,7 @@ pub async fn accept_invitation(
 
     let invitation = sqlx::query_as!(
         Invitation,
-        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp FROM invitations WHERE id = $1"#,
+        r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp, email_token FROM invitations WHERE id = $1"#,
         invitation_id
     )
     .fetch_optional(&mut *tx)
@@ -683,10 +686,15 @@ mod tests {
         let owner_id = seed_user(&pool, "frank@example.com", "Frank", default_team).await;
         let team = create(&pool, "Email Invite Team", owner_id).await.unwrap();
 
-        let invitation =
-            create_invitation_for_email(&pool, team.id, TeamRole::Member, "grace@example.com")
-                .await
-                .unwrap();
+        let invitation = create_invitation_for_email(
+            &pool,
+            team.id,
+            TeamRole::Member,
+            "grace@example.com",
+            "abcde",
+        )
+        .await
+        .unwrap();
         assert_eq!(invitation.email, Some("grace@example.com".to_string()));
 
         let for_team = list_invitations_for_team(&pool, team.id).await.unwrap();

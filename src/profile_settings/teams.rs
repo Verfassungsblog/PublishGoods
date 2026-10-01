@@ -2,12 +2,19 @@ use crate::db::repositories::DbError;
 use crate::db::repositories::teams as teams_repo;
 use crate::db::repositories::teams::{Invitation, InvitationWithTeam, Team};
 use crate::db::repositories::users::{self, TeamRole};
+use crate::mailer::{MailJob, Mailer};
 use crate::session::session_guard::Session;
+use crate::settings::Settings;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiError, ApiErrorType};
+use lettre::message::Mailbox;
+use lettre::message::header::ContentType;
+use rand::distr::{Alphanumeric, SampleString};
 use rocket::State;
 use rocket::serde::json::Json;
+use rocket_dyn_templates::Metadata;
 use sqlx::PgPool;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::str::FromStr;
 use uuid::Uuid;
 
 /// Looks up `user_id`'s role on `team_id`, treating "not a member" as
@@ -300,6 +307,9 @@ pub async fn create_invitation(
     data: Json<CreateInvitationData>,
     session: Session,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
+    mailer: &State<Mailer>,
+    metadata: Metadata<'_>,
 ) -> APIResult<Invitation> {
     let team_id = Uuid::parse_str(team_id)?;
     let data = data.into_inner();
@@ -323,7 +333,58 @@ pub async fn create_invitation(
                 )
                 .into());
             }
-            teams_repo::create_invitation_for_email(pool, team_id, data.role, &email).await?
+            // Validate email
+            let mailbox = Mailbox::from_str(&email)?;
+
+            // Generate email token
+            let email_token = Alphanumeric.sample_string(&mut rand::rng(), 40);
+
+            // Persist to DB
+            let invitation = teams_repo::create_invitation_for_email(
+                pool,
+                team_id,
+                data.role,
+                &email,
+                &email_token,
+            )
+            .await?;
+
+            // Send invitation to email
+            let mut invitation_url = settings.get_instance_url().clone();
+            invitation_url
+                .path_segments_mut()
+                .unwrap()
+                .extend(&["invitations", invitation.id.to_string().as_str()]);
+            invitation_url
+                .query_pairs_mut()
+                .append_pair("token", email_token.as_str());
+
+            debug!(
+                "Sending invitation, generated invitation url is {}.",
+                invitation_url
+            );
+
+            // Get team name
+            let mut details = BTreeMap::new();
+            details.insert("team_name", teams_repo::get(pool, team_id).await?.name);
+            details.insert("invitation_url", invitation_url.to_string());
+
+            let email_body = metadata
+                .render("email_invitation", details)
+                .ok_or(ApiErrorType::InternalServerError)?
+                .1;
+            let mail_job = MailJob::from(
+                mailbox,
+                "You've been invited to Publish Goods".to_string(),
+                email_body,
+                ContentType::TEXT_PLAIN,
+            );
+
+            if let Err(e) = mailer.sender.send(mail_job).await {
+                error!("Couldn't send mailjob: {}", e);
+            }
+
+            invitation
         }
         (Some(_), Some(_)) => {
             return Err(ApiErrorType::BadRequest(
@@ -339,6 +400,11 @@ pub async fn create_invitation(
     };
 
     Ok(APIResponse::from(invitation))
+}
+
+#[get("/invitations/<invitation_id>?<token>")]
+pub fn register_with_invitation() {
+    todo!()
 }
 
 /// GET /api/teams/<team_id>/invitations
@@ -1120,9 +1186,15 @@ mod integration_tests {
         teams_repo::add_member(&pool, team.id, carol, TeamRole::Member)
             .await
             .unwrap();
-        teams_repo::create_invitation_for_email(&pool, team.id, TeamRole::Member, "x@example.com")
-            .await
-            .unwrap();
+        teams_repo::create_invitation_for_email(
+            &pool,
+            team.id,
+            TeamRole::Member,
+            "x@example.com",
+            "abcde",
+        )
+        .await
+        .unwrap();
 
         let client = test_client(pool.clone()).await;
         login(&client, "carol12@example.com").await;
@@ -1150,6 +1222,7 @@ mod integration_tests {
             team.id,
             TeamRole::Member,
             "invitee13@example.com",
+            "abcde",
         )
         .await
         .unwrap();
@@ -1183,6 +1256,7 @@ mod integration_tests {
             team.id,
             TeamRole::Member,
             "invitee14@example.com",
+            "abcde",
         )
         .await
         .unwrap();
@@ -1262,6 +1336,7 @@ mod integration_tests {
             team.id,
             TeamRole::Member,
             "frank16@example.com",
+            "abcde",
         )
         .await
         .unwrap();
@@ -1528,6 +1603,7 @@ mod integration_tests {
             team.id,
             TeamRole::Member,
             "erin23-new@example.com",
+            "abcde",
         )
         .await
         .unwrap();
@@ -1569,6 +1645,7 @@ mod integration_tests {
             team.id,
             TeamRole::Member,
             "erin24@example.com",
+            "abcde",
         )
         .await
         .unwrap();
