@@ -48,7 +48,6 @@ pub mod render_api;
 pub mod session;
 mod settings;
 #[doc(hidden)]
-pub mod settings_page;
 #[doc(hidden)]
 pub mod storage;
 #[doc(hidden)]
@@ -312,12 +311,9 @@ async fn rocket() -> _ {
                 projects::api::get_project_upload,
                 import::api::import_from_wordpress,
                 export::download::download_rendering,
-                settings_page::settings_page,
-                settings_page::api::get_current_user,
-                settings_page::api::add_user,
-                settings_page::api::update_user,
-                settings_page::api::delete_user,
-                settings_page::api::delete_own_account,
+                profile_settings::account::get_current_user,
+                profile_settings::account::update_user,
+                profile_settings::account::delete_own_account,
                 import::api::import_from_upload,
                 projects::websocket::websocket,
                 profile_settings::profile_settings,

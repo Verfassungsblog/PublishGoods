@@ -118,26 +118,6 @@ export async function send_get_current_user() {
     }
 }
 
-export async function send_add_user(user_data: object) {
-    const response = await fetch(`/api/users/`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(user_data)
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to add user: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to add user: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
-}
-
 export async function send_update_user(user_id: string, patch_data: object) {
     const response = await fetch(`/api/users/` + user_id, {
         method: 'PATCH',
@@ -172,25 +152,6 @@ export async function send_delete_own_account(email: string) {
         let response_data = await response.json();
         if (response_data.hasOwnProperty("error")) {
             throw new Error(`Failed to delete account: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
-}
-
-export async function send_delete_user(user_id: string) {
-    const response = await fetch(`/api/users/` + user_id, {
-        method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to delete user: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to delete user: ${response_data["error"]}`);
         } else {
             return response_data;
         }

@@ -136,17 +136,6 @@ pub async fn mark_email_verified<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Res
     Ok(())
 }
 
-/// Returns every user, ordered by email.
-pub async fn list_all<'e>(exec: impl PgExecutor<'e>) -> Result<Vec<User>, DbError> {
-    let users = sqlx::query_as!(
-        User,
-        "SELECT id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until FROM users ORDER BY email"
-    )
-    .fetch_all(exec)
-    .await?;
-    Ok(users)
-}
-
 /// Checks whether `email` is already taken by another user, optionally excluding one id
 /// (for "is this still free if I keep my own current email" checks during profile updates).
 pub async fn email_in_use<'e>(
