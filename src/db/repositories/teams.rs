@@ -44,6 +44,8 @@ pub struct Invitation {
     pub role: TeamRole,
     pub user_id: Option<uuid::Uuid>,
     pub email: Option<String>,
+    /// Secret mailed to the invitee; never serialized into API responses.
+    #[serde(skip_serializing)]
     pub email_token: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
@@ -411,7 +413,7 @@ pub async fn list_invitations_for_team<'e>(
 
 /// Returns every pending invitation addressed to an account: either directly by
 /// `user_id` (invited after they'd already registered) or by `email` (invited before
-/// they existed as a user). The email match is case-insensitive, matching
+/// they existed as a user, only for accounts with a verified email). The email match is case-insensitive, matching
 /// [`crate::profile_settings::teams::require_addressed_to`]'s comparison — email addresses
 /// aren't case-normalized on input, so an invitation and an account can differ only in case.
 pub async fn list_pending_invitations<'e>(
@@ -422,7 +424,9 @@ pub async fn list_pending_invitations<'e>(
     let invitations = sqlx::query_as!(
         Invitation,
         r#"SELECT id, team_id, role as "role: TeamRole", user_id, email, timestamp, email_token FROM invitations
-           WHERE user_id = $1 OR LOWER(email) = LOWER($2)
+           WHERE user_id = $1
+              OR (LOWER(email) = LOWER($2)
+                  AND EXISTS (SELECT 1 FROM users WHERE id = $1 AND email_verified))
            ORDER BY timestamp"#,
         user_id,
         email
@@ -445,7 +449,9 @@ pub async fn list_pending_invitations_with_team_name<'e>(
         "SELECT i.id, i.team_id, t.name as team_name, i.role, i.timestamp
          FROM invitations i
          JOIN teams t ON t.id = i.team_id
-         WHERE i.user_id = $1 OR LOWER(i.email) = LOWER($2)
+         WHERE i.user_id = $1
+            OR (LOWER(i.email) = LOWER($2)
+                AND EXISTS (SELECT 1 FROM users WHERE id = $1 AND email_verified))
          ORDER BY i.timestamp",
     )
     .bind(user_id)

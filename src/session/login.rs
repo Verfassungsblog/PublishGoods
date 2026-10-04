@@ -23,8 +23,12 @@ use std::time::Duration;
 /// Show login page
 /// Method: GET
 #[get("/login?<error>")]
-pub fn login_page(error: Option<String>) -> Template {
+pub fn login_page(error: Option<String>, settings: &State<Settings>) -> Template {
     let mut context: BTreeMap<String, bool> = BTreeMap::new();
+    context.insert(
+        "public_registration".to_string(),
+        settings.public_registration,
+    );
 
     if let Some(error) = error {
         context.insert(format!("error_{}", error), true);
@@ -106,17 +110,14 @@ pub async fn pw_reset_confirmation_form(
                         user.password_reset_token_valid_until = None;
                         user.locked_until = None;
 
-                        let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
-                        let hashed_pw = match Argon2::default()
-                            .hash_password(form.password.as_bytes(), &salt)
-                        {
+                        let hashed_pw = match crate::utils::hash_password(&form.password) {
                             Ok(hashed_pw) => hashed_pw,
                             Err(e) => {
                                 error!("Couldn't hash password: {}", e);
                                 return Err(Status::InternalServerError);
                             }
                         };
-                        user.password_hash = Some(hashed_pw.to_string());
+                        user.password_hash = Some(hashed_pw);
 
                         if let Err(e) = users::update(pool, &user).await {
                             error!("Couldn't update user: {}", e);
@@ -209,6 +210,12 @@ pub async fn process_pw_reset_page(
     Ok(Redirect::to("/login?error=pw-reset"))
 }
 
+/// Starts a session for `user`, setting the private `session` cookie.
+pub fn start_session(session_storage: &SessionStorage, cookies: &CookieJar<'_>, user: &User) {
+    let session = session_storage.generate_session(user.email.clone(), user.id);
+    cookies.add_private(("session", session.id.clone()));
+}
+
 /// POST /login
 ///
 /// Verifies the submitted email/password against the stored user, then either starts a
@@ -255,8 +262,15 @@ pub async fn process_login_form(
     match Argon2::default().verify_password(form.password.as_bytes(), &parsed_hash) {
         Ok(_) => {
             let _ = users::clear_lockout(pool, user.id).await;
-            let session = session_storage.generate_session(user.email.clone(), user.id);
-            cookies.add_private(("session", session.id.clone()));
+            // Only reveal this after the password was right, so it doesn't expose which
+            // addresses are registered.
+            if !users::is_email_verified(pool, user.id)
+                .await
+                .unwrap_or(false)
+            {
+                return Redirect::to("/login?error=email-not-verified");
+            }
+            start_session(session_storage, cookies, &user);
             Redirect::to("/")
         }
         Err(_) => {
@@ -308,7 +322,7 @@ pub fn generate_hash() {
 }
 
 #[cfg(test)]
-mod integration_tests {
+pub(crate) mod integration_tests {
     use super::*;
     use argon2::PasswordHasher;
     use argon2::password_hash::rand_core::OsRng;
@@ -323,7 +337,7 @@ mod integration_tests {
             .to_string()
     }
 
-    fn test_settings() -> Settings {
+    pub(crate) fn test_settings() -> Settings {
         Settings {
             app_title: "Verfassungsbooks".to_string(),
             instance_url: "".to_string(),
@@ -349,6 +363,7 @@ mod integration_tests {
             revocation_list_path: "".to_string(),
             version: "test".to_string(),
             max_login_attempts: 5,
+            public_registration: false,
             lockout_window_minutes: 15,
             smtp_connection_url: "".to_string(),
             mail_from_address: "".to_string(),
@@ -357,6 +372,11 @@ mod integration_tests {
             smtp_pool_idle_timeout: 0,
             mail_max_retries: 0,
             mail_base_retry_delay_seconds: 0,
+            email_verification_validity_hours: 24,
+            email_verification_resend_cooldown_minutes: 1,
+            min_password_length: 8,
+            zotero_translation_timeout: 2,
+            import_media_download_timeout: 30,
         }
     }
 

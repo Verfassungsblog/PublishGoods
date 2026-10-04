@@ -1441,7 +1441,7 @@ impl ImportProcessor {
         if srcs.is_empty() {
             return map;
         }
-        let client = media_client();
+        let client = media_client(self.settings.import_media_download_timeout);
 
         // Download concurrently (bounded), rather than serializing every network round-trip.
         // Owned `String`s are moved into each task so the futures don't borrow `srcs`.
@@ -1702,11 +1702,11 @@ struct Ctx<'a> {
 
 /// Returns a process-wide shared HTTP client for media downloads, built once and reused
 /// across all imports (avoids rebuilding a connection pool per post).
-fn media_client() -> &'static reqwest::Client {
+fn media_client(timeout_secs: u64) -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
     })
@@ -2830,6 +2830,7 @@ mod tests {
             revocation_list_path: "".to_string(),
             version: "test".to_string(),
             max_login_attempts: 5,
+            public_registration: false,
             lockout_window_minutes: 15,
             smtp_connection_url: "".to_string(),
             mail_from_address: "".to_string(),
@@ -2838,6 +2839,11 @@ mod tests {
             smtp_pool_idle_timeout: 0,
             mail_max_retries: 0,
             mail_base_retry_delay_seconds: 0,
+            email_verification_validity_hours: 24,
+            email_verification_resend_cooldown_minutes: 1,
+            min_password_length: 8,
+            zotero_translation_timeout: 2,
+            import_media_download_timeout: 30,
         }
     }
 

@@ -16,11 +16,13 @@ pub async fn settings_page(_session: Session, pool: &State<PgPool>) -> Template 
 pub mod api {
     use super::User;
     use crate::db::repositories::users;
+    use crate::mailer::Mailer;
+    use crate::projects::api::Patch;
     use crate::session::session_guard::Session;
     use crate::session::session_storage::SessionStorage;
-    use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
-    use argon2::password_hash::rand_core::OsRng;
-    use argon2::{Argon2, PasswordHasher};
+    use crate::settings::Settings;
+    use crate::utils::api_helpers::{APIResponse, APIResult, ApiError, ApiErrorType};
+    use crate::utils::hash_password;
     use chrono::{DateTime, Utc};
     use rocket::State;
     use rocket::serde::json::Json;
@@ -31,15 +33,6 @@ pub mod api {
         username: String,
         password: String,
         email: String,
-    }
-
-    /// Hashes a plaintext password with Argon2 using a freshly generated salt.
-    fn hash_password(password: &str) -> String {
-        let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
-        Argon2::default()
-            .hash_password(password.as_bytes(), &salt)
-            .unwrap()
-            .to_string()
     }
 
     /// GET /api/users/me
@@ -70,7 +63,8 @@ pub mod api {
             return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
         }
 
-        let password_hash = hash_password(&new_user.password);
+        let password_hash = hash_password(&new_user.password)
+            .map_err(|_| ApiError::from(ApiErrorType::InternalServerError))?;
         let default_team_id = users::ensure_default_team(pool).await?;
         let user = users::insert(
             pool,
@@ -96,6 +90,27 @@ pub mod api {
         pub locked_until: Option<Option<u64>>,
     }
 
+    /// Applies the profile fields of a [`PatchUser`] (email, name, password) onto a [`User`],
+    /// leaving absent fields untouched. `id` and `locked_until` are handled by the caller.
+    impl Patch<PatchUser, User> for User {
+        fn patch(&mut self, patch: PatchUser) -> User {
+            let mut new_user = self.clone();
+
+            if let Some(email) = patch.email {
+                new_user.email = email;
+            }
+            if let Some(name) = patch.name {
+                new_user.name = name;
+            }
+            if let Some(password) = patch.password {
+                new_user.password_hash =
+                    Some(hash_password(&password).expect("Couldn't hash password."));
+            }
+
+            new_user
+        }
+    }
+
     /// PATCH /api/users/<id>
     ///
     /// Updates the given fields of a user's profile (email, name, password). If `locked_until`
@@ -106,6 +121,8 @@ pub mod api {
         new_user: Json<PatchUser>,
         _session: Session,
         pool: &State<PgPool>,
+        mailer: &State<Mailer>,
+        settings: &State<Settings>,
     ) -> APIResult<User> {
         let id = uuid::Uuid::parse_str(&id)?;
         let patch = new_user.into_inner();
@@ -117,19 +134,12 @@ pub mod api {
             return Err(ApiErrorType::BadRequest("Email already in use".to_string()).into());
         }
 
-        let mut user = users::get(pool, id).await?;
-        if let Some(email) = patch.email {
-            user.email = email;
-        }
-        if let Some(name) = patch.name {
-            user.name = name;
-        }
-        if let Some(password) = &patch.password {
-            user.password_hash = Some(hash_password(password));
-        }
+        let locked_until = patch.locked_until;
+        let user_before = users::get(pool, id).await?;
+        let user = user_before.clone().patch(patch);
         let user = users::update(pool, &user).await?;
 
-        let user = if let Some(locked_until) = patch.locked_until {
+        let user = if let Some(locked_until) = locked_until {
             match locked_until {
                 Some(secs) => {
                     let until = DateTime::<Utc>::from_timestamp(secs as i64, 0).ok_or(

@@ -3,18 +3,27 @@ use crate::db::repositories::teams as teams_repo;
 use crate::db::repositories::teams::{Invitation, InvitationWithTeam, Team};
 use crate::db::repositories::users::{self, TeamRole};
 use crate::mailer::{MailJob, Mailer};
+use crate::session::login::start_session;
+use crate::session::register::{
+    RegisterError, create_account, normalize_email, render_register_page,
+};
 use crate::session::session_guard::Session;
+use crate::session::session_storage::SessionStorage;
 use crate::settings::Settings;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiError, ApiErrorType};
+use crate::utils::constant_time_eq;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use rand::distr::{Alphanumeric, SampleString};
 use rocket::State;
+use rocket::form::Form;
+use rocket::http::{CookieJar, Status};
+use rocket::response::Redirect;
 use rocket::serde::json::Json;
 use rocket_dyn_templates::Metadata;
+use rocket_dyn_templates::Template;
 use sqlx::PgPool;
 use std::collections::{BTreeMap, HashSet};
-use std::str::FromStr;
 use uuid::Uuid;
 
 /// Looks up `user_id`'s role on `team_id`, treating "not a member" as
@@ -51,12 +60,14 @@ fn require_addressed_to(
     invitation: &Invitation,
     user_id: Uuid,
     user_email: &str,
+    email_verified: bool,
 ) -> Result<(), ApiError> {
     let addressed_to_requester = invitation.user_id == Some(user_id)
-        || invitation
-            .email
-            .as_deref()
-            .is_some_and(|email| email.eq_ignore_ascii_case(user_email));
+        || (email_verified
+            && invitation
+                .email
+                .as_deref()
+                .is_some_and(|email| email.eq_ignore_ascii_case(user_email)));
 
     if addressed_to_requester {
         Ok(())
@@ -317,6 +328,10 @@ pub async fn create_invitation(
 
     let role = member_role_or_not_found(pool, team_id, session.user_id).await?;
     require_role(role, &[TeamRole::Owner, TeamRole::Admin])?;
+    // Like patch_team, only an owner may create further owners.
+    if data.role == TeamRole::Owner {
+        require_role(role, &[TeamRole::Owner])?;
+    }
 
     let invitation = match (data.user_id, data.email) {
         (Some(user_id), None) => {
@@ -324,6 +339,13 @@ pub async fn create_invitation(
             teams_repo::create_invitation_for_user(pool, team_id, data.role, user_id).await?
         }
         (None, Some(email)) => {
+            // Validate and normalize the email
+            let address = normalize_email(&email)
+                .and_then(|e| e.parse::<lettre::Address>().ok())
+                .ok_or_else(|| ApiErrorType::BadRequest("invalid email address".to_string()))?;
+            let email = address.to_string();
+            let mailbox = Mailbox::new(None, address);
+
             if teams_repo::member_role_by_email(pool, team_id, &email)
                 .await?
                 .is_some()
@@ -333,9 +355,6 @@ pub async fn create_invitation(
                 )
                 .into());
             }
-            // Validate email
-            let mailbox = Mailbox::from_str(&email)?;
-
             // Generate email token
             let email_token = Alphanumeric.sample_string(&mut rand::rng(), 40);
 
@@ -402,9 +421,117 @@ pub async fn create_invitation(
     Ok(APIResponse::from(invitation))
 }
 
-#[get("/invitations/<invitation_id>?<token>")]
-pub fn register_with_invitation() {
-    todo!()
+/// Looks up the email invitation `invitation_id` and checks `token` against the token that
+/// was mailed to the invitee, returning the invitation and the invited team's name. Every
+/// failure (unknown id, malformed id, invitation not addressed by email, wrong token) is
+/// reported identically as a 404 so the route can't be used to probe for invitation ids.
+async fn email_invitation_by_token(
+    pool: &PgPool,
+    invitation_id: &str,
+    token: &str,
+) -> Result<(Invitation, String), Status> {
+    let invitation_id = Uuid::parse_str(invitation_id).map_err(|_| Status::NotFound)?;
+    let invitation = teams_repo::get_invitation(pool, invitation_id)
+        .await
+        .map_err(|_| Status::NotFound)?;
+
+    let token_matches = invitation
+        .email_token
+        .as_deref()
+        .is_some_and(|expected| constant_time_eq(expected.as_bytes(), token.as_bytes()));
+    if !token_matches || invitation.email.is_none() {
+        return Err(Status::NotFound);
+    }
+
+    let team = teams_repo::get(pool, invitation.team_id)
+        .await
+        .map_err(|_| Status::NotFound)?;
+    Ok((invitation, team.name))
+}
+
+/// GET /invitations/<invitation_id>?<token>
+///
+/// Registration page for a person invited by email. Shows the inviting team and the
+/// invited email address (which can't be changed).
+#[get("/invitations/<invitation_id>?<token>&<error>")]
+pub async fn register_with_invitation_page(
+    invitation_id: &str,
+    token: &str,
+    error: Option<&str>,
+    pool: &State<PgPool>,
+    settings: &State<Settings>,
+) -> Result<Template, Status> {
+    let (invitation, team_name) = email_invitation_by_token(pool, invitation_id, token).await?;
+    Ok(render_register_page(
+        &format!("/invitations/{}", invitation_id),
+        error,
+        Some(&team_name),
+        Some(token),
+        invitation.email.as_deref(),
+        settings.min_password_length,
+    ))
+}
+
+#[derive(FromForm)]
+pub struct InvitationRegisterForm {
+    pub token: String,
+    pub name: String,
+    pub password: String,
+    pub password2: String,
+}
+
+/// POST /invitations/<invitation_id>
+///
+/// Creates an account for the invited email address (the mailed token proves the invitee
+/// controls it), joins the inviting team with the invited role and logs the new user in.
+/// Works regardless of `public_registration`.
+#[post("/invitations/<invitation_id>", data = "<form>")]
+pub async fn register_with_invitation(
+    invitation_id: &str,
+    form: Form<InvitationRegisterForm>,
+    pool: &State<PgPool>,
+    settings: &State<Settings>,
+    session_storage: &State<SessionStorage>,
+    cookies: &CookieJar<'_>,
+) -> Result<Redirect, Status> {
+    let form = form.into_inner();
+    let pool = pool.inner();
+
+    let (invitation, _) = email_invitation_by_token(pool, invitation_id, &form.token).await?;
+    let email = invitation.email.as_deref().ok_or(Status::NotFound)?;
+
+    let user = match create_account(
+        pool,
+        email,
+        &form.name,
+        &form.password,
+        &form.password2,
+        true,
+        settings.min_password_length,
+    )
+    .await
+    {
+        Ok(user) => user,
+        // The invited address already has an account: log in and accept from the profile.
+        Err(RegisterError::EmailTaken) => return Ok(Redirect::to("/login?error=account-exists")),
+        Err(e) => {
+            return Ok(Redirect::to(format!(
+                "/invitations/{}?token={}&error={}",
+                invitation_id,
+                form.token,
+                e.code()
+            )));
+        }
+    };
+
+    if let Err(e) = teams_repo::accept_invitation(pool, invitation.id, user.id).await {
+        error!("Couldn't accept invitation after registration: {}", e);
+        // The account exists now; the invitation stays pending and can be accepted after login.
+        return Ok(Redirect::to("/login?error=contact-admin"));
+    }
+
+    start_session(session_storage, cookies, &user);
+    Ok(Redirect::to("/"))
 }
 
 /// GET /api/teams/<team_id>/invitations
@@ -471,7 +598,8 @@ pub async fn accept_invitation(
 
     let invitation = teams_repo::get_invitation(pool, invitation_id).await?;
     let requester = users::get(pool, session.user_id).await?;
-    require_addressed_to(&invitation, session.user_id, &requester.email)?;
+    let verified = users::is_email_verified(pool, session.user_id).await?;
+    require_addressed_to(&invitation, session.user_id, &requester.email, verified)?;
 
     teams_repo::accept_invitation(pool, invitation_id, session.user_id).await?;
     Ok(APIResponse::from(()))
@@ -519,7 +647,8 @@ pub async fn decline_my_invitation(
 
     let invitation = teams_repo::get_invitation(pool, invitation_id).await?;
     let requester = users::get(pool, session.user_id).await?;
-    require_addressed_to(&invitation, session.user_id, &requester.email)?;
+    let verified = users::is_email_verified(pool, session.user_id).await?;
+    require_addressed_to(&invitation, session.user_id, &requester.email, verified)?;
 
     teams_repo::delete_invitation(pool, invitation_id).await?;
     Ok(APIResponse::from(()))
@@ -543,7 +672,7 @@ mod integration_tests {
     fn dummy_settings() -> Settings {
         Settings {
             app_title: "test".to_string(),
-            instance_url: "".to_string(),
+            instance_url: "http://localhost".to_string(),
             project_cache_time: 0,
             data_path: "/tmp".to_string(),
             database_url: "".to_string(),
@@ -570,6 +699,7 @@ mod integration_tests {
             revocation_list_path: "".to_string(),
             version: "test".to_string(),
             max_login_attempts: 5,
+            public_registration: false,
             lockout_window_minutes: 15,
             smtp_connection_url: "".to_string(),
             mail_from_address: "".to_string(),
@@ -578,6 +708,11 @@ mod integration_tests {
             smtp_pool_idle_timeout: 0,
             mail_max_retries: 0,
             mail_base_retry_delay_seconds: 0,
+            email_verification_validity_hours: 24,
+            email_verification_resend_cooldown_minutes: 1,
+            min_password_length: 8,
+            zotero_translation_timeout: 2,
+            import_media_download_timeout: 30,
         }
     }
 
@@ -589,6 +724,9 @@ mod integration_tests {
             .manage(pool)
             .manage(dummy_settings())
             .manage(SessionStorage::new())
+            .manage(Mailer {
+                sender: tokio::sync::mpsc::channel(16).0,
+            })
             .attach(Template::fairing())
             .mount(
                 "/",
@@ -1596,6 +1734,13 @@ mod integration_tests {
         let mut erin = users::get(&pool, erin_id).await.unwrap();
         erin.email = "erin23-new@example.com".to_string();
         users::update(&pool, &erin).await.unwrap();
+        // Changing the email resets verification; simulate Erin having verified the new one.
+        assert!(!users::is_email_verified(&pool, erin_id).await.unwrap());
+        sqlx::query("UPDATE users SET email_verified = true WHERE id = $1")
+            .bind(erin_id)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // Alice invites Erin's *new* address after the change.
         let invitation = teams_repo::create_invitation_for_email(
@@ -1628,6 +1773,66 @@ mod integration_tests {
                 .unwrap(),
             Some(TeamRole::Member)
         );
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn unverified_email_is_not_matched_to_email_invitation(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = users::ensure_default_team(&pool).await.unwrap();
+        let alice = seed_user(&pool, "alice30@example.com", "Alice", default_team).await;
+        let mallory = seed_user(&pool, "mallory30@example.com", "Mallory", default_team).await;
+        let team = teams_repo::create(&pool, "Team", alice).await.unwrap();
+        let invitation = teams_repo::create_invitation_for_email(
+            &pool,
+            team.id,
+            TeamRole::Member,
+            "mallory30@example.com",
+            "abcde",
+        )
+        .await
+        .unwrap();
+
+        let client = test_client(pool.clone()).await;
+        login(&client, "mallory30@example.com").await;
+        // Unverified accounts can't log in, so the flag is cleared on the live session.
+        sqlx::query("UPDATE users SET email_verified = false WHERE id = $1")
+            .bind(mallory)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = client.get("/api/invitations").dispatch().await;
+        let body: serde_json::Value =
+            serde_json::from_str(&response.into_string().await.unwrap()).unwrap();
+        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+
+        let response = client
+            .post(format!("/api/invitations/{}/accept", invitation.id))
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Forbidden);
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn admin_cannot_invite_owner(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = users::ensure_default_team(&pool).await.unwrap();
+        let alice = seed_user(&pool, "alice31@example.com", "Alice", default_team).await;
+        let admin = seed_user(&pool, "admin31@example.com", "Admin", default_team).await;
+        let team = teams_repo::create(&pool, "Team", alice).await.unwrap();
+        teams_repo::add_member(&pool, team.id, admin, TeamRole::Admin)
+            .await
+            .unwrap();
+
+        let client = test_client(pool.clone()).await;
+        login(&client, "admin31@example.com").await;
+        let response = client
+            .post(format!("/api/teams/{}/invitations", team.id))
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"role":"owner","email":"new31@example.com"}"#)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Forbidden);
         Ok(())
     }
 

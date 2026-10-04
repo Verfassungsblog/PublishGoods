@@ -59,7 +59,7 @@ pub async fn ensure_default_team(pool: &PgPool) -> Result<Uuid, DbError> {
 pub async fn find_by_email<'e>(exec: impl PgExecutor<'e>, email: &str) -> Result<User, DbError> {
     sqlx::query_as!(
         User,
-        "SELECT id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until FROM users WHERE email = $1",
+        "SELECT id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until FROM users WHERE LOWER(email) = LOWER($1)",
         email
     )
     .fetch_optional(exec)
@@ -77,6 +77,63 @@ pub async fn get<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<User, DbErro
     .fetch_optional(exec)
     .await?
     .ok_or(DbError::NotFound("user"))
+}
+
+/// Whether the user has verified control of their current email address.
+pub async fn is_email_verified<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<bool, DbError> {
+    sqlx::query_scalar!("SELECT email_verified FROM users WHERE id = $1", id)
+        .fetch_optional(exec)
+        .await?
+        .ok_or(DbError::NotFound("user"))
+}
+
+/// Stores a pending email verification token (already hashed) for the user.
+pub async fn set_email_verification_token<'e>(
+    exec: impl PgExecutor<'e>,
+    id: Uuid,
+    token_hash: &str,
+    valid_until: DateTime<Utc>,
+) -> Result<(), DbError> {
+    let result = sqlx::query!(
+        "UPDATE users SET email_verification_token_hash = $2, email_verification_token_valid_until = $3 WHERE id = $1",
+        id,
+        token_hash,
+        valid_until
+    )
+    .execute(exec)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(DbError::NotFound("user"));
+    }
+    Ok(())
+}
+
+/// Returns the pending verification token hash and its expiry, if any.
+pub async fn get_email_verification_token<'e>(
+    exec: impl PgExecutor<'e>,
+    id: Uuid,
+) -> Result<Option<(String, DateTime<Utc>)>, DbError> {
+    let row = sqlx::query!(
+        "SELECT email_verification_token_hash, email_verification_token_valid_until FROM users WHERE id = $1",
+        id
+    )
+    .fetch_optional(exec)
+    .await?
+    .ok_or(DbError::NotFound("user"))?;
+    Ok(row
+        .email_verification_token_hash
+        .zip(row.email_verification_token_valid_until))
+}
+
+/// Marks the user's email as verified and discards the pending token.
+pub async fn mark_email_verified<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<(), DbError> {
+    sqlx::query!(
+        "UPDATE users SET email_verified = true, email_verification_token_hash = NULL, email_verification_token_valid_until = NULL WHERE id = $1",
+        id
+    )
+    .execute(exec)
+    .await?;
+    Ok(())
 }
 
 /// Returns every user, ordered by email.
@@ -98,7 +155,7 @@ pub async fn email_in_use<'e>(
     exclude_id: Option<Uuid>,
 ) -> Result<bool, DbError> {
     let in_use = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND id IS DISTINCT FROM $2)",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = LOWER($1) AND id IS DISTINCT FROM $2)",
         email,
         exclude_id
     )
@@ -115,15 +172,29 @@ pub async fn insert(
     password_hash: &str,
     default_team_id: Uuid,
 ) -> Result<User, DbError> {
+    insert_with_verification(pool, email, name, password_hash, default_team_id, true).await
+}
+
+/// Like [`insert`], but lets the caller state whether the email address is verified. Only
+/// verified addresses are matched against pending email invitations.
+pub async fn insert_with_verification(
+    pool: &PgPool,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    default_team_id: Uuid,
+    email_verified: bool,
+) -> Result<User, DbError> {
     let mut tx = pool.begin().await?;
 
     let user = sqlx::query_as!(
         User,
-        "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3)
+        "INSERT INTO users (email, name, password_hash, email_verified) VALUES ($1, $2, $3, $4)
          RETURNING id, email, name, password_hash, locked_until, password_reset_token_hash, password_reset_token_valid_until",
         email,
         name,
-        password_hash
+        password_hash,
+        email_verified
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -148,6 +219,7 @@ pub async fn update<'e>(exec: impl PgExecutor<'e>, user: &User) -> Result<User, 
     sqlx::query_as!(
         User,
         "UPDATE users SET
+            email_verified = (email_verified AND LOWER(email) = LOWER($2)),
             email = $2,
             name = $3,
             password_hash = $4,
@@ -296,20 +368,25 @@ mod tests {
             .await
             .unwrap();
 
-        const MAX_LOGIN_ATTEMPTS: i64 = 5;
-        const LOCKOUT_WINDOW_MINUTES: i64 = 15;
+        let settings = crate::session::login::integration_tests::test_settings();
+        let max_login_attempts = settings.max_login_attempts;
+        let lockout_window_minutes = settings.lockout_window_minutes;
 
         let mut last_count = 0;
-        for _ in 0..MAX_LOGIN_ATTEMPTS {
-            last_count = record_failed_attempt(&pool, user.id, LOCKOUT_WINDOW_MINUTES)
+        for _ in 0..max_login_attempts {
+            last_count = record_failed_attempt(&pool, user.id, lockout_window_minutes)
                 .await
                 .unwrap();
         }
-        assert_eq!(last_count, MAX_LOGIN_ATTEMPTS);
+        assert_eq!(last_count, max_login_attempts);
 
-        lock_until(&pool, user.id, Utc::now() + chrono::Duration::minutes(15))
-            .await
-            .unwrap();
+        lock_until(
+            &pool,
+            user.id,
+            Utc::now() + chrono::Duration::minutes(lockout_window_minutes),
+        )
+        .await
+        .unwrap();
         let locked = get(&pool, user.id).await.unwrap();
         assert!(locked.locked_until.is_some());
 

@@ -35,11 +35,20 @@ rendering_preprocessing_timeout = 300
 import_timeout = 600
 # URL to the zotero translation server (https://github.com/zotero/translation-server) for importing zotero items.
 zotero_translation_server = "https://translation-server.anghenfil.de"
+# Timeout in seconds for requests to the zotero translation server
+zotero_translation_timeout = 2
+# Timeout in seconds for downloading a single media file during import
+import_media_download_timeout = 30
 
 # How many failed login attempts within lockout_window_minutes trigger a lockout.
 max_login_attempts = 5
 # Rolling window (in minutes) used both to count recent failed login attempts and to lock the account.
 lockout_window_minutes = 15
+
+# Allow anyone to create an account on /register. Registering via a team invitation link works regardless.
+public_registration = false
+# Minimum number of characters for a new password
+min_password_length = 8
 
 # E-Mail SMTP settings
 
@@ -57,6 +66,11 @@ smtp_pool_idle_timeout = 60
 mail_max_retries = 3
 # Base delay in seconds before the first retry attempt, multiplied by the retry attempt number for each subsequent retry
 mail_base_retry_delay_seconds = 30
+
+# Hours an email verification link stays valid
+email_verification_validity_hours = 24
+# Minutes that must pass before another verification mail is sent to the same account
+email_verification_resend_cooldown_minutes = 1
 
 # Export Server Settings
 

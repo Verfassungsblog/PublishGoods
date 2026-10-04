@@ -182,7 +182,7 @@ mod inner {
         /// Returns the path of `filename` if `token` matches, the download hasn't expired and the
         /// file belongs to the job.
         fn resolve(&self, token: &str, filename: &str) -> Option<PathBuf> {
-            if !constant_time_eq(self.token.as_bytes(), token.as_bytes())
+            if !crate::utils::constant_time_eq(self.token.as_bytes(), token.as_bytes())
                 || Utc::now() >= self.expires_at
                 || !self.files.iter().any(|f| f == filename)
             {
@@ -677,10 +677,6 @@ mod inner {
         }
     }
 
-    fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-        a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-    }
-
     /// Assembles an in-memory project from the imported sections. If `metadata_override` is given,
     /// it is used as-is; otherwise the book metadata is derived from the imported content: a single
     /// post provides title, authors and so on.
@@ -1131,6 +1127,7 @@ mod inner {
                 revocation_list_path: "".to_string(),
                 version: "test".to_string(),
                 max_login_attempts: 5,
+                public_registration: false,
                 lockout_window_minutes: 15,
                 smtp_connection_url: "".to_string(),
                 mail_from_address: "".to_string(),
@@ -1139,6 +1136,11 @@ mod inner {
                 smtp_pool_idle_timeout: 0,
                 mail_max_retries: 0,
                 mail_base_retry_delay_seconds: 0,
+                email_verification_validity_hours: 24,
+                email_verification_resend_cooldown_minutes: 1,
+                min_password_length: 8,
+                zotero_translation_timeout: 2,
+                import_media_download_timeout: 30,
             }
         }
 

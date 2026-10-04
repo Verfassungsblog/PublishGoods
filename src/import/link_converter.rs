@@ -12,7 +12,9 @@ async fn send_translation_request(link: &str, settings: &Settings) -> Option<ser
     let target = format!("{}/web", settings.zotero_translation_server);
 
     let client = match reqwest::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(
+            settings.zotero_translation_timeout,
+        ))
         .build()
     {
         Ok(client) => client,
@@ -53,7 +55,9 @@ async fn send_export_translation_request(
     );
 
     let client = match reqwest::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(
+            settings.zotero_translation_timeout,
+        ))
         .build()
     {
         Ok(client) => client,

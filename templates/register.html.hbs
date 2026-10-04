@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="stylesheet" href="/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/css/app.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register</title>
+</head>
+<body class="bg-light">
+    <div class="d-flex justify-content-center align-content-center flex-wrap">
+        <div class="login_box">
+            <h1>Register</h1>
+            {{#if team_name}}
+                <div class="alert alert-info" role="alert">
+                    You have been invited to join the team <strong>{{team_name}}</strong>. Create your account to accept the invitation.
+                </div>
+            {{/if}}
+            {{#if error_pw-dont-match}}
+                <div class="alert alert-danger" role="alert">The passwords don't match.</div>
+            {{/if}}
+            {{#if error_pw-too-short}}
+                <div class="alert alert-danger" role="alert">The password must be at least {{min_password_length}} characters long.</div>
+            {{/if}}
+            {{#if error_email-invalid}}
+                <div class="alert alert-danger" role="alert">Please enter a valid email address.</div>
+            {{/if}}
+            {{#if error_name-empty}}
+                <div class="alert alert-danger" role="alert">Please enter your name.</div>
+            {{/if}}
+            {{#if error_email-taken}}
+                <div class="alert alert-danger" role="alert">An account with this email address already exists.</div>
+            {{/if}}
+            {{#if error_internal}}
+                <div class="alert alert-danger" role="alert">Something went wrong, please try again later.</div>
+            {{/if}}
+            <form method="post" action="{{action}}">
+                {{#if token}}<input type="hidden" name="token" value="{{token}}">{{/if}}
+                <div class="form-group mt-3">
+                    <label for="name">Name</label>
+                    <input type="text" class="form-control" name="name" id="name" placeholder="Your name" required>
+                </div>
+                <div class="form-group mt-3">
+                    <label for="email">Email address</label>
+                    <input type="email" class="form-control" name="email" id="email" placeholder="Enter email" value="{{email}}" {{#if email_locked}}readonly{{/if}} required>
+                </div>
+                <div class="form-group mt-3">
+                    <label for="password">Password</label>
+                    <input type="password" class="form-control" name="password" id="password" placeholder="Password" minlength="{{min_password_length}}" required>
+                </div>
+                <div class="form-group mt-3 mb-3">
+                    <label for="password2">Repeat password</label>
+                    <input type="password" class="form-control" name="password2" id="password2" placeholder="Repeat password" minlength="{{min_password_length}}" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Register</button>
+                <a class="float-end" href="/login">Back to login</a>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
