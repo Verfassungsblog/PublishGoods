@@ -335,6 +335,8 @@ async fn rocket() -> _ {
                 render_api::add_render_job,
                 render_api::get_render_job_status,
                 render_api::download_render_result,
+                render_api::list_templates,
+                render_api::get_template,
             ],
         )
         .manage(SessionStorage::new())

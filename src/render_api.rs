@@ -3,34 +3,16 @@
 //! Lets API clients render content from an external data source (currently a WordPress post)
 //! without creating a project: the content is imported into memory, exported through the regular
 //! rendering pipeline and the results are offered as download links that expire after one hour.
-use crate::export::rendering_manager::{RenderingJob, RenderingManager};
-use crate::import::processing::{
-    ContentImportOptions, ImportError, ImportProcessor, ImportedSection, MediaStore,
-    WordpressPostLocation,
-};
+use crate::db::repositories::templates::{self, Template};
 
 use crate::session::session_guard::APISession;
-use crate::settings::Settings;
-use crate::storage::project_storage::ProjectData;
-use crate::storage::project_storage::current::{BibEntryOrFolder, Bibliography};
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
-use crate::utils::timeout::{limit_from_seconds, with_timeout};
-use chrono::{DateTime, Utc};
-use dashmap::DashMap;
-use dashmap::mapref::entry::Entry;
-use rand::distr::{Alphanumeric, SampleString};
 use rocket::State;
 use rocket::fs::NamedFile;
 use rocket::serde::json::Json;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::PathBuf;
+use serde::Serialize;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
 use uuid::Uuid;
-use vb_exchange::projects::ProjectSettingsV5;
-use vb_exchange::{RenderingError, RenderingStatus};
 
 mod inner {
     use crate::export::rendering_manager::{RenderingJob, RenderingManager};
@@ -1213,7 +1195,9 @@ mod inner {
                     routes![
                         add_render_job,
                         get_render_job_status,
-                        download_render_result
+                        download_render_result,
+                        list_templates,
+                        get_template
                     ],
                 );
             Client::tracked(rocket).await.unwrap()
@@ -1358,6 +1342,93 @@ mod inner {
                 .await;
 
             assert_eq!(response.status(), Status::NotFound);
+
+            let _ = std::fs::remove_dir_all(&data_dir);
+            Ok(())
+        }
+
+        #[sqlx::test]
+        async fn template_endpoints_require_an_api_key(pool: PgPool) -> sqlx::Result<()> {
+            let data_dir = isolated_data_dir();
+            let settings = test_settings(data_dir.to_string_lossy().to_string());
+            let client = test_client(pool, settings).await;
+
+            let list = client.get("/api/v1/templates").dispatch().await;
+            assert_eq!(list.status(), Status::Unauthorized);
+            let single = client
+                .get(format!("/api/v1/templates/{}", Uuid::new_v4()))
+                .dispatch()
+                .await;
+            assert_eq!(single.status(), Status::Unauthorized);
+
+            let _ = std::fs::remove_dir_all(&data_dir);
+            Ok(())
+        }
+
+        #[sqlx::test]
+        async fn templates_are_listed_with_their_export_formats(pool: PgPool) -> sqlx::Result<()> {
+            use crate::db::repositories::templates as templates_repo;
+            use vb_exchange::export_formats::ExportFormat;
+
+            let data_dir = isolated_data_dir();
+            let settings = test_settings(data_dir.to_string_lossy().to_string());
+            let (_, api_key) = seed_api_key(&pool).await;
+            let template_id = templates_repo::insert(&pool, "Book", "A book template")
+                .await
+                .unwrap();
+            for (slug, name) in [("pdf", "PDF"), ("epub", "EPUB")] {
+                templates_repo::insert_export_format(
+                    &pool,
+                    template_id,
+                    &ExportFormat {
+                        slug: slug.to_string(),
+                        name: name.to_string(),
+                        export_steps: vec![],
+                        output_files: vec![],
+                        preview_pdf_path: None,
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            let client = test_client(pool, settings).await;
+
+            let expected = serde_json::json!({
+                "id": template_id,
+                "name": "Book",
+                "description": "A book template",
+                "export_formats": [
+                    { "slug": "epub", "name": "EPUB" },
+                    { "slug": "pdf", "name": "PDF" }
+                ]
+            });
+
+            let list = client
+                .get("/api/v1/templates")
+                .header(Header::new("X-API-KEY", api_key.clone()))
+                .dispatch()
+                .await;
+            assert_eq!(list.status(), Status::Ok);
+            let body: serde_json::Value =
+                serde_json::from_str(&list.into_string().await.unwrap()).unwrap();
+            assert_eq!(body, serde_json::json!([expected.clone()]));
+
+            let single = client
+                .get(format!("/api/v1/templates/{template_id}"))
+                .header(Header::new("X-API-KEY", api_key.clone()))
+                .dispatch()
+                .await;
+            assert_eq!(single.status(), Status::Ok);
+            let body: serde_json::Value =
+                serde_json::from_str(&single.into_string().await.unwrap()).unwrap();
+            assert_eq!(body, expected);
+
+            let missing = client
+                .get(format!("/api/v1/templates/{}", Uuid::new_v4()))
+                .header(Header::new("X-API-KEY", api_key))
+                .dispatch()
+                .await;
+            assert_eq!(missing.status(), Status::NotFound);
 
             let _ = std::fs::remove_dir_all(&data_dir);
             Ok(())
@@ -1548,4 +1619,87 @@ pub async fn download_render_result(
         .resolve_download(id, token, filename)
         .ok_or_else(not_found)?;
     NamedFile::open(path).await.map_err(|_| not_found())
+}
+
+/// An export format of a template, as offered to API clients. Use `slug` as an entry of
+/// `rendering_settings.export_formats` when creating a rendering job.
+#[derive(Serialize)]
+pub struct ApiExportFormat {
+    pub slug: String,
+    pub name: String,
+}
+
+/// A template with its export formats, as offered to API clients. Use `id` as
+/// `rendering_settings.template_id` when creating a rendering job.
+#[derive(Serialize)]
+pub struct ApiTemplate {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub export_formats: Vec<ApiExportFormat>,
+}
+
+impl From<Template> for ApiTemplate {
+    fn from(template: Template) -> Self {
+        let mut export_formats: Vec<ApiExportFormat> = template
+            .export_formats
+            .into_values()
+            .map(|format| ApiExportFormat {
+                slug: format.slug,
+                name: format.name,
+            })
+            .collect();
+        export_formats.sort_by(|a, b| a.slug.cmp(&b.slug));
+        ApiTemplate {
+            id: template.id,
+            name: template.name,
+            description: template.description,
+            export_formats,
+        }
+    }
+}
+
+/// GET /api/v1/templates
+///
+/// Lists all available templates together with their export formats, ordered by template name
+/// (export formats by slug). Requires the `X-API-KEY` header. The `id` of a template and the
+/// `slug` of one of its export formats are what `rendering_settings.template_id` and
+/// `rendering_settings.export_formats` of `POST /api/v1/rendering_jobs` expect.
+///
+/// 200 OK:
+/// ```json
+/// [
+///   {
+///     "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+///     "name": "Default Book",
+///     "description": "Template for books",
+///     "export_formats": [
+///       { "slug": "epub", "name": "EPUB" },
+///       { "slug": "pdf", "name": "PDF" }
+///     ]
+///   }
+/// ]
+/// ```
+#[get("/api/v1/templates")]
+pub async fn list_templates(
+    _api_session: APISession,
+    pool: &State<sqlx::PgPool>,
+) -> Result<Json<Vec<ApiTemplate>>, ApiError> {
+    let templates = templates::list_all(pool.inner()).await?;
+    Ok(Json(templates.into_iter().map(ApiTemplate::from).collect()))
+}
+
+/// GET /api/v1/templates/\<id\>
+///
+/// Returns a single template (same shape as one entry of `GET /api/v1/templates`) including its
+/// export formats. Requires the `X-API-KEY` header. An unknown id yields a 404.
+#[get("/api/v1/templates/<id>")]
+pub async fn get_template(
+    _api_session: APISession,
+    pool: &State<sqlx::PgPool>,
+    id: &str,
+) -> Result<Json<ApiTemplate>, ApiError> {
+    let id = Uuid::parse_str(id)?;
+    let template = templates::get(pool.inner(), id).await?;
+    Ok(Json(template.into()))
 }
