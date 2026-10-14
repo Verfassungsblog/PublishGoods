@@ -1072,7 +1072,7 @@ mod inner {
         use super::*;
         use crate::db::repositories::{api_keys as api_keys_repo, users};
         use crate::export::rendering_manager::RenderingManager;
-        use crate::render_api::{add_render_job, download_render_result, get_render_job_status};
+        use crate::render_api::*;
         use crate::settings::ExportServer;
         use crate::utils::csl::CslData;
         use argon2::Argon2;
