@@ -2330,7 +2330,7 @@ fn extract_wp_footnotes(
     footnotes
 }
 
-/// Extracts pandoc footnotes (`<aside id="footnotes"><ol><li id="fnN">...`) into a map.
+/// Extracts pandoc footnotes (`<section id="footnotes"><ol><li id="fnN">...`) into a map.
 fn extract_pandoc_footnotes(
     top: &[Handle],
     link_map: &HashMap<String, String>,
@@ -2346,8 +2346,9 @@ fn extract_pandoc_footnotes(
     let mut footnotes = HashMap::new();
 
     let Some(aside) = top.iter().find(|n| {
-        tag_name(n).as_deref() == Some("aside")
-            && attr_value(n, "id").as_deref() == Some("footnotes")
+        tag_name(n).as_deref() == Some("section")
+            || tag_name(n).as_deref() == Some("aside")
+                && attr_value(n, "id").as_deref() == Some("footnotes")
     }) else {
         return footnotes;
     };
