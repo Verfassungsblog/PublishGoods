@@ -1,5 +1,7 @@
 use crate::db::repositories::{persons, sections};
 use crate::db::section_content;
+use crate::permissions::{ResourceType, has_permission};
+use crate::persons::ensure_linkable;
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
@@ -66,7 +68,7 @@ pub async fn get_section(
     project_id: &str,
     section_id: &str,
     expand: Option<&str>,
-    _session: Session,
+    session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<APISectionResult> {
     debug!(
@@ -75,6 +77,14 @@ pub async fn get_section(
     );
     let project_id = uuid::Uuid::parse_str(project_id)?;
     let section_id = uuid::Uuid::parse_str(section_id)?;
+    has_permission(
+        pool,
+        ResourceType::Project,
+        project_id,
+        session.user_id,
+        None,
+    )
+    .await?;
 
     // Parse expand:
     let expand_parts = if let Some(expand) = expand {
@@ -102,28 +112,40 @@ pub async fn get_section(
     let old_metadata = section.metadata.clone();
     let mut metadata = section.metadata.clone();
 
-    let mut valid_authors = Vec::new();
-    for author in section.metadata.authors.iter() {
-        match author {
-            PersonUuidOrString::PersonUuid(id) => {
-                if persons::exists(pool, *id).await.unwrap_or(false) {
-                    valid_authors.push(author.clone());
-                }
-            }
-            PersonUuidOrString::NameString(_) => valid_authors.push(author.clone()),
-        }
-    }
-    let mut valid_editors = Vec::new();
-    for editor in section.metadata.editors.iter() {
-        match editor {
-            PersonUuidOrString::PersonUuid(id) => {
-                if persons::exists(pool, *id).await.unwrap_or(false) {
-                    valid_editors.push(editor.clone());
-                }
-            }
-            PersonUuidOrString::NameString(_) => valid_editors.push(editor.clone()),
-        }
-    }
+    // One query for all linked persons of the section, not one per link.
+    let linked_ids: Vec<uuid::Uuid> = section
+        .metadata
+        .authors
+        .iter()
+        .chain(section.metadata.editors.iter())
+        .filter_map(|link| match link {
+            PersonUuidOrString::PersonUuid(id) => Some(*id),
+            PersonUuidOrString::NameString(_) => None,
+        })
+        .collect();
+    let linkable = if linked_ids.is_empty() {
+        Default::default()
+    } else {
+        persons::linkable_ids(pool, &linked_ids, project_id).await?
+    };
+    let is_valid = |link: &&PersonUuidOrString| match link {
+        PersonUuidOrString::PersonUuid(id) => linkable.contains(id),
+        PersonUuidOrString::NameString(_) => true,
+    };
+    let valid_authors: Vec<PersonUuidOrString> = section
+        .metadata
+        .authors
+        .iter()
+        .filter(is_valid)
+        .cloned()
+        .collect();
+    let valid_editors: Vec<PersonUuidOrString> = section
+        .metadata
+        .editors
+        .iter()
+        .filter(is_valid)
+        .cloned()
+        .collect();
     metadata.authors = valid_authors;
     metadata.editors = valid_editors;
 
@@ -141,7 +163,7 @@ pub async fn get_section(
         for person_or_string in metadata.authors.iter() {
             match person_or_string {
                 PersonUuidOrString::PersonUuid(id) => match persons::get(pool, *id).await {
-                    Ok(person) => authors_detailed.push(PersonOrString::Person(person)),
+                    Ok(person) => authors_detailed.push(PersonOrString::Person(person.into())),
                     Err(_) => {
                         error!(
                             "Couldn't extend author details, author_id {} not found.",
@@ -171,7 +193,7 @@ pub async fn get_section(
         for person_or_string in metadata.editors.iter() {
             match person_or_string {
                 PersonUuidOrString::PersonUuid(id) => match persons::get(pool, *id).await {
-                    Ok(person) => editors_detailed.push(PersonOrString::Person(person)),
+                    Ok(person) => editors_detailed.push(PersonOrString::Person(person.into())),
                     Err(_) => {
                         error!(
                             "Couldn't extend author details, author_id {} not found.",
@@ -239,34 +261,40 @@ pub async fn update_section(
     project_id: String,
     section_id: String,
     section_patch: Json<PatchSection>,
-    _session: Session,
+    session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
     let project_id = uuid::Uuid::parse_str(&project_id)?;
     let section_id = uuid::Uuid::parse_str(&section_id)?;
+    has_permission(
+        pool,
+        ResourceType::Project,
+        project_id,
+        session.user_id,
+        None,
+    )
+    .await?;
     let pool = pool.inner();
 
     let section = sections::get_by_id(pool, project_id, section_id).await?;
 
     let mut new_section_data = section.clone().patch(section_patch.into_inner());
     // Check if new section data is valid
-    // Check authors
-    for author in new_section_data.metadata.authors.iter() {
-        if let PersonUuidOrString::PersonUuid(id) = author
-            && !persons::exists(pool, *id).await.unwrap_or(false)
-        {
-            return Err(ApiErrorType::ResourceNotFound(format!("author with id {}", id)).into());
-        }
-    }
-
-    // Check editors
-    for editor in new_section_data.metadata.editors.iter() {
-        if let PersonUuidOrString::PersonUuid(id) = editor
-            && !persons::exists(pool, *id).await.unwrap_or(false)
-        {
-            return Err(ApiErrorType::ResourceNotFound(format!("editor with id {}", id)).into());
-        }
-    }
+    // Authors and editors must be persons of this project or of its team's library
+    ensure_linkable(
+        pool,
+        project_id,
+        &new_section_data.metadata.authors,
+        "author",
+    )
+    .await?;
+    ensure_linkable(
+        pool,
+        project_id,
+        &new_section_data.metadata.editors,
+        "editor",
+    )
+    .await?;
 
     // Remove duplicants
     new_section_data.metadata.authors = dedup_vec(new_section_data.metadata.authors);

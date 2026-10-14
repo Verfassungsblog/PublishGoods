@@ -24,6 +24,7 @@ import {createMutex} from "./Mutex";
 import {FixedLinkTool} from "./Tools/FixedLinkTool";
 import {PersonsAPI, PersonUuidOrString, SectionAPI} from "../api_requests";
 import {add_search, show_alert} from "../tools";
+import {open_person_overlay} from "./PersonOverlay";
 
 const personsApi = new (PersonsAPI as any)();
 const sectionApi = new (SectionAPI as any)();
@@ -1527,40 +1528,55 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
         const searchbar = document.getElementById(`section_metadata_search_${type}`) as HTMLInputElement | null;
         const results = document.getElementById(`section_metadata_search_${type}_results`) as HTMLElement | null;
         if (searchbar && results) {
+            // Links a stored person as author/editor of the section and re-renders the list
+            const addPerson = async (person_id: string) => {
+                let currentList: PersonUuidOrString[] = (type === 'authors' ? sectionData.metadata.authors : sectionData.metadata.editors) || [];
+                if (currentList.some(p => 'PersonUuid' in p && p.PersonUuid === person_id)) {
+                    show_alert("Already added.", "warning");
+                    return;
+                }
+
+                currentList.push({ PersonUuid: person_id });
+                const patch: any = {};
+                patch[type] = currentList;
+                await patchSectionMeta(section_id, patch);
+
+                // Update and rerender
+                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
+                if (r.ok) {
+                    const resp = await r.json();
+                    const data = resp?.data || resp;
+                    sectionData.metadata.authors = data?.metadata?.authors || [];
+                    sectionData.metadata.editors = data?.metadata?.editors || [];
+                    sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
+                    sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
+                }
+                renderAuthorsEditors(type);
+            };
+
             add_search(
                 searchbar,
                 results,
-                personsApi.send_search_person_request.bind(personsApi),
+                // The project's own persons plus the library of the team owning the project
+                (search_term: string) => personsApi.send_search_person_request(search_term, state.project_id),
                 // @ts-ignore
                 Handlebars.templates.search_person_li,
                 async (selected: HTMLElement) => {
                     const person_id = selected.getAttribute("data-person-id");
                     if (!person_id) return;
-                    
-                    let currentList: PersonUuidOrString[] = (type === 'authors' ? sectionData.metadata.authors : sectionData.metadata.editors) || [];
-                    if (currentList.some(p => 'PersonUuid' in p && p.PersonUuid === person_id)) {
-                        show_alert("Already added.", "warning");
-                        return;
-                    }
-
-                    currentList.push({ PersonUuid: person_id });
-                    const patch: any = {};
-                    patch[type] = currentList;
-                    await patchSectionMeta(section_id, patch);
-
-                    // Update and rerender
-                    const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
-                    if (r.ok) {
-                        const resp = await r.json();
-                        const data = resp?.data || resp;
-                        sectionData.metadata.authors = data?.metadata?.authors || [];
-                        sectionData.metadata.editors = data?.metadata?.editors || [];
-                        sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
-                        sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
-                    }
-                    renderAuthorsEditors(type);
+                    await addPerson(person_id);
                 }
             );
+
+            // New person: for this project only, or for the team's persons
+            document.getElementById(`section_metadata_new_person_${type}`)?.addEventListener("click", () => {
+                open_person_overlay({
+                    project_id: state.project_id,
+                    on_saved: async (person) => {
+                        if (person.id) await addPerson(person.id);
+                    }
+                }).then();
+            });
 
             searchbar.addEventListener("keydown", async (e: KeyboardEvent) => {
                 if (e.key !== "Enter") return;

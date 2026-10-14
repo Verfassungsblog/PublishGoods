@@ -105,6 +105,8 @@ fn main() {
     println!("cargo:rerun-if-changed=typescript");
     println!("cargo:rerun-if-changed=typescript_old");
     println!("cargo:rerun-if-changed=templates_frontend");
+    println!("cargo:rerun-if-changed=migrations");
+
     if !res1.status.success() || !res2.status.success() || !res3.status.success() {
         panic!(
             "Failed to compile typescript to javascript with tsc:\n{}\n{}\n{}",

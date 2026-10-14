@@ -1457,9 +1457,33 @@ pub use inner::*;
 pub async fn add_render_job(
     api_session: APISession,
     manager: &State<Arc<ExternalRenderManager>>,
+    pool: &State<sqlx::PgPool>,
     data: Json<ExternalAPIRenderingRequest>,
 ) -> Result<RenderJobAccepted<Json<ExternalAPIRenderingStatus>>, ApiError> {
     let manager = manager.inner();
+
+    // `project_metadata` may reference stored persons by id; those are resolved at export
+    // time without any team context, so only accept persons the key's user may access.
+    let referenced_persons: Vec<Uuid> = {
+        use crate::storage::project_storage::current::PersonUuidOrString;
+        let mut ids = Vec::new();
+        if let Some(metadata) = &data.project_metadata {
+            for link in metadata
+                .authors
+                .iter()
+                .chain(metadata.editors.iter())
+                .flatten()
+            {
+                if let PersonUuidOrString::PersonUuid(id) = link {
+                    ids.push(*id);
+                }
+            }
+        }
+        ids
+    };
+    crate::permissions::has_permission_for_persons(pool, &referenced_persons, api_session.user_id)
+        .await?;
+
     match manager.submit(api_session.user_id, data.into_inner()).await {
         Ok(status) => {
             let location = manager.status_uri(status.job_id);

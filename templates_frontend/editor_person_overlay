@@ -1,0 +1,42 @@
+{{!--
+  Overlay to create or edit a person from inside the project editor.
+
+  Context:
+  - is_new: true when creating (shows where the person is added to)
+  - first_names, last_names, orcid, gnd, ror: current values (strings), empty when creating
+--}}
+<h1>{{#if is_new}}New Person{{else}}Edit Person{{/if}}</h1>
+<div class="form-group mt-3">
+    <label for="overlay_person_first_names">First Names</label>
+    <input type="text" id="overlay_person_first_names" value="{{first_names}}" autocomplete="off">
+</div>
+<div class="form-group mt-3">
+    <label for="overlay_person_last_names">Last Names</label>
+    <input type="text" id="overlay_person_last_names" value="{{last_names}}" autocomplete="off">
+</div>
+<div class="form-group mt-3">
+    <label for="overlay_person_orcid">ORCID (optional)</label>
+    <input type="text" id="overlay_person_orcid" value="{{orcid}}" autocomplete="off">
+</div>
+<div class="form-group mt-3">
+    <label for="overlay_person_gnd">GND (optional)</label>
+    <input type="text" id="overlay_person_gnd" value="{{gnd}}" autocomplete="off">
+</div>
+<div class="form-group mt-3">
+    <label for="overlay_person_ror">ROR (optional)</label>
+    <input type="text" id="overlay_person_ror" value="{{ror}}" autocomplete="off">
+</div>
+{{#if is_new}}
+    <div class="form-group mt-3">
+        <label>Add this person to</label>
+        <div>
+            <input type="radio" name="overlay_person_scope" id="overlay_person_scope_project" value="project" checked>
+            <label for="overlay_person_scope_project" class="d-inline">Only this project</label>
+        </div>
+        <div>
+            <input type="radio" name="overlay_person_scope" id="overlay_person_scope_team" value="team">
+            <label for="overlay_person_scope_team" class="d-inline">The team's persons (available in all projects of the team)</label>
+        </div>
+    </div>
+{{/if}}
+<button type="button" class="btn btn-primary mt-3" id="overlay_person_save">Save</button>

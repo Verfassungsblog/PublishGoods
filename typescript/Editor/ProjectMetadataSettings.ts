@@ -1,6 +1,7 @@
 import {
     APIProjectData,
     EditorAPI,
+    Person,
     PersonsAPI,
     PersonUuidOrString,
     send_get_template_id_for_project,
@@ -11,6 +12,7 @@ import {init, main_col} from "./Editor";
 import {state} from "./Main";
 import {add_search, show_alert} from "../tools";
 import {AutoPatch} from "../autopatch";
+import {confirm_and_delete_person, open_person_overlay} from "./PersonOverlay";
 
 /**
  * Represents the primary interface for interacting with the editor.
@@ -19,6 +21,10 @@ import {AutoPatch} from "../autopatch";
  */
 const editorApi = EditorAPI();
 const personsApi = PersonsAPI();
+
+/** Search handler for the author/editor pickers: the project's persons plus its team's library. */
+const search_project_persons = (search_term: string) =>
+    personsApi.send_search_person_request(search_term, state.project_id);
 
 const autopatch = new AutoPatch(
     (data) => editorApi.patchProject(state.project_id, data),
@@ -74,6 +80,9 @@ export async function show_project_metadata_settings(data: APIProjectData) {
 
     // Enable search + add for project metadata authors & editors
     init_person_search();
+
+    // Creating persons (for this project or the team) and managing the project's own persons
+    init_project_persons();
 
     // Enable keywords editing
     init_keyword_search();
@@ -471,7 +480,7 @@ function init_person_search(){
         add_search(
             authors_searchbar,
             authors_results,
-            personsApi.send_search_person_request,
+            search_project_persons,
             // @ts-ignore
             Handlebars.templates.search_person_li,
             on_author_selected
@@ -544,7 +553,7 @@ function init_person_search(){
         add_search(
             editors_searchbar,
             editors_results,
-            personsApi.send_search_person_request,
+            search_project_persons,
             // @ts-ignore
             Handlebars.templates.search_person_li,
             on_editor_selected
@@ -574,6 +583,108 @@ function init_person_search(){
 
             add_editors_listeners();
             await patch_editors_order();
+        });
+    }
+}
+
+/** Adds an existing person to the project's authors or editors (like picking it from the search). */
+async function add_person_to_group(person: Person, group: "authors" | "editors"){
+    const container = document.getElementById(`metadata_${group}_div`) as HTMLElement | null;
+    if(!container || !person.id){
+        return;
+    }
+    if(document.querySelector(`.metadata_editors_div[data-group='${group}'][data-id='${person.id}']`)){
+        return;
+    }
+
+    // @ts-ignore
+    container.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_metadata_settings_person_li({
+        Person: person,
+        group: group
+    }));
+
+    if(group === "authors"){
+        add_authors_listeners();
+        await patch_authors_order();
+    }else{
+        add_editors_listeners();
+        await patch_editors_order();
+    }
+}
+
+/** Renders the list of persons that only exist in this project, with edit / promote / delete. */
+async function render_project_persons(){
+    const list = document.getElementById("project_persons_list") as HTMLElement | null;
+    if(!list){
+        return;
+    }
+
+    let persons: Person[];
+    try{
+        persons = await personsApi.send_list_project_persons_request(state.project_id);
+    }catch(e){
+        console.error("Failed to load project persons", e);
+        show_alert("Couldn't load the persons of this project.", "danger");
+        return;
+    }
+
+    list.innerHTML = "";
+    if(persons.length === 0){
+        list.textContent = "No persons only available in this project.";
+        return;
+    }
+
+    for(const person of persons){
+        // @ts-ignore
+        list.insertAdjacentHTML("beforeend", Handlebars.templates.editor_project_persons_row(person));
+        const row = list.lastElementChild as HTMLElement;
+
+        row.querySelector(".project_persons_edit_btn")?.addEventListener("click", () => {
+            open_person_overlay({
+                project_id: state.project_id,
+                person: person,
+                // Authors/editors show names, so reload the whole view
+                on_saved: async () => { await init(); }
+            }).then();
+        });
+
+        row.querySelector(".project_persons_promote_btn")?.addEventListener("click", async () => {
+            try{
+                await personsApi.send_promote_person_request(person.id as string);
+                show_alert("Person moved to the team persons.", "success");
+                await render_project_persons();
+            }catch(e){
+                console.error("Failed to move person to the team library", e);
+                show_alert("Couldn't move the person to the team persons.", "danger");
+            }
+        });
+
+        row.querySelector(".project_persons_delete_btn")?.addEventListener("click", async () => {
+            if(await confirm_and_delete_person(person)){
+                show_alert("Person deleted.", "success");
+                // Entries using the person turned into plain names, so reload the whole view
+                await init();
+            }
+        });
+    }
+}
+
+function init_project_persons(){
+    render_project_persons().then();
+
+    for(const button of Array.from(document.querySelectorAll<HTMLElement>(".project_new_person_btn"))){
+        button.addEventListener("click", () => {
+            const add_to = button.getAttribute("data-add-to");
+            open_person_overlay({
+                project_id: state.project_id,
+                on_saved: async (person: Person) => {
+                    // From the authors/editors pickers, the new person is added right away
+                    if(add_to === "authors" || add_to === "editors"){
+                        await add_person_to_group(person, add_to);
+                    }
+                    await render_project_persons();
+                }
+            }).then();
         });
     }
 }

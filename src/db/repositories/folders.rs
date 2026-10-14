@@ -44,23 +44,31 @@ fn build_entries(
     entries
 }
 
-/// Replaces `data_storage.data.projects.read().unwrap().entries.clone()`: fetches every
-/// folder and every project's summary in two queries and assembles the same tree shape.
-pub async fn get_project_list_tree(pool: &PgPool) -> Result<ProjectList, DbError> {
-    let folders: Vec<FolderRow> = sqlx::query!("SELECT id, name, parent FROM project_folders")
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|r| (r.id, r.name, r.parent))
-        .collect();
+/// Replaces `data_storage.data.projects.read().unwrap().entries.clone()`: fetches the folders
+/// and project summaries of every team `user_id` belongs to in two queries and assembles the
+/// same tree shape.
+pub async fn get_project_list_tree(pool: &PgPool, user_id: Uuid) -> Result<ProjectList, DbError> {
+    let folders: Vec<FolderRow> = sqlx::query!(
+        "SELECT id, name, parent FROM project_folders
+         WHERE owner_team_id IN (SELECT team_id FROM users_teams WHERE user_id = $1)",
+        user_id
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.name, r.parent))
+    .collect();
 
-    let projects: Vec<ProjectRow> =
-        sqlx::query!("SELECT id, title, last_interaction, folder FROM projects")
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|r| (r.id, r.title, r.last_interaction, r.folder))
-            .collect();
+    let projects: Vec<ProjectRow> = sqlx::query!(
+        "SELECT id, title, last_interaction, folder FROM projects
+             WHERE owner_team_id IN (SELECT team_id FROM users_teams WHERE user_id = $1)",
+        user_id
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.title, r.last_interaction, r.folder))
+    .collect();
 
     Ok(ProjectList {
         entries: build_entries(None, &folders, &projects),
@@ -121,7 +129,10 @@ mod tests {
         seed_project(&pool, "Top-level project", None, team_id).await;
         seed_project(&pool, "Nested project", Some(root_folder), team_id).await;
 
-        let tree = get_project_list_tree(&pool).await.unwrap();
+        let alice = users::insert(&pool, "alice@example.com", "Alice", "hash", team_id)
+            .await
+            .unwrap();
+        let tree = get_project_list_tree(&pool, alice.id).await.unwrap();
         assert_eq!(tree.entries.len(), 2);
 
         let folder = tree
@@ -133,6 +144,51 @@ mod tests {
             })
             .unwrap();
         assert_eq!(folder.children.len(), 1);
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn tree_only_contains_projects_of_the_users_teams(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = users::ensure_default_team(&pool).await.unwrap();
+        let alice = users::insert(&pool, "alice@example.com", "Alice", "hash", default_team)
+            .await
+            .unwrap();
+        // bob is only in his personal team, not in the shared Default team
+        let bob = users::insert(&pool, "bob@example.com", "Bob", "hash", default_team)
+            .await
+            .unwrap();
+        sqlx::query!(
+            "DELETE FROM users_teams WHERE user_id = $1 AND team_id = $2",
+            bob.id,
+            default_team
+        )
+        .execute(&pool)
+        .await?;
+        let bobs_team: Uuid =
+            sqlx::query_scalar!("SELECT team_id FROM users_teams WHERE user_id = $1", bob.id)
+                .fetch_one(&pool)
+                .await?;
+
+        seed_project(&pool, "Shared", None, default_team).await;
+        seed_project(&pool, "Bob's", None, bobs_team).await;
+
+        let titles = |tree: ProjectList| -> Vec<String> {
+            tree.entries
+                .into_iter()
+                .filter_map(|e| match e {
+                    ProjectListEntry::Project(p) => Some(p.name),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            titles(get_project_list_tree(&pool, alice.id).await.unwrap()),
+            ["Shared"]
+        );
+        assert_eq!(
+            titles(get_project_list_tree(&pool, bob.id).await.unwrap()),
+            ["Bob's"]
+        );
         Ok(())
     }
 

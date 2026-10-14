@@ -4,7 +4,13 @@
     <div class="row">
         <div class="col-12 d-flex align-content-center mb-4">
             <div class="col-12 d-flex align-content-center">
-                <h1 class="d-inline">Persons</h1><a href="/persons/create" class="btn d-flex align-content-center btn-outline-success align-self-center ms-2" style="flex-wrap: wrap; height: 80%;">+</a>
+                <h1 class="d-inline">Persons</h1>
+                <select class="form-select align-self-center ms-3" id="persons_team_select" aria-label="Team" style="width: auto;">
+                    {{#each teams}}
+                        <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+                    {{/each}}
+                </select>
+                <a href="/persons/create?team_id={{selected_team_id}}" class="btn d-flex align-content-center btn-outline-success align-self-center ms-2" style="flex-wrap: wrap; height: 80%;" title="Add a person to this team's persons">+</a>
             </div>
         </div>
     </div>
@@ -31,20 +37,20 @@
             <div>
                 <select class="form-select mt-2" onchange="if (this.value) window.location.href=this.value" style="float: left;width: auto;">
                     <option disabled selected>Einträge pro Seite</option>
-                    <option value="/persons?offset=0&limit=10">10</option>
-                    <option value="/persons?offset=0&limit=20">20</option>
-                    <option value="/persons?offset=0&limit=50">50</option>
-                    <option value="/persons?offset=0&limit=100">100</option>
+                    <option value="/persons?team_id={{selected_team_id}}&offset=0&limit=10">10</option>
+                    <option value="/persons?team_id={{selected_team_id}}&offset=0&limit=20">20</option>
+                    <option value="/persons?team_id={{selected_team_id}}&offset=0&limit=50">50</option>
+                    <option value="/persons?team_id={{selected_team_id}}&offset=0&limit=100">100</option>
                 </select>
                 <nav aria-label="Page navigation example">
                     <ul class="pagination mt-2" style="float: right">
                         <li class="page-item {{#unless previous_offset includeZero=true}}disabled{{/unless}}">
-                            <a class="page-link" href="/persons?offset={{previous_offset}}" aria-label="Previous">
+                            <a class="page-link" href="/persons?team_id={{selected_team_id}}&offset={{previous_offset}}&limit={{limit}}" aria-label="Previous">
                                 <span aria-hidden="true">&laquo;</span>
                             </a>
                         </li>
                         <li class="page-item">
-                            <a class="page-link {{#unless next_offset includeZero=true}}disabled{{/unless}}" href="/persons?offset={{next_offset}}" aria-label="Next">
+                            <a class="page-link {{#unless next_offset includeZero=true}}disabled{{/unless}}" href="/persons?team_id={{selected_team_id}}&offset={{next_offset}}&limit={{limit}}" aria-label="Next">
                                 <span aria-hidden="true">&raquo;</span>
                             </a>
                         </li>

@@ -38,6 +38,8 @@ pub mod import;
 #[doc(hidden)]
 pub mod mailer;
 #[doc(hidden)]
+pub mod permissions;
+#[doc(hidden)]
 pub mod persons;
 #[doc(hidden)]
 pub mod profile_settings;
@@ -291,6 +293,9 @@ async fn rocket() -> _ {
                 persons::api::get_person,
                 persons::api::update_person,
                 persons::api::search_persons,
+                persons::api::get_person_usage,
+                persons::api::promote_person,
+                persons::api::list_project_persons,
                 projects::api::get_project_contents,
                 projects::api::add_content,
                 projects::api::move_content_after,

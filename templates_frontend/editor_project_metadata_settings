@@ -108,6 +108,7 @@
             <input type="text" class="form-control form-control-sm form-control-fixed-width" id="project_metadata_search_authors" placeholder="Add Author">
             <ul class="list-group search_result_list hide" tabindex="0" id="project_metadata_search_authors_results">
             </ul>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-1 project_new_person_btn" data-add-to="authors">New person</button>
         </div>
     </div>
     <div>
@@ -123,7 +124,13 @@
             <input type="text" class="form-control form-control-sm form-control-fixed-width" id="section_metadata_search_editors" placeholder="Add Editor">
             <ul class="list-group search_result_list hide" tabindex="0" id="section_metadata_search_editors_results">
             </ul>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-1 project_new_person_btn" data-add-to="editors">New person</button>
         </div>
+    </div>
+    <div>
+        <label>Persons only in this project</label>
+        <div id="project_persons_list"></div>
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-1 project_new_person_btn" data-add-to="none">New person</button>
     </div>
     <div>
         <label>Keywords</label>

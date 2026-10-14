@@ -388,25 +388,11 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn owner_check_constraint_requires_exactly_one(pool: PgPool) -> sqlx::Result<()> {
-        let team_id = users::ensure_default_team(&pool).await.unwrap();
-        let user = users::insert(&pool, "owner@example.com", "Owner", "hash", team_id)
-            .await
-            .unwrap();
-
-        let neither = sqlx::query!("INSERT INTO projects (title) VALUES ('No owner')")
+    async fn owner_team_is_required(pool: PgPool) -> sqlx::Result<()> {
+        let no_owner = sqlx::query!("INSERT INTO projects (title) VALUES ('No owner')")
             .execute(&pool)
             .await;
-        assert!(neither.is_err());
-
-        let both = sqlx::query!(
-            "INSERT INTO projects (title, owner_team_id, owner_user_id) VALUES ('Both owners', $1, $2)",
-            team_id,
-            user.id
-        )
-        .execute(&pool)
-        .await;
-        assert!(both.is_err());
+        assert!(no_owner.is_err());
         Ok(())
     }
 
@@ -434,7 +420,7 @@ mod tests {
         .unwrap();
         let person = crate::db::repositories::persons::insert;
         let person_id = Uuid::new_v4();
-        let person_value = vb_exchange::projects::PersonV2 {
+        let person_value = vb_exchange::projects::Person {
             id: Some(person_id),
             first_names: Some("A".to_string()),
             last_names: "Author".to_string(),
@@ -442,6 +428,7 @@ mod tests {
             gnd: None,
             ror: None,
             bios: None,
+            scope: Some(vb_exchange::projects::PersonScope::Team(team_id)),
         };
         person(&pool, &person_value).await.unwrap();
 

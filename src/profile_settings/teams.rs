@@ -3,6 +3,7 @@ use crate::db::repositories::teams as teams_repo;
 use crate::db::repositories::teams::{Invitation, InvitationWithTeam, Team};
 use crate::db::repositories::users::{self, TeamRole};
 use crate::mailer::{MailJob, Mailer};
+use crate::permissions::{ResourceType, has_permission};
 use crate::session::login::start_session;
 use crate::session::register::{
     RegisterError, create_account, normalize_email, render_register_page,
@@ -37,15 +38,6 @@ async fn member_role_or_not_found(
     teams_repo::member_role(pool, team_id, user_id)
         .await?
         .ok_or_else(|| ApiErrorType::ResourceNotFound("team".to_string()).into())
-}
-
-/// Fails with a 403 unless `role` is one of `allowed`.
-fn require_role(role: TeamRole, allowed: &[TeamRole]) -> Result<(), ApiError> {
-    if allowed.contains(&role) {
-        Ok(())
-    } else {
-        Err(ApiErrorType::Forbidden("insufficient team role".to_string()).into())
-    }
 }
 
 /// Fails with a 403 unless `invitation` is addressed to `user_id`/`user_email` — either
@@ -155,7 +147,7 @@ pub async fn get_team(team_id: &str, session: Session, pool: &State<PgPool>) -> 
     let team_id = Uuid::parse_str(team_id)?;
     let pool = pool.inner();
 
-    member_role_or_not_found(pool, team_id, session.user_id).await?;
+    has_permission(pool, ResourceType::Team, team_id, session.user_id, None).await?;
 
     let team = teams_repo::get(pool, team_id).await?;
     Ok(APIResponse::from(team))
@@ -201,8 +193,15 @@ pub async fn patch_team(
     let patch = patch.into_inner();
     let pool = pool.inner();
 
-    let role = member_role_or_not_found(pool, team_id, session.user_id).await?;
-    require_role(role, &[TeamRole::Owner, TeamRole::Admin])?;
+    // The role is needed beyond the check: only an owner may change who owns the team.
+    let role = has_permission(
+        pool,
+        ResourceType::Team,
+        team_id,
+        session.user_id,
+        Some(TeamRole::Admin),
+    )
+    .await?;
     require_not_default_team(pool, team_id).await?;
 
     let mut tx = pool.begin().await.map_err(DbError::from)?;
@@ -290,8 +289,14 @@ pub async fn delete_team(team_id: &str, session: Session, pool: &State<PgPool>) 
     let team_id = Uuid::parse_str(team_id)?;
     let pool = pool.inner();
 
-    let role = member_role_or_not_found(pool, team_id, session.user_id).await?;
-    require_role(role, &[TeamRole::Owner])?;
+    has_permission(
+        pool,
+        ResourceType::Team,
+        team_id,
+        session.user_id,
+        Some(TeamRole::Owner),
+    )
+    .await?;
     require_not_default_team(pool, team_id).await?;
 
     teams_repo::delete(pool, team_id).await?;
@@ -326,11 +331,17 @@ pub async fn create_invitation(
     let data = data.into_inner();
     let pool = pool.inner();
 
-    let role = member_role_or_not_found(pool, team_id, session.user_id).await?;
-    require_role(role, &[TeamRole::Owner, TeamRole::Admin])?;
+    let role = has_permission(
+        pool,
+        ResourceType::Team,
+        team_id,
+        session.user_id,
+        Some(TeamRole::Admin),
+    )
+    .await?;
     // Like patch_team, only an owner may create further owners.
-    if data.role == TeamRole::Owner {
-        require_role(role, &[TeamRole::Owner])?;
+    if data.role == TeamRole::Owner && role != TeamRole::Owner {
+        return Err(ApiErrorType::Forbidden("insufficient team role".to_string()).into());
     }
 
     let invitation = match (data.user_id, data.email) {
@@ -547,8 +558,14 @@ pub async fn list_invitations(
     let team_id = Uuid::parse_str(team_id)?;
     let pool = pool.inner();
 
-    let role = member_role_or_not_found(pool, team_id, session.user_id).await?;
-    require_role(role, &[TeamRole::Owner, TeamRole::Admin])?;
+    has_permission(
+        pool,
+        ResourceType::Team,
+        team_id,
+        session.user_id,
+        Some(TeamRole::Admin),
+    )
+    .await?;
 
     let invitations = teams_repo::list_invitations_for_team(pool, team_id).await?;
     Ok(APIResponse::from(invitations))
@@ -569,8 +586,14 @@ pub async fn decline_invitation(
     let invitation_id = Uuid::parse_str(invitation_id)?;
     let pool = pool.inner();
 
-    let role = member_role_or_not_found(pool, team_id, session.user_id).await?;
-    require_role(role, &[TeamRole::Owner, TeamRole::Admin])?;
+    has_permission(
+        pool,
+        ResourceType::Team,
+        team_id,
+        session.user_id,
+        Some(TeamRole::Admin),
+    )
+    .await?;
 
     let invitation = teams_repo::get_invitation(pool, invitation_id).await?;
     if invitation.team_id != team_id {
@@ -655,7 +678,7 @@ pub async fn decline_my_invitation(
 }
 
 /// Runtime HTTP coverage of the membership-scoping and role checks above (`Session` guard +
-/// `State<PgPool>` wiring + `member_role_or_not_found`/`require_role`), mirroring
+/// `State<PgPool>` wiring + [`has_permission`]), mirroring
 /// `projects::api::get`'s integration tests.
 #[cfg(test)]
 mod integration_tests {

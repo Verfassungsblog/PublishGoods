@@ -1,5 +1,7 @@
 use crate::db::repositories::DbError;
 use crate::db::repositories::projects;
+use crate::permissions::{ResourceType, has_permission};
+use crate::persons::ensure_linkable;
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::storage::project_storage::current::PersonUuidOrString;
@@ -363,12 +365,24 @@ pub struct PatchProjectSettings {
 pub async fn patch_project(
     project_id: &str,
     patch: Json<PatchProjectData>,
-    _session: Session,
+    session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
     let id = uuid::Uuid::parse_str(project_id)?;
     let pool = pool.inner();
     let patch = patch.into_inner();
+
+    has_permission(pool, ResourceType::Project, id, session.user_id, None).await?;
+
+    // Authors/editors may only be persons belonging to this project or to its team's library.
+    if let Some(Some(metadata_patch)) = &patch.metadata {
+        if let Some(Some(authors)) = &metadata_patch.authors {
+            ensure_linkable(pool, id, authors, "author").await?;
+        }
+        if let Some(Some(editors)) = &metadata_patch.editors {
+            ensure_linkable(pool, id, editors, "editor").await?;
+        }
+    }
 
     // Applied as one transaction so a failure partway through (e.g. an invalid template_id)
     // rolls back every field already written in this request instead of leaving the project
