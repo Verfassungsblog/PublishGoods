@@ -14,6 +14,7 @@ use rocket::State;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use sqlx::types::JsonValue;
 use std::collections::HashMap;
 /// Contains API routes to view and modify sections inside a project
 use vb_exchange::projects::Identifier;
@@ -47,7 +48,7 @@ pub struct APISectionMetadataResult {
     pub published: Option<NaiveDate>,
     pub last_changed: Option<NaiveDateTime>,
     pub lang: Option<Language>,
-    pub custom_fields: HashMap<String, String>,
+    pub custom_fields: HashMap<String, JsonValue>,
 }
 
 /// GET /api/projects/<project_id>/sections/<section_id>?<expand>
@@ -347,6 +348,8 @@ pub struct PatchSectionMetadata {
     )]
     #[bincode(with_serde)]
     pub lang: Option<Option<Language>>,
+    #[bincode(with_serde)]
+    pub custom_fields: Option<HashMap<String, JsonValue>>,
 }
 
 impl Patch<PatchSectionMetadata, SectionMetadata> for SectionMetadata {
@@ -399,6 +402,10 @@ impl Patch<PatchSectionMetadata, SectionMetadata> for SectionMetadata {
 
         if let Some(lang) = patch.lang {
             new_metadata.lang = lang;
+        }
+
+        if let Some(custom_fields) = patch.custom_fields {
+            new_metadata.custom_fields = custom_fields;
         }
 
         new_metadata

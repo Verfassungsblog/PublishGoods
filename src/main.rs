@@ -71,6 +71,10 @@ async fn rocket() -> _ {
     env_logger::init();
     debug!("Initialized Logger, starting application.");
 
+    tokio_rustls::rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install default rustls CryptoProvider");
+
     let settings = Settings::builder().unwrap();
 
     //Check if data directory exists, if not create it

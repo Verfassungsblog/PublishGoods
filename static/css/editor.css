@@ -1041,3 +1041,7 @@ customstyle{
 .citation-search-res-li:hover {
   background: #f5f5f5;
 }
+.project_metadata_custom_field_readonly input[readonly]{
+    opacity: 0.7;
+    cursor: default;
+}

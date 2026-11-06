@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT position FROM sections\n           WHERE project_id = $1 AND parent_section IS NOT DISTINCT FROM $2 AND position > $3 AND id != $4\n           ORDER BY position LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "position",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "sections",
+            "name": "position"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Float8",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "abff9b21198a966da6d1c6ae2305fc9982494471e1c3509c64e6d754a40e3b05"
+}

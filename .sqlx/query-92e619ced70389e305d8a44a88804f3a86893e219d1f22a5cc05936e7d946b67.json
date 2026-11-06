@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ut.role as \"role: TeamRole\" FROM users_teams ut\n           JOIN users u ON u.id = ut.user_id\n           WHERE ut.team_id = $1 AND LOWER(u.email) = LOWER($2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role: TeamRole",
+        "type_info": {
+          "Custom": {
+            "name": "team_role",
+            "kind": {
+              "Enum": [
+                "owner",
+                "admin",
+                "member"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "users_teams",
+            "name": "role"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "92e619ced70389e305d8a44a88804f3a86893e219d1f22a5cc05936e7d946b67"
+}

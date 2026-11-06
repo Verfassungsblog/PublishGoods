@@ -845,8 +845,18 @@ function add_custom_field_row_listeners(row: HTMLElement) {
 }
 
 async function patch_custom_fields() {
-    const custom_fields: Record<string, string> = {};
+    const custom_fields: Record<string, unknown> = {};
     document.querySelectorAll("#project_metadata_custom_fields_list .project_metadata_custom_field_row").forEach(row => {
+        // Non-string values are read only: send back the original JSON value unchanged
+        const raw = row.getAttribute("data-raw-value");
+        if (raw !== null) {
+            try {
+                custom_fields[row.getAttribute("data-key")] = JSON.parse(raw);
+            } catch (e) {
+                console.error("Failed to parse custom field value", e);
+            }
+            return;
+        }
         const keyInput = row.querySelector(".project_metadata_custom_field_key") as HTMLInputElement;
         const valueInput = row.querySelector(".project_metadata_custom_field_value") as HTMLInputElement;
         const key = keyInput.value.trim();

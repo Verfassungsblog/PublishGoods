@@ -20,6 +20,7 @@ use crate::settings::Settings;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::storage::project_storage::sections::Section;
 use sqlx::postgres::PgExecutor;
+use sqlx::types::JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Row, Transaction};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -344,7 +345,7 @@ pub async fn insert_at_end(
         m.web_url,
         m.published,
         m.lang.map(|l| l.as_tag().to_string()),
-        sqlx::types::Json(&m.custom_fields) as sqlx::types::Json<&HashMap<String, String>>,
+        sqlx::types::Json(&m.custom_fields) as sqlx::types::Json<&HashMap<String, JsonValue>>,
         sqlx::types::Json(&m.identifiers) as sqlx::types::Json<&Vec<Identifier>>,
     )
     .execute(&mut *tx)
@@ -395,7 +396,7 @@ pub async fn update_metadata(
         m.web_url,
         m.published,
         m.lang.map(|l| l.as_tag().to_string()),
-        sqlx::types::Json(&m.custom_fields) as sqlx::types::Json<&HashMap<String, String>>,
+        sqlx::types::Json(&m.custom_fields) as sqlx::types::Json<&HashMap<String, JsonValue>>,
         sqlx::types::Json(&m.identifiers) as sqlx::types::Json<&Vec<Identifier>>,
     )
     .execute(&mut *tx)

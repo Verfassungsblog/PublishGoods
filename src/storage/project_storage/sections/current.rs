@@ -3,6 +3,7 @@ use bincode::{Decode, Encode};
 use chrono::{NaiveDate, NaiveDateTime};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
+use sqlx::types::JsonValue;
 use std::collections::HashMap;
 use vb_exchange::projects::Identifier;
 
@@ -63,7 +64,8 @@ pub struct SectionMetadataV6 {
     #[bincode(with_serde)]
     pub lang: Option<Language>,
     /// additional fields
-    pub custom_fields: HashMap<String, String>,
+    #[bincode(with_serde)]
+    pub custom_fields: HashMap<String, JsonValue>,
 }
 
 /// `authors`/`editors` come from the `persons_sections` join, not a plain column — always
@@ -75,7 +77,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for SectionMetadataV6 {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
         use sqlx::Row;
         let identifiers: Option<sqlx::types::Json<Vec<Identifier>>> = row.try_get("identifiers")?;
-        let custom_fields: Option<sqlx::types::Json<HashMap<String, String>>> =
+        let custom_fields: Option<sqlx::types::Json<HashMap<String, JsonValue>>> =
             row.try_get("custom_fields")?;
         let language: Option<String> = row.try_get("language")?;
         Ok(SectionMetadataV6 {

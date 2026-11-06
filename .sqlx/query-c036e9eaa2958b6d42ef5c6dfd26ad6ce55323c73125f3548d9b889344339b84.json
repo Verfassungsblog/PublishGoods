@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE sections s SET position = t.rn * 1000.0\n           FROM (SELECT id, row_number() OVER (ORDER BY position) AS rn FROM sections\n                 WHERE project_id = $1 AND parent_section IS NOT DISTINCT FROM $2) t\n           WHERE s.id = t.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c036e9eaa2958b6d42ef5c6dfd26ad6ce55323c73125f3548d9b889344339b84"
+}

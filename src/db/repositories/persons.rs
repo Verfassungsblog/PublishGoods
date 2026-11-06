@@ -238,6 +238,7 @@ mod tests {
                 content: "Bio text".to_string(),
                 lang: None,
             }]),
+            scope: None,
         }
     }
 

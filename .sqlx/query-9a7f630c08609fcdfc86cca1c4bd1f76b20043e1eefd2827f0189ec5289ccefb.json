@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE sections SET parent_section = $1, position = $2 WHERE id = $3 AND project_id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9a7f630c08609fcdfc86cca1c4bd1f76b20043e1eefd2827f0189ec5289ccefb"
+}

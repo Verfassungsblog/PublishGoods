@@ -1672,6 +1672,62 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
         });
     }
 
+    // Custom fields add/remove/update. Non-string values are read only (but deletable).
+    const customFieldsList = document.getElementById('section_metadata_custom_fields_list');
+    const patchCustomFields = async () => {
+        const custom_fields: Record<string, unknown> = {};
+        customFieldsList?.querySelectorAll('.project_metadata_custom_field_row').forEach(row => {
+            const raw = row.getAttribute('data-raw-value');
+            if (raw !== null) {
+                try {
+                    custom_fields[row.getAttribute('data-key') || ''] = JSON.parse(raw);
+                } catch (e) {
+                    console.error('Failed to parse custom field value', e);
+                }
+                return;
+            }
+            const key = (row.querySelector('.project_metadata_custom_field_key') as HTMLInputElement).value.trim();
+            const value = (row.querySelector('.project_metadata_custom_field_value') as HTMLInputElement).value.trim();
+            if (key) custom_fields[key] = value;
+        });
+        await patchSectionMeta(section_id, { custom_fields });
+    };
+    const attachCustomFieldRowListeners = (row: HTMLElement) => {
+        const keyInput = row.querySelector('.project_metadata_custom_field_key') as HTMLInputElement;
+        const valueInput = row.querySelector('.project_metadata_custom_field_value') as HTMLInputElement;
+        keyInput.addEventListener('change', () => {
+            const oldKey = row.getAttribute('data-key');
+            const newKey = keyInput.value.trim();
+            if (newKey && newKey !== oldKey) {
+                row.setAttribute('data-key', newKey);
+                patchCustomFields();
+            } else if (!newKey) {
+                keyInput.value = oldKey || '';
+            }
+        });
+        valueInput.addEventListener('change', () => patchCustomFields());
+        row.querySelector('.project_metadata_custom_field_remove_btn')?.addEventListener('click', () => {
+            row.remove();
+            patchCustomFields();
+        });
+    };
+    customFieldsList?.querySelectorAll('.project_metadata_custom_field_row[data-key]').forEach(row => {
+        attachCustomFieldRowListeners(row as HTMLElement);
+    });
+    document.getElementById('section_metadata_custom_fields_add')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        const keyInput = document.getElementById('section_metadata_custom_fields_new_key') as HTMLInputElement;
+        const valueInput = document.getElementById('section_metadata_custom_fields_new_value') as HTMLInputElement;
+        const key = keyInput.value.trim();
+        if (!key || !customFieldsList) return;
+        // @ts-ignore
+        customFieldsList.insertAdjacentHTML('beforeend', Handlebars.templates.editor_project_metadata_custom_field_row({ key, value: valueInput.value.trim() }));
+        attachCustomFieldRowListeners(customFieldsList.lastElementChild as HTMLElement);
+        keyInput.value = '';
+        valueInput.value = '';
+        patchCustomFields();
+    });
+
     renderIdentifiersList(identifiers);
 
     const addBtn = document.getElementById('section_metadata_identifiers_add');

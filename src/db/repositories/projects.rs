@@ -434,7 +434,7 @@ mod tests {
         .unwrap();
         let person = crate::db::repositories::persons::insert;
         let person_id = Uuid::new_v4();
-        let person_value = vb_exchange::projects::PersonV2 {
+        let person_value = vb_exchange::projects::PersonV3 {
             id: Some(person_id),
             first_names: Some("A".to_string()),
             last_names: "Author".to_string(),
@@ -442,6 +442,7 @@ mod tests {
             gnd: None,
             ror: None,
             bios: None,
+            scope: None,
         };
         person(&pool, &person_value).await.unwrap();
 
@@ -458,7 +459,7 @@ mod tests {
         }]);
         metadata
             .custom_fields
-            .insert("k".to_string(), "v".to_string());
+            .insert("k".to_string(), serde_json::json!("v"));
 
         update_metadata(&pool, project_id, &metadata).await.unwrap();
 
@@ -476,7 +477,10 @@ mod tests {
         );
         assert!(matches!(fetched.license, Some(License::CC_BY_4)));
         assert_eq!(fetched.keywords.unwrap()[0].title, "topic");
-        assert_eq!(fetched.custom_fields.get("k"), Some(&"v".to_string()));
+        assert_eq!(
+            fetched.custom_fields.get("k"),
+            Some(&serde_json::json!("v"))
+        );
 
         let mut settings = get_settings(&pool, project_id).await.unwrap();
         settings.toc_enabled = true;

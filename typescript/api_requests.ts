@@ -650,7 +650,7 @@ export type ProjectContentsSectionMetadata = {
     last_changed: Date | null,
     // Backend uses `language::Language`; we send `null` for new sections.
     lang: string | null,
-    custom_fields: Record<string, string>,
+    custom_fields: Record<string, unknown>,
 };
 
 export interface APISectionResult {
@@ -2252,7 +2252,7 @@ export interface ProjectMetadata {
     volume: string | null;
     edition: string | null;
     publisher: string | null;
-    custom_fields: Record<string, string> | null;
+    custom_fields: Record<string, unknown> | null;
 }
 
 export type BibEntryV2 = BibEntryV3; // updated to V3 structure

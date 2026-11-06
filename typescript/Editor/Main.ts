@@ -64,6 +64,22 @@ window.addEventListener('load', async () => {
     });
 
     /**
+     * Block helper: renders the block if the argument is a string, the inverse block otherwise.
+     */
+    // @ts-ignore
+    Handlebars.registerHelper("is_string", function (arg: unknown, options: any) {
+        return typeof arg === "string" ? options.fn(this) : options.inverse(this);
+    });
+
+    /**
+     * Serializes any value to a JSON string.
+     */
+    // @ts-ignore
+    Handlebars.registerHelper("json", function (arg: unknown) {
+        return JSON.stringify(arg);
+    });
+
+    /**
      * Creates a base64 string from any utf-8 string
      */
 // @ts-ignore

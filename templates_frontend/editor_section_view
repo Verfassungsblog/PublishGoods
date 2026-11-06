@@ -72,6 +72,22 @@
             <button class="btn btn-sm btn-primary" id="section_metadata_identifiers_add">Add</button>
         </div>
     </div>
+    <div class="form-group">
+        <label>Custom Fields</label>
+        <div id="section_metadata_custom_fields_list">
+            {{#each data.metadata.custom_fields}}
+                {{> editor_project_metadata_custom_field_row key=@key value=this}}
+            {{/each}}
+        </div>
+        <label for="section_metadata_custom_fields_add_div">Add Custom Field</label>
+        <div id="section_metadata_custom_fields_add_div">
+            <div class="project_metadata_custom_field_row">
+                <input type="text" class="project_metadata_custom_field_key" id="section_metadata_custom_fields_new_key" placeholder="Field Name">
+                <input type="text" class="project_metadata_custom_field_value" id="section_metadata_custom_fields_new_value" placeholder="Value">
+                <button class="btn btn-sm btn-primary" id="section_metadata_custom_fields_add">Add</button>
+            </div>
+        </div>
+    </div>
     <div class="form-group col-6">
         <label>Language</label>
         <select class="fullwidth-select form-select-sm quickchange" id="section_metadata_lang">
