@@ -16,6 +16,23 @@ pub enum TeamRole {
     Member,
 }
 
+impl TeamRole {
+    /// Privilege rank, higher is more privileged. Explicit rather than a derived `Ord`, which
+    /// would follow declaration order and make `Owner` the smallest.
+    fn rank(self) -> u8 {
+        match self {
+            TeamRole::Owner => 3,
+            TeamRole::Admin => 2,
+            TeamRole::Member => 1,
+        }
+    }
+
+    /// Whether this role is at least as privileged as `min` (Owner > Admin > Member).
+    pub fn at_least(self, min: TeamRole) -> bool {
+        self.rank() >= min.rank()
+    }
+}
+
 /// A user account.
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct User {
@@ -35,6 +52,9 @@ pub struct UserProfile {
     pub id: Uuid,
     pub name: String,
 }
+
+/// Name identifying the shared default team (the SQL in [`ensure_default_team`] hard-codes it).
+pub const DEFAULT_TEAM_NAME: &str = "Default";
 
 /// Returns the id of the single "Default" team, creating it if it doesn't exist yet.
 ///
@@ -153,7 +173,40 @@ pub async fn email_in_use<'e>(
     Ok(in_use.unwrap_or(false))
 }
 
-/// Inserts a new user and attaches them to `default_team_id` as `owner`, in one transaction.
+/// Creates the user's personal team and makes them its `owner`, inside the caller's
+/// transaction. A personal team is an ordinary team that merely starts out with a single
+/// member; it's named after the user. `'Default'` is reserved for the shared default team
+/// (looked up by name in [`ensure_default_team`]), so a user with that exact name gets a
+/// distinguishable team name instead.
+pub async fn create_personal_team(
+    tx: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    user_name: &str,
+) -> Result<Uuid, DbError> {
+    let team_name = if user_name == DEFAULT_TEAM_NAME {
+        "Default (personal)"
+    } else {
+        user_name
+    };
+    let team_id = sqlx::query_scalar!(
+        "INSERT INTO teams (name) VALUES ($1) RETURNING id",
+        team_name
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO users_teams (user_id, team_id, role) VALUES ($1, $2, $3)",
+        user_id,
+        team_id,
+        TeamRole::Owner as TeamRole
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(team_id)
+}
+
+/// Inserts a new user, attaches them to `default_team_id` as `owner` and creates their
+/// personal team, in one transaction.
 pub async fn insert(
     pool: &PgPool,
     email: &str,
@@ -197,6 +250,8 @@ pub async fn insert_with_verification(
     .execute(&mut *tx)
     .await?;
 
+    create_personal_team(&mut tx, user.id, &user.name).await?;
+
     tx.commit().await?;
     Ok(user)
 }
@@ -230,14 +285,28 @@ pub async fn update<'e>(exec: impl PgExecutor<'e>, user: &User) -> Result<User, 
     .ok_or(DbError::NotFound("user"))
 }
 
-/// Deletes a user by id. Fails with [`DbError::NotFound`] if no row with that id exists.
-pub async fn delete<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<(), DbError> {
+/// Deletes a user by id, together with every team they are the last member of (and everything
+/// those teams own), so no team is left behind that nobody can reach. Teams that have other
+/// members are kept. Fails with [`DbError::NotFound`] if no row with that id exists.
+pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query!(
+        "DELETE FROM teams
+         WHERE id IN (SELECT team_id FROM users_teams WHERE user_id = $1)
+           AND NOT EXISTS (
+               SELECT 1 FROM users_teams WHERE team_id = teams.id AND user_id <> $1
+           )",
+        id
+    )
+    .execute(&mut *tx)
+    .await?;
     let result = sqlx::query!("DELETE FROM users WHERE id = $1", id)
-        .execute(exec)
+        .execute(&mut *tx)
         .await?;
     if result.rows_affected() == 0 {
         return Err(DbError::NotFound("user"));
     }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -452,6 +521,112 @@ mod tests {
             get(&pool, user.id).await,
             Err(DbError::NotFound("user"))
         ));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn delete_removes_teams_the_user_was_last_member_of(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = ensure_default_team(&pool).await.unwrap();
+        let alice = insert(&pool, "alice@example.com", "Alice", "hash", default_team)
+            .await
+            .unwrap();
+        let bob = insert(&pool, "bob@example.com", "Bob", "hash", default_team)
+            .await
+            .unwrap();
+        let team_of = |name: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar!("SELECT id FROM teams WHERE name = $1", name)
+                    .fetch_optional(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        let alice_team = team_of("Alice").await.unwrap();
+        let bob_team = team_of("Bob").await.unwrap();
+        // a project in Alice's team goes away with it
+        let project = sqlx::query_scalar!(
+            "INSERT INTO projects (title, owner_team_id) VALUES ('p', $1) RETURNING id",
+            alice_team
+        )
+        .fetch_one(&pool)
+        .await?;
+        // Alice also joined Bob's team
+        sqlx::query!(
+            "INSERT INTO users_teams (user_id, team_id, role) VALUES ($1, $2, $3)",
+            alice.id,
+            bob_team,
+            TeamRole::Member as TeamRole
+        )
+        .execute(&pool)
+        .await?;
+
+        delete(&pool, alice.id).await.unwrap();
+        assert!(team_of("Alice").await.is_none());
+        let project_left =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM projects WHERE id = $1", project)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(project_left, Some(0));
+        // teams that still have members survive
+        assert_eq!(team_of("Default").await, Some(default_team));
+        assert_eq!(team_of("Bob").await, Some(bob_team));
+
+        // Bob was the last member of his team and of the Default team: both go
+        delete(&pool, bob.id).await.unwrap();
+        assert!(team_of("Bob").await.is_none());
+        assert!(team_of("Default").await.is_none());
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn insert_creates_a_personal_team_owned_by_the_user(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = ensure_default_team(&pool).await.unwrap();
+        let alice = insert(&pool, "alice@example.com", "Alice", "hash", default_team)
+            .await
+            .unwrap();
+        // a second user, to show their personal team isn't shared
+        insert(&pool, "bob@example.com", "Bob", "hash", default_team)
+            .await
+            .unwrap();
+
+        let teams: Vec<(Uuid, String, TeamRole)> = sqlx::query_as(
+            "SELECT t.id, t.name, ut.role FROM users_teams ut JOIN teams t ON t.id = ut.team_id
+             WHERE ut.user_id = $1 AND t.id <> $2",
+        )
+        .bind(alice.id)
+        .bind(default_team)
+        .fetch_all(&pool)
+        .await?;
+        assert_eq!(teams.len(), 1);
+        assert_eq!(teams[0].1, "Alice");
+        assert_eq!(teams[0].2, TeamRole::Owner);
+
+        // the personal team is Alice's alone
+        let members = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM users_teams WHERE team_id = $1",
+            teams[0].0
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(members, Some(1));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn personal_team_never_takes_the_default_team_name(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = ensure_default_team(&pool).await.unwrap();
+        insert(&pool, "d@example.com", "Default", "hash", default_team)
+            .await
+            .unwrap();
+
+        // the by-name lookup must keep finding the original shared team
+        assert_eq!(ensure_default_team(&pool).await.unwrap(), default_team);
+        let named_default =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM teams WHERE name = 'Default'")
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(named_default, Some(1));
         Ok(())
     }
 }

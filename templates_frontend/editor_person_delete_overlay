@@ -1,0 +1,22 @@
+{{!--
+  Confirmation shown before a person is deleted.
+
+  Context:
+  - name: display name of the person
+  - used: true if the person is still linked from projects
+  - usages: list of {project_title, section_title, role}
+--}}
+<h1>Delete Person</h1>
+{{#if used}}
+    <p class="mt-3"><b>{{name}}</b> is still used in the following projects:</p>
+    <ul>
+        {{#each usages}}
+            <li>{{project_title}}{{#if section_title}} (section: {{section_title}}){{/if}} &ndash; {{role}}</li>
+        {{/each}}
+    </ul>
+    <p>If you delete this person, they will remain in these projects as plain names.</p>
+{{else}}
+    <p class="mt-3">Do you really want to delete <b>{{name}}</b>?</p>
+{{/if}}
+<button type="button" class="btn btn-danger mt-3" id="overlay_person_confirm_delete">{{#if used}}Delete anyway{{else}}Delete{{/if}}</button>
+<button type="button" class="btn btn-secondary mt-3 ms-2" id="overlay_person_cancel_delete">Cancel</button>

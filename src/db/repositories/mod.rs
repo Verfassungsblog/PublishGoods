@@ -43,7 +43,7 @@ impl From<sqlx::Error> for DbError {
         match &e {
             sqlx::Error::RowNotFound => DbError::NotFound("resource"),
             sqlx::Error::Database(db_err) => match db_err.constraint() {
-                Some("owner") | Some("person_id_or_name") => {
+                Some("person_id_or_name") | Some("person_scope") => {
                     DbError::Conflict(db_err.message().to_string())
                 }
                 Some(c) if db_err.is_unique_violation() => {

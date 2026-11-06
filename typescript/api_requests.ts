@@ -5,17 +5,7 @@ export async function send_get_template_id_for_project(project_id: string) {
             'Content-Type': 'application/json'
         }
     });
-    if (!response.ok) {
-        throw new Error(`Failed to get project template: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            console.error(response_data["error"]);
-            throw new Error(`Failed to save content blocks: ${response_data["error"]}`);
-        } else {
-            return response_data.data;
-        }
-    }
+    return await unwrap<any>(response, "get project template");
 }
 
 export async function send_list_templates() {
@@ -25,17 +15,7 @@ export async function send_list_templates() {
             'Content-Type': 'application/json'
         }
     });
-    if (!response.ok) {
-        throw new Error(`Failed to list templates: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            console.error(response_data["error"]);
-            throw new Error(`Failed to list templates: ${response_data["error"]}`);
-        } else {
-            return response_data.data;
-        }
-    }
+    return await unwrap<any>(response, "list templates");
 }
 
 export async function send_set_project_template(project_id: string, template_id: string) {
@@ -46,17 +26,7 @@ export async function send_set_project_template(project_id: string, template_id:
         },
         body: JSON.stringify(template_id)
     });
-    if (!response.ok) {
-        throw new Error(`Failed to set project template: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            console.error(response_data["error"]);
-            throw new Error(`Failed to set project template: ${response_data["error"]}`);
-        } else {
-            return response_data.data;
-        }
-    }
+    return await unwrap<any>(response, "set project template");
 }
 
 export async function send_update_content_blocks(project_id: string, section_path: string, data: any) {
@@ -67,17 +37,7 @@ export async function send_update_content_blocks(project_id: string, section_pat
         },
         body: JSON.stringify(data)
     });
-    if (!response.ok) {
-        throw new Error(`Failed to update content block: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            console.error(response_data["error"]);
-            throw new Error(`Failed to save content blocks: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
+    return await unwrap<any>(response, "update content block");
 }
 
 export async function send_get_content_blocks(project_id: string, section_path: string) {
@@ -87,16 +47,7 @@ export async function send_get_content_blocks(project_id: string, section_path: 
             'Content-Type': 'application/json'
         }
     });
-    if (!response.ok) {
-        throw new Error(`Failed to get content blocks: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get content blocks: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
+    return await unwrap<any>(response, "get content blocks");
 }
 
 export async function send_get_current_user() {
@@ -106,16 +57,7 @@ export async function send_get_current_user() {
             'Content-Type': 'application/json'
         }
     });
-    if (!response.ok) {
-        throw new Error(`Failed to get current user: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get current user: ${response_data["error"]}`);
-        } else {
-            return response_data.data;
-        }
-    }
+    return await unwrap<any>(response, "get current user");
 }
 
 export async function send_update_user(user_id: string, patch_data: object) {
@@ -126,16 +68,7 @@ export async function send_update_user(user_id: string, patch_data: object) {
         },
         body: JSON.stringify(patch_data)
     });
-    if (!response.ok) {
-        throw new Error(`Failed to update user: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to update user: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
+    return await unwrap<any>(response, "update user");
 }
 
 export async function send_delete_own_account(email: string) {
@@ -146,16 +79,7 @@ export async function send_delete_own_account(email: string) {
         },
         body: JSON.stringify({email: email})
     });
-    if (!response.ok) {
-        throw new Error(`Failed to delete account: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to delete account: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
+    return await unwrap<any>(response, "delete account");
 }
 
 export async function send_poll_import_status(id: string) {
@@ -166,17 +90,7 @@ export async function send_poll_import_status(id: string) {
         }
 
     });
-    if (!response.ok) {
-        throw new Error(`Failed to get import status: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            console.error(response_data["error"]);
-            throw new Error(`Failed to get import status: ` + Object.keys(response_data["error"])[0] + " " + Object.values(response_data["error"])[0]);
-        } else {
-            return response_data;
-        }
-    }
+    return await unwrap<any>(response, "get import status");
 }
 
 
@@ -185,16 +99,7 @@ export async function send_import_from_wordpress(data: any) {
         method: 'POST',
         body: JSON.stringify(data),
     });
-    if (!response.ok) {
-        throw new Error(`Failed to upload: ${response.status}`);
-    } else {
-        let response_data = await response.json();
-        if (response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to upload: ${response_data["error"]}`);
-        } else {
-            return response_data;
-        }
-    }
+    return await unwrap<any>(response, "upload");
 }
 
 export type ExportStepData =
@@ -272,6 +177,19 @@ export function apiErrorToString(error: ApiError): string {
     return errorMessage ? `${errorMessage}` : errorType;
 }
 
+/** Unwraps the `{data}`/`{error}` envelope shared by the API endpoints; `action` names the request in error messages. */
+export async function unwrap<T>(response: Response, action: string): Promise<T> {
+    if (!response.ok) {
+        throw new Error(`Failed to ${action}: ${response.status}`);
+    }
+    const response_data: ApiResult<T> = await response.json();
+
+    if (response_data.error) {
+        throw new Error(`Failed to ${action}: ${apiErrorToString(response_data.error)}`);
+    }
+    return response_data.data as T;
+}
+
 export interface UserProfile {
     id: string;
     name: string;
@@ -340,14 +258,7 @@ export function TeamsAPI() {
             method: 'GET',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to list teams: ${response.status}`);
-        }
-        const response_data: ApiResult<Team[]> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to list teams: ${apiErrorToString(response_data.error)}`);
-        }
-        return response_data.data ?? [];
+        return await unwrap<Team[]>(response, "list teams") ?? [];
     }
 
     async function create_team(name: string): Promise<Team> {
@@ -356,17 +267,11 @@ export function TeamsAPI() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({name: name})
         });
-        if (!response.ok) {
-            throw new Error(`Failed to create team: ${response.status}`);
-        }
-        const response_data: ApiResult<Team> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to create team: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<Team>(response, "create team");
+        if (!data) {
             throw new Error('No data received');
         }
-        return response_data.data;
+        return data;
     }
 
     async function patch_team(team_id: string, patch: PatchTeamData): Promise<Team> {
@@ -375,17 +280,11 @@ export function TeamsAPI() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(patch)
         });
-        if (!response.ok) {
-            throw new Error(`Failed to update team: ${response.status}`);
-        }
-        const response_data: ApiResult<Team> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to update team: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<Team>(response, "update team");
+        if (!data) {
             throw new Error('No data received');
         }
-        return response_data.data;
+        return data;
     }
 
     async function leave_team(team_id: string): Promise<void> {
@@ -393,13 +292,7 @@ export function TeamsAPI() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to leave team: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to leave team: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<null>(response, "leave team");
     }
 
     async function delete_team(team_id: string): Promise<void> {
@@ -407,13 +300,7 @@ export function TeamsAPI() {
             method: 'DELETE',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to delete team: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to delete team: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<null>(response, "delete team");
     }
 
     async function create_invitation(team_id: string, role: TeamRole, email: string): Promise<Invitation> {
@@ -422,17 +309,11 @@ export function TeamsAPI() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({role: role, email: email})
         });
-        if (!response.ok) {
-            throw new Error(`Failed to create invitation: ${response.status}`);
-        }
-        const response_data: ApiResult<Invitation> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to create invitation: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<Invitation>(response, "create invitation");
+        if (!data) {
             throw new Error('No data received');
         }
-        return response_data.data;
+        return data;
     }
 
     async function list_invitations(team_id: string): Promise<Invitation[]> {
@@ -440,14 +321,7 @@ export function TeamsAPI() {
             method: 'GET',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to list invitations: ${response.status}`);
-        }
-        const response_data: ApiResult<Invitation[]> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to list invitations: ${apiErrorToString(response_data.error)}`);
-        }
-        return response_data.data ?? [];
+        return await unwrap<Invitation[]>(response, "list invitations") ?? [];
     }
 
     async function revoke_invitation(team_id: string, invitation_id: string): Promise<void> {
@@ -455,13 +329,7 @@ export function TeamsAPI() {
             method: 'DELETE',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to revoke invitation: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to revoke invitation: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<null>(response, "revoke invitation");
     }
 
     async function list_my_invitations(): Promise<InvitationWithTeam[]> {
@@ -469,14 +337,7 @@ export function TeamsAPI() {
             method: 'GET',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to list invitations: ${response.status}`);
-        }
-        const response_data: ApiResult<InvitationWithTeam[]> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to list invitations: ${apiErrorToString(response_data.error)}`);
-        }
-        return response_data.data ?? [];
+        return await unwrap<InvitationWithTeam[]>(response, "list invitations") ?? [];
     }
 
     async function accept_invitation(invitation_id: string): Promise<void> {
@@ -484,13 +345,7 @@ export function TeamsAPI() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to accept invitation: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to accept invitation: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<null>(response, "accept invitation");
     }
 
     async function decline_my_invitation(invitation_id: string): Promise<void> {
@@ -498,13 +353,7 @@ export function TeamsAPI() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to decline invitation: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to decline invitation: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<null>(response, "decline invitation");
     }
 
     return {
@@ -528,14 +377,7 @@ export function ApiKeysAPI() {
             method: 'GET',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to list API keys: ${response.status}`);
-        }
-        const response_data: ApiResult<ApiKey[]> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to list API keys: ${apiErrorToString(response_data.error)}`);
-        }
-        return response_data.data ?? [];
+        return await unwrap<ApiKey[]>(response, "list API keys") ?? [];
     }
 
     async function create_api_key(name: string): Promise<CreatedApiKey> {
@@ -544,17 +386,11 @@ export function ApiKeysAPI() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({name: name})
         });
-        if (!response.ok) {
-            throw new Error(`Failed to create API key: ${response.status}`);
-        }
-        const response_data: ApiResult<CreatedApiKey> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to create API key: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<CreatedApiKey>(response, "create API key");
+        if (!data) {
             throw new Error('No data received');
         }
-        return response_data.data;
+        return data;
     }
 
     async function delete_api_key(key_id: string): Promise<void> {
@@ -562,13 +398,7 @@ export function ApiKeysAPI() {
             method: 'DELETE',
             headers: {'Content-Type': 'application/json'}
         });
-        if (!response.ok) {
-            throw new Error(`Failed to delete API key: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-        if (response_data.error) {
-            throw new Error(`Failed to delete API key: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<null>(response, "delete API key");
     }
 
     return {
@@ -681,8 +511,22 @@ export interface PatchSectionMetadata{
     lang?: string|null;
 }
 
+/** Who a person belongs to: a team's shared person library, or a single project. */
+export type PersonScope = { Team: string } | { Project: string };
+
+/** A place a person is used as author/editor, see `GET /api/persons/<id>/usage`. */
+export interface PersonUsage {
+    project_id: string;
+    project_title: string;
+    section_id: string | null;
+    section_title: string | null;
+    role: string;
+}
+
 export interface Person {
     id?: string; // UUID represented as a string in JavaScript/TypeScript
+    /** Required when creating a person; ignored on updates (use promote to change it). */
+    scope?: PersonScope | null;
     first_names?: string | null;
     last_names: string;
     orcid?: Identifier | null;
@@ -889,20 +733,11 @@ export function BibliographyAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get bibliography tree: ${response.status}`);
-        }
-
-        const response_data: ApiResult<BibTreeEntry[]> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to get bibliography tree: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<BibTreeEntry[]>(response, "get bibliography tree");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
 
     async function get_bibliography_entry(project_id: string, entry_id: string): Promise<BibEntryOrFolder> {
@@ -913,20 +748,11 @@ export function BibliographyAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get bibliography entry: ${response.status}`);
-        }
-
-        const response_data: ApiResult<BibEntryOrFolder> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to get bibliography entry: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<BibEntryOrFolder>(response, "get bibliography entry");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
 
     async function post_bibliography_entry(project_id: string, entry: BibEntryOrFolder): Promise<string> {
@@ -938,20 +764,11 @@ export function BibliographyAPI() {
             body: JSON.stringify(entry)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to post bibliography entry: ${response.status}`);
-        }
-
-        const response_data: ApiResult<string> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to post bibliography entry: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<string>(response, "post bibliography entry");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
 
     async function patch_bibliography_entry(project_id: string, entry_id: string, patch: BibEntryOrFolder): Promise<void> {
@@ -963,15 +780,7 @@ export function BibliographyAPI() {
             body: JSON.stringify(patch)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to patch bibliography entry: ${response.status}`);
-        }
-
-        const response_data: ApiResult<void> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to patch bibliography entry: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<void>(response, "patch bibliography entry");
     }
 
     async function delete_bibliography_entry(project_id: string, entry_id: string): Promise<void> {
@@ -982,15 +791,7 @@ export function BibliographyAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete bibliography entry: ${response.status}`);
-        }
-
-        const response_data: ApiResult<void> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to delete bibliography entry: ${apiErrorToString(response_data.error)}`);
-        }
+        await unwrap<void>(response, "delete bibliography entry");
     }
 
     return {
@@ -1011,20 +812,11 @@ export function ProjectAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get template: ${response.status}`);
-        }
-
-        const response_data: ApiResult<SectionOrToc[]> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to get project contents: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<SectionOrToc[]>(response, "get project contents");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
 
     async function create_section(project_id: string, section: ProjectContentsSection) {
@@ -1112,26 +904,19 @@ export type APIRenderingStatus =
     | { Failed: string};
 
 export function PersonsAPI(){
-    async function send_search_person_request(search_term: string){
-        const response = await fetch(`/api/persons?query=${search_term}`, {
+    /** Searches the project's own persons plus the library of the team owning the project. */
+    async function send_search_person_request(search_term: string, project_id: string){
+        const response = await fetch(`/api/persons?query=${encodeURIComponent(search_term)}&project_id=${encodeURIComponent(project_id)}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json'
             }
         });
-        if(!response.ok){
-            throw new Error(`Failed to search for persons: ${response.status}`);
-        }
-        const response_data: ApiResult<Person[]> = await response.json();
-
-        if(response_data.error){
-            throw new Error(`Failed to search for persons: ${apiErrorToString(response_data.error)}`);
-        }
-
-        if(!response_data.data){
+        const data = await unwrap<Person[]>(response, "search for persons");
+        if(!data){
             throw new Error('No data received');
         }
-        return response_data.data;
+        return data;
     }
     async function send_get_person_request(person_id: string){
         const response = await fetch(`/api/persons/${person_id}`, {
@@ -1140,41 +925,95 @@ export function PersonsAPI(){
                 'Content-Type': 'application/json'
             }
         });
-        if(!response.ok){
-            throw new Error(`Failed to get person: ${response.status}`);
-        }
-        const response_data: ApiResult<Person> = await response.json();
-
-        if(response_data.error){
-            throw new Error(`Failed to get person: ${apiErrorToString(response_data.error)}`);
-        }
-
-        if(!response_data.data){
+        const data = await unwrap<Person>(response, "get person");
+        if(!data){
             throw new Error('No data received');
         }
-        return response_data.data;
+        return data;
     }
-    async function send_delete_person_request(person_id: string){
-        const response = await fetch(`/api/persons/${person_id}`, {
+    /** Persons private to the project (not those of the team library). */
+    async function send_list_project_persons_request(project_id: string){
+        const response = await fetch(`/api/projects/${project_id}/persons`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        return await unwrap<Person[]>(response, "list project persons") || [];
+    }
+    async function send_create_person_request(person: Person){
+        const response = await fetch(`/api/persons`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(person)
+        });
+        const data = await unwrap<Person>(response, "create person");
+        if(!data){
+            throw new Error('No data received');
+        }
+        return data;
+    }
+    async function send_update_person_request(person: Person){
+        const response = await fetch(`/api/persons/${person.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(person)
+        });
+        const data = await unwrap<Person>(response, "update person");
+        if(!data){
+            throw new Error('No data received');
+        }
+        return data;
+    }
+    /** Moves a project person into the team library (same id, so existing links stay valid). */
+    async function send_promote_person_request(person_id: string){
+        const response = await fetch(`/api/persons/${person_id}/promote`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        const data = await unwrap<Person>(response, "move person to the team library");
+        if(!data){
+            throw new Error('No data received');
+        }
+        return data;
+    }
+    async function send_person_usage_request(person_id: string){
+        const response = await fetch(`/api/persons/${person_id}/usage`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        return await unwrap<PersonUsage[]>(response, "load person usage") || [];
+    }
+    /**
+     * Deletes a person. A person that is still used in projects is only deleted with
+     * `confirmed = true` (after showing the user `send_person_usage_request`); its credits stay
+     * behind as plain names.
+     */
+    async function send_delete_person_request(person_id: string, confirmed: boolean = false){
+        const response = await fetch(`/api/persons/${person_id}${confirmed ? "?confirm=true" : ""}`, {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json'
             }
         });
-        if(!response.ok){
-            throw new Error(`Failed to delete person: ${response.status}`);
-        }
-        const response_data: ApiResult<null> = await response.json();
-
-        if(response_data.error){
-            throw new Error(`Failed to delete person: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "delete person");
     }
     return{
         send_search_person_request,
         send_get_person_request,
+        send_list_project_persons_request,
+        send_create_person_request,
+        send_update_person_request,
+        send_promote_person_request,
+        send_person_usage_request,
         send_delete_person_request
     }
 }
@@ -1189,20 +1028,11 @@ export function ExportAPI(){
             body: JSON.stringify(rendering_request)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to send rendering request: ${response.status}`);
-        }
-
-        const response_data: ApiResult<string> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to send rendering request: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<string>(response, "send rendering request");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
     async function get_request_status(rendering_request_id: string){
         const response = await fetch(`/api/export/request/${rendering_request_id}/status`, {
@@ -1212,20 +1042,11 @@ export function ExportAPI(){
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to fetch rendering request status: ${response.status}`);
-        }
-
-        const response_data: ApiResult<APIRenderingStatus> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to fetch rendering request status: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<APIRenderingStatus>(response, "fetch rendering request status");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
     return{send_new_rendering_request, get_request_status}
 }
@@ -1240,20 +1061,11 @@ export function TemplateAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get template: ${response.status}`);
-        }
-
-        const response_data: ApiResult<ProjectTemplateV2> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to get template: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<ProjectTemplateV2>(response, "get template");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
 
     async function update_template(template: ProjectTemplateV2) {
@@ -1265,17 +1077,7 @@ export function TemplateAPI() {
             body: JSON.stringify(template)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to update template: ${response.status}`);
-        }
-
-        const response_data: ApiResult<ProjectTemplateV2> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to update template: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<ProjectTemplateV2>(response, "update template");
     }
 
     async function list_global_assets(template_id: string) {
@@ -1286,17 +1088,7 @@ export function TemplateAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to list global assets: ${response.status}`);
-        }
-
-        const response_data: ApiResult<AssetList> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to list global assets: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<AssetList>(response, "list global assets");
     }
 
     async function create_folder(template_id: string, name: string) {
@@ -1310,18 +1102,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to create folder: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        console.log(response_data);
-        if (response_data.error) {
-            throw new Error(`Failed to create folder: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "create folder");
     }
 
     async function upload_file(template_id: string, file: File) {
@@ -1333,17 +1114,7 @@ export function TemplateAPI() {
             body: formData
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to upload file: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to upload file: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "upload file");
     }
 
     async function move_global_asset(template_id: string, old_path: string, new_path: string, overwrite_option: boolean) {
@@ -1359,17 +1130,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to move asset: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to move asset: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "move asset");
     }
 
     async function delete_assets(template_id: string, paths: string[]) {
@@ -1383,17 +1144,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete assets: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "delete assets");
     }
 
     async function delete_assets_for_export_formats(template_id: string, slug: string, paths: string[]) {
@@ -1407,18 +1158,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete assets: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            console.log(response_data.error);
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "delete assets");
     }
 
     async function get_asset_file(template_id: string, path: string) {
@@ -1494,17 +1234,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to update asset: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "update asset");
     }
 
     async function update_asset_text_file_for_export_format(template_id: string, path: string, slug: string, content: string) {
@@ -1518,17 +1248,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to update asset: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "update asset");
     }
 
     async function create_export_format(template_id: string, name: string): Promise<any> {
@@ -1547,17 +1267,7 @@ export function TemplateAPI() {
             body: JSON.stringify(data)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to create export format: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "create export format");
     }
 
     async function change_export_format_metadata(template_id: string, slug: string, new_name: string, new_preview_pdf_path: string | null): Promise<any> {
@@ -1575,17 +1285,7 @@ export function TemplateAPI() {
             body: JSON.stringify(data)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to create export format: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "create export format");
     }
 
     async function delete_export_format(template_id: string, slug: string): Promise<any> {
@@ -1597,17 +1297,7 @@ export function TemplateAPI() {
             },
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete export format: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "delete export format");
     }
 
     async function list_export_format_assets(template_id: string, slug: string) {
@@ -1618,17 +1308,7 @@ export function TemplateAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to list global assets: ${response.status}`);
-        }
-
-        const response_data: ApiResult<AssetList> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to list global assets: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<AssetList>(response, "list global assets");
     }
 
     async function upload_file_for_export_format(template_id: string, slug: string, file: File) {
@@ -1640,17 +1320,7 @@ export function TemplateAPI() {
             body: formData
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to upload file: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to upload file: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "upload file");
     }
 
     async function create_folder_for_export_format(template_id: string, name: string, slug: string) {
@@ -1664,18 +1334,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to create folder: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        console.log(response_data);
-        if (response_data.error) {
-            throw new Error(`Failed to create folder: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "create folder");
     }
 
     async function move_asset_for_export_format(template_id: string, old_path: string, new_path: string, slug: string, overwrite_option: boolean) {
@@ -1691,17 +1350,7 @@ export function TemplateAPI() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to move asset: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to move asset: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "move asset");
     }
 
     async function create_export_step(template_id: string, export_format_slug: string, export_step: ExportStep): Promise<any> {
@@ -1713,17 +1362,7 @@ export function TemplateAPI() {
             body: JSON.stringify(export_step)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to create export step: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "create export step");
     }
 
     async function delete_export_step(template_id: string, slug: string, step_id: string): Promise<any> {
@@ -1735,17 +1374,7 @@ export function TemplateAPI() {
             },
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete export step: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "delete export step");
     }
 
     async function update_export_step(template_id: string, export_format_slug: string, export_step: ExportStep): Promise<any> {
@@ -1757,17 +1386,7 @@ export function TemplateAPI() {
             body: JSON.stringify(export_step)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to update export step: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "update export step");
     }
 
     async function move_export_step_after(template_id: string, export_format_slug: string, export_step_id: string, move_after: string | null): Promise<any> {
@@ -1782,17 +1401,7 @@ export function TemplateAPI() {
             body: JSON.stringify(data)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to move export step: ${response.status}`);
-        }
-
-        const response_data: ApiResult<null> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<null>(response, "move export step");
     }
 
     async function list_export_steps(template_id: string, slug: string) {
@@ -1803,17 +1412,7 @@ export function TemplateAPI() {
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to list export steps: ${response.status}`);
-        }
-
-        const response_data: ApiResult<AssetList> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to list export steps: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<AssetList>(response, "list export steps");
     }
 
     return {
@@ -1871,20 +1470,11 @@ export function SectionAPI(){
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get sections: ${response.status}`);
-        }
-
-        const response_data: ApiResult<APISectionResult> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to get template: ${apiErrorToString(response_data.error)}`);
-        }
-        if (!response_data.data) {
+        const data = await unwrap<APISectionResult>(response, "get template");
+        if (!data) {
             throw new Error('No data received');
         }
-
-        return response_data.data;
+        return data;
     }
     async function patch_section(project_id: string, section_id: string, data: PatchSection){
         const response = await fetch(`/api/projects/${project_id}/sections/${section_id}`, {
@@ -1895,17 +1485,7 @@ export function SectionAPI(){
             body: JSON.stringify(data)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to update section: ${response.status}`);
-        }
-
-        const response_data: ApiResult<any> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to update section: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<any>(response, "update section");
     }
     async function delete_section(project_id: string, section_id: string){
         const response = await fetch(`/api/projects/${project_id}/sections/${section_id}`, {
@@ -1915,17 +1495,7 @@ export function SectionAPI(){
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete section: ${response.status}`);
-        }
-
-        const response_data: ApiResult<any> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to delete section: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<any>(response, "delete section");
     }
     async function move_section_after(project_id: string, section_id: string, after_id: string){
         const response = await fetch(`/api/projects/${project_id}/sections/${section_id}/move/after/${after_id}` ,{
@@ -1934,14 +1504,7 @@ export function SectionAPI(){
                 'Content-Type': 'application/json'
             }
         });
-        if(!response.ok){
-            throw new Error(`Failed to move section after: ${response.status}`);
-        }
-        const response_data: ApiResult<any> = await response.json();
-        if(response_data.error){
-            throw new Error(`Failed to move section after: ${apiErrorToString(response_data.error)}`);
-        }
-        return response_data.data;
+        return await unwrap<any>(response, "move section after");
     }
     async function move_section_child_of(project_id: string, section_id: string, parent_id: string){
         const response = await fetch(`/api/projects/${project_id}/sections/${section_id}/move/child_of/${parent_id}` ,{
@@ -1950,14 +1513,7 @@ export function SectionAPI(){
                 'Content-Type': 'application/json'
             }
         });
-        if(!response.ok){
-            throw new Error(`Failed to move section as child: ${response.status}`);
-        }
-        const response_data: ApiResult<any> = await response.json();
-        if(response_data.error){
-            throw new Error(`Failed to move section as child: ${apiErrorToString(response_data.error)}`);
-        }
-        return response_data.data;
+        return await unwrap<any>(response, "move section as child");
     }
     return{
         read_section,
@@ -2094,17 +1650,7 @@ export function ImportAPI(){
             }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to retrieve category tree: ${response.status}`);
-        }
-
-        const response_data: ApiResult<CategoryTree> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to retrieve category tree: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<CategoryTree>(response, "retrieve category tree");
     }
     /**
      * Sends a request to retrieve a preview of posts based on the provided preview request data.
@@ -2121,17 +1667,7 @@ export function ImportAPI(){
             body: JSON.stringify(preview_request)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to retrieve posts preview: ${response.status}`);
-        }
-
-        const response_data: ApiResult<PostPreviewResponse> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to retrieve posts preview: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<PostPreviewResponse>(response, "retrieve posts preview");
     }
     /**
      * Adds a WordPress import job by sending the provided import data to the server.
@@ -2149,17 +1685,7 @@ export function ImportAPI(){
             body: JSON.stringify(import_data)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to start import from wordpress: ${response.status}`);
-        }
-
-        const response_data: ApiResult<string> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to start import from wordpress: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<string>(response, "start import from wordpress");
     }
     async function poll_import_status(job_id: string){
         const response = await fetch(`/api/import/status/`+job_id, {
@@ -2169,34 +1695,14 @@ export function ImportAPI(){
             },
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to poll import status: ${response.status}`);
-        }
-
-        const response_data: ApiResult<ImportStatus> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to poll import status: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<ImportStatus>(response, "poll import status");
     }
     async function add_file_import_job(data: FormData) {
         const response = await fetch(`/api/import/upload`, {
             method: 'POST',
             body: data,
         });
-        if (!response.ok) {
-            throw new Error(`Failed to add file import job: ${response.status}`);
-        }
-
-        const response_data: ApiResult<string> = await response.json();
-
-        if (response_data.error) {
-            throw new Error(`Failed to add file import job: ${apiErrorToString(response_data.error)}`);
-        }
-
-        return response_data.data;
+        return await unwrap<string>(response, "add file import job");
     }
     return{
         load_category_tree,
@@ -2320,16 +1826,7 @@ export function EditorAPI(){
             headers: { 'Content-Type': 'application/json' }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get project: ${response.status}`);
-        }
-
-        const response_data = await response.json();
-        if (response_data && response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to get project: ${response_data["error"]}`);
-        }
-        // Backend uses an APIResponse wrapper: { data: APIProjectData }
-        return response_data.data as APIProjectData;
+        return await unwrap<APIProjectData>(response, "get project");
     }
 
     /**
@@ -2350,16 +1847,7 @@ export function EditorAPI(){
             body: JSON.stringify(patch)
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to patch project: ${response.status}`);
-        }
-
-        const response_data = await response.json();
-        if (response_data && response_data.hasOwnProperty("error")) {
-            throw new Error(`Failed to patch project: ${response_data["error"]}`);
-        }
-        // Backend wraps in { data: null }
-        return (response_data && 'data' in response_data) ? response_data.data : null;
+        return await unwrap<null>(response, "patch project") ?? null;
     }
 
     async function getCslStyles(): Promise<string[]> {
@@ -2367,27 +1855,13 @@ export function EditorAPI(){
             method: 'GET',
             headers: { 'Content-Type': 'application/json' }
         });
-        if(!response.ok){
-            throw new Error(`Failed to load CSL styles: ${response.status}`);
-        }
-        const response_data: any = await response.json();
-        if(response_data && response_data.error){
-            throw new Error(`Failed to load CSL styles: ${response_data.error}`);
-        }
-        return (response_data && 'data' in response_data) ? (response_data.data as string[]) : [];
+        return await unwrap<string[]>(response, "load CSL styles") ?? [];
     }
 
     async function searchGnd(q: string): Promise<any[]>{
         const url = `/api/gnd?q=${encodeURIComponent(q)}`;
         const response = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' }});
-        if(!response.ok){
-            throw new Error(`Failed to search GND: ${response.status}`);
-        }
-        const response_data: any = await response.json();
-        if(response_data && response_data.error){
-            throw new Error(`Failed to search GND: ${response_data.error}`);
-        }
-        const data = (response_data && 'data' in response_data) ? response_data.data : [];
+        const data = await unwrap<any>(response, "search GND") ?? [];
         // Normalize to an array of simple items when possible
         if(Array.isArray(data)) return data;
         return [];
@@ -2444,16 +1918,7 @@ export function EditorAPI(){
             headers: { 'Content-Type': 'application/json' },
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete project upload: ${response.status}`);
-        }
-
-        const response_data: any = await response.json();
-        if (response_data && response_data.error) {
-            throw new Error(`Failed to delete project upload: ${response_data.error}`);
-        }
-
-        return (response_data && 'data' in response_data) ? response_data.data : null;
+        return await unwrap<null>(response, "delete project upload") ?? null;
     }
 
 

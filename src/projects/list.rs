@@ -10,11 +10,11 @@ use sqlx::PgPool;
 /// first and projects ordered by most recent interaction.
 #[get("/")]
 pub async fn list_projects(
-    _session: Session,
+    session: Session,
     pool: &State<PgPool>,
     settings: &State<Settings>,
 ) -> Template {
-    let mut projects = folders::get_project_list_tree(pool.inner())
+    let mut projects = folders::get_project_list_tree(pool.inner(), session.user_id)
         .await
         .map(|tree| tree.entries)
         .unwrap_or_default();

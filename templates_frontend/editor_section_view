@@ -30,6 +30,7 @@
         <input type="text" style="width: 300px;" class="form-control form-control-sm" id="section_metadata_search_authors" placeholder="Add Author">
         <ul class="list-group search_result_list hide" tabindex="0" id="section_metadata_search_authors_results">
         </ul>
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="section_metadata_new_person_authors">New person</button>
     </div>
     <div class="form-group">
         <label>Editors</label>
@@ -45,6 +46,7 @@
         <input type="text" style="width: 300px;" class="form-control form-control-sm" id="section_metadata_search_editors" placeholder="Add Editor">
         <ul class="list-group search_result_list hide" tabindex="0" id="section_metadata_search_editors_results">
         </ul>
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="section_metadata_new_person_editors">New person</button>
     </div>
     <div class="form-group">
         <label>Web URL</label>

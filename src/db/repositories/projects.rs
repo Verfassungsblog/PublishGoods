@@ -16,7 +16,7 @@ use crate::storage::project_storage::current::{
     PersonUuidOrString, ProjectMetadataV5, license_to_string,
 };
 use sqlx::postgres::PgExecutor;
-use sqlx::types::{Json, JsonValue};
+use sqlx::types::Json;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -321,7 +321,7 @@ pub(crate) async fn update_metadata_in_tx(
         metadata.edition,
         metadata.publisher,
         metadata.keywords.as_ref().map(Json) as Option<Json<&Vec<Keyword>>>,
-        Json(&metadata.custom_fields) as Json<&HashMap<String, JsonValue>>,
+        Json(&metadata.custom_fields) as Json<&HashMap<String, String>>,
         metadata.identifiers.as_ref().map(Json) as Option<Json<&Vec<Identifier>>>,
     )
     .execute(&mut **tx)
@@ -388,25 +388,11 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn owner_check_constraint_requires_exactly_one(pool: PgPool) -> sqlx::Result<()> {
-        let team_id = users::ensure_default_team(&pool).await.unwrap();
-        let user = users::insert(&pool, "owner@example.com", "Owner", "hash", team_id)
-            .await
-            .unwrap();
-
-        let neither = sqlx::query!("INSERT INTO projects (title) VALUES ('No owner')")
+    async fn owner_team_is_required(pool: PgPool) -> sqlx::Result<()> {
+        let no_owner = sqlx::query!("INSERT INTO projects (title) VALUES ('No owner')")
             .execute(&pool)
             .await;
-        assert!(neither.is_err());
-
-        let both = sqlx::query!(
-            "INSERT INTO projects (title, owner_team_id, owner_user_id) VALUES ('Both owners', $1, $2)",
-            team_id,
-            user.id
-        )
-        .execute(&pool)
-        .await;
-        assert!(both.is_err());
+        assert!(no_owner.is_err());
         Ok(())
     }
 
@@ -434,7 +420,7 @@ mod tests {
         .unwrap();
         let person = crate::db::repositories::persons::insert;
         let person_id = Uuid::new_v4();
-        let person_value = vb_exchange::projects::PersonV3 {
+        let person_value = vb_exchange::projects::Person {
             id: Some(person_id),
             first_names: Some("A".to_string()),
             last_names: "Author".to_string(),
@@ -442,7 +428,7 @@ mod tests {
             gnd: None,
             ror: None,
             bios: None,
-            scope: None,
+            scope: Some(vb_exchange::projects::PersonScope::Team(team_id)),
         };
         person(&pool, &person_value).await.unwrap();
 
@@ -459,7 +445,7 @@ mod tests {
         }]);
         metadata
             .custom_fields
-            .insert("k".to_string(), serde_json::json!("v"));
+            .insert("k".to_string(), "v".to_string());
 
         update_metadata(&pool, project_id, &metadata).await.unwrap();
 
@@ -477,10 +463,7 @@ mod tests {
         );
         assert!(matches!(fetched.license, Some(License::CC_BY_4)));
         assert_eq!(fetched.keywords.unwrap()[0].title, "topic");
-        assert_eq!(
-            fetched.custom_fields.get("k"),
-            Some(&serde_json::json!("v"))
-        );
+        assert_eq!(fetched.custom_fields.get("k"), Some(&"v".to_string()));
 
         let mut settings = get_settings(&pool, project_id).await.unwrap();
         settings.toc_enabled = true;

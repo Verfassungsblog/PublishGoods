@@ -1,5 +1,20 @@
 ///<reference path="./General.ts"/>
 namespace Persons {
+    /** The team whose person library is being worked on: the selector on the list page, or the hidden field on the create page. */
+    function current_team_id(): string | null {
+        let select = document.getElementById("persons_team_select") as HTMLSelectElement | null;
+        if(select !== null){
+            return select.value;
+        }
+        let hidden = document.getElementById("person_team_id") as HTMLInputElement | null;
+        return hidden !== null ? hidden.value : null;
+    }
+
+    function persons_list_url(): string {
+        let team_id = current_team_id();
+        return team_id === null ? "/persons" : `/persons?team_id=${encodeURIComponent(team_id)}`;
+    }
+
     // @ts-ignore
     export function init_person_form(){
         // Disable bio languages which are already present
@@ -21,8 +36,10 @@ namespace Persons {
         if(create_project_button !== null){
             create_project_button.addEventListener("click", create_project_handler);
         }
-        let delete_button = document.getElementById("delete_person_btn") as HTMLButtonElement;
-        delete_button.addEventListener("click", delete_person_handler);
+        let delete_button = document.getElementById("delete_person_btn") as HTMLButtonElement | null;
+        if(delete_button !== null){
+            delete_button.addEventListener("click", delete_person_handler);
+        }
     }
 
     // @ts-ignore
@@ -32,17 +49,53 @@ namespace Persons {
             Tools.show_alert("Failed to delete person: no ID.", "danger");
             return;
         }
-        let confirmed = confirm("Are you sure you want to delete this person?");
-        if(confirmed){
-            try{
-                await send_delete_person(person_id);
-                Tools.show_alert("Person deleted.", "success");
-                window.location.href = "/persons/";
-            }catch (e) {
-                console.log(e);
-                Tools.show_alert("Failed to delete person.", "danger");
+        try{
+            // Persons that are still used in projects are only deleted after the user confirmed, seeing where.
+            let usages = await load_person_usage(person_id);
+            let confirmed: boolean;
+            if(usages.length === 0){
+                confirmed = confirm("Are you sure you want to delete this person?");
+            }else{
+                confirmed = confirm(usage_warning(usages));
             }
+            if(!confirmed){
+                return;
+            }
+            await send_delete_person(person_id, usages.length > 0);
+            Tools.show_alert("Person deleted.", "success");
+            window.location.href = persons_list_url();
+        }catch (e) {
+            console.log(e);
+            Tools.show_alert("Failed to delete person.", "danger");
         }
+    }
+
+    /** Warning text listing every project (and section) that uses the person. */
+    function usage_warning(usages: any[]): string {
+        let lines = [];
+        for(let usage of usages){
+            let where = usage["project_title"];
+            if(usage["section_title"]){
+                where += " (section: " + usage["section_title"] + ")";
+            }
+            lines.push("- " + where + " [" + usage["role"] + "]");
+        }
+        return "This person is still used in the following projects:\n\n" + lines.join("\n")
+            + "\n\nIf you delete them, they will remain in these projects as plain names. Delete anyway?";
+    }
+
+    async function load_person_usage(id: string): Promise<any[]> {
+        Tools.start_loading_spinner();
+        let response = await fetch(`/api/persons/${id}/usage`);
+        Tools.stop_loading_spinner();
+        if(!response.ok){
+            throw new Error("Failed to load person usage.");
+        }
+        let response_data = await response.json();
+        if(response_data.hasOwnProperty("error")){
+            throw new Error(`Failed to load person usage: ${response_data["error"]}`);
+        }
+        return response_data["data"];
     }
 
     // @ts-ignore
@@ -122,12 +175,20 @@ namespace Persons {
         }
         data["bios"] = bios_res;
 
+        // New persons created here go into the library of the selected team
+        let team_id = current_team_id();
+        if(team_id === null || team_id === ""){
+            Tools.show_alert("No team selected.", "danger");
+            return;
+        }
+        data["scope"] = {"Team": team_id};
+
         console.log(data);
         try{
             let person_id = await send_person_data(data);
             console.log(person_id);
             //TODO: redirect to person page
-            window.location.href = `/persons/`;
+            window.location.href = persons_list_url();
         }catch (e) {
             console.log(e);
             Tools.show_alert("Failed to create person.", "danger");
@@ -162,9 +223,9 @@ namespace Persons {
         }
     }
 
-    async function send_delete_person(id){
+    async function send_delete_person(id, confirm_in_use: boolean){
         Tools.start_loading_spinner();
-        let response = await fetch("/api/persons/"+id, {
+        let response = await fetch("/api/persons/" + id + (confirm_in_use ? "?confirm=true" : ""), {
             method: "DELETE",
             headers: {
                 "Content-Type": "application/json"
@@ -214,6 +275,12 @@ namespace Persons {
 
     // @ts-ignore
     export async function init_list(){
+        let team_select = document.getElementById("persons_team_select") as HTMLSelectElement | null;
+        if(team_select !== null){
+            team_select.addEventListener("change", function(){
+                window.location.href = `/persons?team_id=${encodeURIComponent(team_select.value)}`;
+            });
+        }
         // @ts-ignore
         for(let row of document.getElementsByClassName("persons_list_row")){
             row.addEventListener("click", persons_list_row_click_handler);

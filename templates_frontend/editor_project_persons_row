@@ -1,0 +1,10 @@
+{{!--
+  One person that only exists in this project, in the project persons list.
+  Context: a Person (id, first_names, last_names)
+--}}
+<div class="d-flex align-items-center mb-1 project_persons_row" data-person-id="{{id}}">
+    <span class="me-2">{{first_names}} {{last_names}}</span>
+    <button type="button" class="btn btn-sm btn-outline-secondary me-1 project_persons_edit_btn">Edit</button>
+    <button type="button" class="btn btn-sm btn-outline-primary me-1 project_persons_promote_btn" title="Make this person available in all projects of the team">Move to team persons</button>
+    <button type="button" class="btn btn-sm btn-outline-danger project_persons_delete_btn">Delete</button>
+</div>

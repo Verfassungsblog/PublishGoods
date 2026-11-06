@@ -29,6 +29,16 @@
                 </select>
             </div>
         </div>
+        <div class="row mt-1">
+            <label for="team_id" class="col-sm-1 col-form-label">Team</label>
+            <div class="col-sm-11">
+                <select class="form-select" required id="team_id" name="team_id">
+                    {{#each teams}}
+                        <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+                    {{/each}}
+                </select>
+            </div>
+        </div>
         <div class="row mt-4">
             <div class="col">
                 <button type="submit" class="btn btn-success col-sm-12 float-end" style="width: auto;">Create Project</button>

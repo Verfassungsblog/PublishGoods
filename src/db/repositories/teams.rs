@@ -37,6 +37,35 @@ impl<'r> FromRow<'r, PgRow> for Team {
     }
 }
 
+/// One entry of a team `<select>` in a template.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TeamOption {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub selected: bool,
+}
+
+/// Builds the options of a team `<select>` from the user's teams, marking `selected_id`.
+pub fn team_options(teams: &[Team], selected_id: Uuid) -> Vec<TeamOption> {
+    teams
+        .iter()
+        .map(|t| TeamOption {
+            id: t.id,
+            name: t.name.clone(),
+            selected: t.id == selected_id,
+        })
+        .collect()
+}
+
+/// The team preselected where the user has to pick one: the shared `Default` team if they are
+/// in it (today's behavior), otherwise their first team.
+pub fn preferred_team(teams: &[Team]) -> Option<&Team> {
+    teams
+        .iter()
+        .find(|t| t.name == crate::db::repositories::users::DEFAULT_TEAM_NAME)
+        .or_else(|| teams.first())
+}
+
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Invitation {
     pub id: uuid::Uuid,
@@ -611,10 +640,12 @@ mod tests {
         let team_a = create(&pool, "Team A", alice).await.unwrap();
         let team_b = create(&pool, "Team B", bob).await.unwrap();
 
-        // Alice is also a member of the default team (every user is attached to it on
-        // signup), so she belongs to two teams: Default and Team A.
+        // Alice is also a member of the default team and of her personal team (both are
+        // set up on signup), so she belongs to three teams: Default, "Alice" and Team A.
         let alice_teams = list_for_user(&pool, alice).await.unwrap();
-        assert_eq!(alice_teams.len(), 2);
+        assert_eq!(alice_teams.len(), 3);
+        assert!(alice_teams.iter().any(|t| t.id == default_team));
+        assert!(alice_teams.iter().any(|t| t.name == "Alice"));
         assert!(alice_teams.iter().any(|t| t.id == team_a.id));
         assert!(alice_teams.iter().all(|t| t.id != team_b.id));
         Ok(())

@@ -1,4 +1,5 @@
 use crate::db::repositories::{bibliography, persons, projects, sections, templates};
+use crate::permissions::{ResourceType, has_permission};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::project_storage::current::{Bibliography, PersonUuidOrString};
@@ -130,11 +131,19 @@ impl From<crate::storage::project_storage::current::ProjectMetadataV5> for APIPr
 pub async fn get_project(
     project_id: &str,
     extend: Option<String>,
-    _session: Session,
+    session: Session,
     settings: &State<Settings>,
     pool: &State<PgPool>,
 ) -> APIResult<APIProjectData> {
     let project_id = Uuid::parse_str(project_id)?;
+    has_permission(
+        pool,
+        ResourceType::Project,
+        project_id,
+        session.user_id,
+        None,
+    )
+    .await?;
     let pool = pool.inner();
 
     let title = projects::get_title(pool, project_id).await?;
@@ -251,7 +260,7 @@ pub async fn get_project(
 /// real HTTP through a `rocket::local::asynchronous::Client` (mirrors `session::login`'s
 /// integration tests).
 #[cfg(test)]
-mod integration_tests {
+pub(crate) mod integration_tests {
     use super::*;
     use crate::db::repositories::{bibliography, users};
     use crate::projects::api::patch::{PatchProjectData, patch_project};
@@ -267,7 +276,7 @@ mod integration_tests {
     use rocket::local::asynchronous::Client;
     use rocket_dyn_templates::Template;
 
-    fn dummy_settings() -> Settings {
+    pub(crate) fn dummy_settings() -> Settings {
         Settings {
             app_title: "test".to_string(),
             instance_url: "".to_string(),

@@ -1,3 +1,4 @@
 <li data-person-id="{{id}}">
     {{first_names}} {{last_names}}
+    {{#if scope.Team}}<span class="badge bg-secondary ms-1">Team</span>{{/if}}{{#if scope.Project}}<span class="badge bg-light text-dark ms-1">This project</span>{{/if}}
 </li>

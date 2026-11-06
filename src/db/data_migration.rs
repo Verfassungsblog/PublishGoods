@@ -5,6 +5,7 @@
 //! Runs automatically at startup (see `main.rs`) and is idempotent: if the `users`
 //! table is already populated, the migration is skipped.
 
+use crate::db::repositories::{DbError, users};
 use crate::settings::Settings;
 use crate::storage::data_storage::DataStorage;
 use crate::storage::data_storage::current::{ProjectListEntry, ProjectListFolder};
@@ -47,7 +48,7 @@ pub async fn migrate_from_bincode(
         .await?;
 
     migrate_users(&mut tx, data_storage, default_team_id).await?;
-    let person_ids = migrate_persons(&mut tx, data_storage).await?;
+    let person_ids = migrate_persons(&mut tx, data_storage, default_team_id).await?;
     let template_ids = migrate_templates(&mut tx, data_storage).await?;
 
     let project_list = data_storage.data.projects.read().unwrap().clone();
@@ -118,16 +119,26 @@ async fn migrate_users(
         .bind("owner")
         .execute(&mut **tx)
         .await?;
+
+        // ...and, like every account, gets a personal team.
+        users::create_personal_team(&mut **tx, user.id, &user.name)
+            .await
+            .map_err(|e| match e {
+                DbError::Sqlx(e) => e,
+                other => sqlx::Error::Protocol(other.to_string()),
+            })?;
     }
 
     Ok(())
 }
 
-/// Migrates persons + biographies. Returns the set of person ids now present in `persons`,
-/// used to validate person references from projects/sections before inserting them.
+/// Migrates persons + biographies into `team_id`'s person library. Returns the set of person
+/// ids now present in `persons`, used to validate person references from projects/sections
+/// before inserting them.
 async fn migrate_persons(
     tx: &mut Transaction<'_, Postgres>,
     data_storage: &DataStorage,
+    team_id: Uuid,
 ) -> Result<HashSet<Uuid>, sqlx::Error> {
     let persons: Vec<PersonV2> = data_storage
         .data
@@ -143,7 +154,7 @@ async fn migrate_persons(
         person_ids.insert(person_id);
 
         sqlx::query(
-            "INSERT INTO persons (id, first_names, last_names, orcid, gnd, ror) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO persons (id, first_names, last_names, orcid, gnd, ror, owner_team_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(person_id)
         .bind(&person.first_names)
@@ -151,6 +162,7 @@ async fn migrate_persons(
         .bind(identifier_value(&person.orcid))
         .bind(identifier_value(&person.gnd))
         .bind(identifier_value(&person.ror))
+        .bind(team_id)
         .execute(&mut **tx)
         .await?;
 
