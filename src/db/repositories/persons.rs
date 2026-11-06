@@ -1,9 +1,9 @@
 //! `persons` / `biographies`.
 //!
-//! [`vb_exchange::projects::PersonV2`]/[`Biography`] are defined in an external crate
+//! [`vb_exchange::projects::PersonV3`]/[`Biography`] are defined in an external crate
 //! (`vb-exchange`), which implements `sqlx::FromRow` for both directly (gated behind its
 //! `sqlx` feature) — so reads here use `sqlx::query_as` straight into the domain structs,
-//! no named intermediate row type. `PersonV2::bios` isn't a plain column (biographies live in
+//! no named intermediate row type. `PersonV3::bios` isn't a plain column (biographies live in
 //! their own table), so `FromRow` always leaves it `None`; callers that need it fetch
 //! separately via [`fetch_bios`] and fill the field in afterward. Because `query_as` (not the
 //! compile-time-checked `query_as!` macro) is what consumes a `FromRow` impl, these read
@@ -13,7 +13,7 @@ use super::DbError;
 use sqlx::PgPool;
 use sqlx::postgres::PgExecutor;
 use uuid::Uuid;
-use vb_exchange::projects::{Biography, PersonV2};
+use vb_exchange::projects::{Biography, PersonV3};
 
 /// Loads all biographies for a person from the separate `biographies` table.
 async fn fetch_bios<'e>(
@@ -57,8 +57,8 @@ async fn replace_bios<'e>(
 }
 
 /// Fetches a person by id, including their biographies.
-pub async fn get(pool: &PgPool, id: Uuid) -> Result<PersonV2, DbError> {
-    let mut person: PersonV2 = sqlx::query_as(
+pub async fn get(pool: &PgPool, id: Uuid) -> Result<PersonV3, DbError> {
+    let mut person: PersonV3 = sqlx::query_as(
         "SELECT id, first_names, last_names, orcid, gnd, ror FROM persons WHERE id = $1",
     )
     .bind(id)
@@ -80,7 +80,7 @@ pub async fn exists<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<bool, DbE
 
 /// Inserts `person` (which must already have `id` assigned by the caller, matching today's
 /// API-level id-assignment convention) plus its biographies, in one transaction.
-pub async fn insert(pool: &PgPool, person: &PersonV2) -> Result<(), DbError> {
+pub async fn insert(pool: &PgPool, person: &PersonV3) -> Result<(), DbError> {
     let id = person
         .id
         .ok_or(DbError::Conflict("person id must be assigned".to_string()))?;
@@ -106,7 +106,7 @@ pub async fn insert(pool: &PgPool, person: &PersonV2) -> Result<(), DbError> {
 
 /// Updates `person`'s core fields and replaces its biographies, in one transaction.
 /// Fails with [`DbError::NotFound`] if no row with that id exists.
-pub async fn update(pool: &PgPool, person: &PersonV2) -> Result<(), DbError> {
+pub async fn update(pool: &PgPool, person: &PersonV3) -> Result<(), DbError> {
     let id = person
         .id
         .ok_or(DbError::Conflict("person id must be assigned".to_string()))?;
@@ -146,9 +146,9 @@ pub async fn delete<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<(), DbErr
 
 /// Case-insensitive substring search across name/orcid/gnd/ror. Biographies are not
 /// fetched for search results (not needed by the person-picker UI these results feed).
-pub async fn search(pool: &PgPool, query: &str, limit: i64) -> Result<Vec<PersonV2>, DbError> {
+pub async fn search(pool: &PgPool, query: &str, limit: i64) -> Result<Vec<PersonV3>, DbError> {
     let pattern = format!("%{}%", query);
-    let people: Vec<PersonV2> = sqlx::query_as(
+    let people: Vec<PersonV3> = sqlx::query_as(
         "SELECT id, first_names, last_names, orcid, gnd, ror FROM persons
          WHERE first_names ILIKE $1 OR last_names ILIKE $1
             OR orcid ILIKE $1 OR gnd ILIKE $1 OR ror ILIKE $1
@@ -162,7 +162,7 @@ pub async fn search(pool: &PgPool, query: &str, limit: i64) -> Result<Vec<Person
 }
 
 /// Returns every person in the database, ordered by last name.
-pub async fn list_all(pool: &PgPool) -> Result<Vec<PersonV2>, DbError> {
+pub async fn list_all(pool: &PgPool) -> Result<Vec<PersonV3>, DbError> {
     search(pool, "", i64::MAX).await
 }
 
@@ -194,14 +194,14 @@ pub async fn list_paginated(
     order_by: PersonOrderBy,
     offset: i64,
     limit: i64,
-) -> Result<Vec<PersonV2>, DbError> {
+) -> Result<Vec<PersonV3>, DbError> {
     let query = format!(
         "SELECT id, first_names, last_names, orcid, gnd, ror FROM persons ORDER BY {} LIMIT $1 OFFSET $2",
         order_by.as_sql()
     );
     // Safe: `order_by.as_sql()` only ever yields one of the fixed strings in `PersonOrderBy::as_sql`,
     // never caller-supplied data.
-    let people: Vec<PersonV2> = sqlx::query_as(sqlx::AssertSqlSafe(query))
+    let people: Vec<PersonV3> = sqlx::query_as(sqlx::AssertSqlSafe(query))
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -222,8 +222,8 @@ mod tests {
     use super::*;
     use vb_exchange::projects::{Identifier, IdentifierType};
 
-    fn sample_person(last_names: &str) -> PersonV2 {
-        PersonV2 {
+    fn sample_person(last_names: &str) -> PersonV3 {
+        PersonV3 {
             id: Some(Uuid::new_v4()),
             first_names: Some("First".to_string()),
             last_names: last_names.to_string(),

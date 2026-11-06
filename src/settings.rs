@@ -1,7 +1,7 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use std::env;
-use url::{Origin, ParseError, Url};
+use url::Url;
 
 /// Stores settings read from config files.
 #[derive(Debug, Deserialize, Clone)]

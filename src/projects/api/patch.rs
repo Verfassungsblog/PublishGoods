@@ -11,6 +11,7 @@ use rocket::State;
 use rocket::serde::json::Json;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use sqlx::types::JsonValue;
 use std::collections::HashMap;
 use vb_exchange::projects::{Identifier, Keyword, License, ProjectSettingsV5};
 
@@ -280,7 +281,8 @@ pub struct PatchProjectMetadata {
     pub publisher: Option<Option<String>>,
     /// Custom Fields
     #[serde(default)]
-    pub custom_fields: Option<HashMap<String, String>>,
+    #[bincode(with_serde)]
+    pub custom_fields: Option<HashMap<String, JsonValue>>,
 }
 
 impl Patch<PatchProjectSettings, ProjectSettingsV5> for ProjectSettingsV5 {

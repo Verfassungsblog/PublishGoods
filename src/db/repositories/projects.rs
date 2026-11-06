@@ -16,7 +16,7 @@ use crate::storage::project_storage::current::{
     PersonUuidOrString, ProjectMetadataV5, license_to_string,
 };
 use sqlx::postgres::PgExecutor;
-use sqlx::types::Json;
+use sqlx::types::{Json, JsonValue};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -321,7 +321,7 @@ pub(crate) async fn update_metadata_in_tx(
         metadata.edition,
         metadata.publisher,
         metadata.keywords.as_ref().map(Json) as Option<Json<&Vec<Keyword>>>,
-        Json(&metadata.custom_fields) as Json<&HashMap<String, String>>,
+        Json(&metadata.custom_fields) as Json<&HashMap<String, JsonValue>>,
         metadata.identifiers.as_ref().map(Json) as Option<Json<&Vec<Identifier>>>,
     )
     .execute(&mut **tx)

@@ -10,7 +10,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2026.8", features = ["sqlx"]}
+vb-exchange = {git = "https://github.com/Verfassungsblog/PublishGoods-Exchange-Lib", tag="2026.11", features = ["sqlx"]}
 #vb-exchange = {path = "/home/anghenfil/RustroverProjects/Verfassungsbooks-Exchange-Lib/", features = ["sqlx"]}
 rocket = { version = "=0.5.1", features = ["secrets", "json", "tls"] }
 dotenvy = "0.15"

@@ -141,7 +141,7 @@ pub async fn get_section(
         for person_or_string in metadata.authors.iter() {
             match person_or_string {
                 PersonUuidOrString::PersonUuid(id) => match persons::get(pool, *id).await {
-                    Ok(person) => authors_detailed.push(PersonOrString::Person(person)),
+                    Ok(person) => authors_detailed.push(PersonOrString::Person(person.into())),
                     Err(_) => {
                         error!(
                             "Couldn't extend author details, author_id {} not found.",
@@ -171,7 +171,7 @@ pub async fn get_section(
         for person_or_string in metadata.editors.iter() {
             match person_or_string {
                 PersonUuidOrString::PersonUuid(id) => match persons::get(pool, *id).await {
-                    Ok(person) => editors_detailed.push(PersonOrString::Person(person)),
+                    Ok(person) => editors_detailed.push(PersonOrString::Person(person.into())),
                     Err(_) => {
                         error!(
                             "Couldn't extend author details, author_id {} not found.",

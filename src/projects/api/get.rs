@@ -11,6 +11,7 @@ use rocket::State;
 use rocket::form::validate::Contains;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use sqlx::types::JsonValue;
 use std::collections::HashMap;
 use uuid::Uuid;
 use vb_exchange::projects::{Identifier, Keyword, License, PersonOrString, ProjectSettingsV5};
@@ -86,7 +87,7 @@ pub struct APIProjectMetadata {
     /// Publisher of the book
     pub publisher: Option<String>,
     /// additional fields
-    pub custom_fields: HashMap<String, String>,
+    pub custom_fields: HashMap<String, JsonValue>,
 }
 
 /// Converts the DB-native project metadata into the API-facing shape, leaving the
@@ -176,7 +177,9 @@ pub async fn get_project(
                         }
                         PersonUuidOrString::PersonUuid(uuid) => {
                             match persons::get(pool, *uuid).await {
-                                Ok(person) => authors_extended.push(PersonOrString::Person(person)),
+                                Ok(person) => {
+                                    authors_extended.push(PersonOrString::Person(person.into()))
+                                }
                                 Err(e) => {
                                     warn!(
                                         "Person with uuid used in project metadata, but no longer exists. Skipping. {:?}",
@@ -201,7 +204,9 @@ pub async fn get_project(
                         }
                         PersonUuidOrString::PersonUuid(uuid) => {
                             match persons::get(pool, *uuid).await {
-                                Ok(person) => editors_expanded.push(PersonOrString::Person(person)),
+                                Ok(person) => {
+                                    editors_expanded.push(PersonOrString::Person(person.into()))
+                                }
                                 Err(e) => {
                                     warn!(
                                         "Person with uuid used in project metadata, but no longer exists. Skipping. {:?}",

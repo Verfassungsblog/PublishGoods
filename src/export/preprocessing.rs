@@ -91,7 +91,7 @@ pub async fn prepare_project(
                         continue;
                     }
                 };
-                authors.push(PersonOrString::Person(person));
+                authors.push(PersonOrString::Person(person.into()));
             }
             PersonUuidOrString::NameString(name_str) => {
                 authors.push(PersonOrString::NameString(name_str));
@@ -113,7 +113,7 @@ pub async fn prepare_project(
                         continue;
                     }
                 };
-                editors.push(PersonOrString::Person(person));
+                editors.push(PersonOrString::Person(person.into()));
             }
             PersonUuidOrString::NameString(name_str) => {
                 editors.push(PersonOrString::NameString(name_str));
@@ -346,7 +346,7 @@ pub async fn render_section(
     for author in section.metadata.authors {
         let person = match author {
             PersonUuidOrString::PersonUuid(id) => match persons::get(&pool, id).await {
-                Ok(person) => PersonOrString::Person(person),
+                Ok(person) => PersonOrString::Person(person.into()),
                 Err(e) => {
                     eprintln!(
                         "Author with id {} not found while rendering section for export! {:?}",
@@ -365,7 +365,7 @@ pub async fn render_section(
     for editor in section.metadata.editors {
         let person = match editor {
             PersonUuidOrString::PersonUuid(id) => match persons::get(&pool, id).await {
-                Ok(person) => PersonOrString::Person(person),
+                Ok(person) => PersonOrString::Person(person.into()),
                 Err(e) => {
                     eprintln!(
                         "Editor with id {} not found while rendering section for export! {:?}",

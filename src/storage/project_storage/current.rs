@@ -9,6 +9,7 @@ use dashmap::{DashMap, Entry};
 use hayagriva::types::{MaybeTyped, SerialNumber};
 use language::Language;
 use rocket::serde::{Deserialize, Serialize};
+use sqlx::types::JsonValue;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -371,7 +372,8 @@ pub struct ProjectMetadataV5 {
     /// Publisher of the book
     pub publisher: Option<String>,
     /// additional fields
-    pub custom_fields: HashMap<String, String>,
+    #[bincode(with_serde)]
+    pub custom_fields: HashMap<String, JsonValue>,
 }
 
 /// Serializes a [License] to its stored DB string form (for the `license` column).
@@ -410,7 +412,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ProjectMetadataV5 {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> sqlx::Result<Self> {
         use sqlx::Row;
         let keywords: Option<sqlx::types::Json<Vec<Keyword>>> = row.try_get("keywords")?;
-        let custom_fields: Option<sqlx::types::Json<HashMap<String, String>>> =
+        let custom_fields: Option<sqlx::types::Json<HashMap<String, JsonValue>>> =
             row.try_get("custom_fields")?;
         let identifiers: Option<sqlx::types::Json<Vec<Identifier>>> = row.try_get("identifiers")?;
         let languages: Option<Vec<String>> = row.try_get("languages")?;
