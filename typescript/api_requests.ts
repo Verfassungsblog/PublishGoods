@@ -537,12 +537,8 @@ export interface Person {
 
 export interface Biography {
     content: string;
-    lang?: Language | null;
-}
-
-enum Language {
-    DE,
-    EN
+    /** BCP-47 language tag, e.g. `en-US`. */
+    lang?: string | null;
 }
 
 type APISectionMetadataResult = {

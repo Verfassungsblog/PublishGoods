@@ -4,6 +4,7 @@
   Context:
   - is_new: true when creating (shows where the person is added to)
   - first_names, last_names, orcid, gnd, ror: current values (strings), empty when creating
+  - bios: current biographies as {language_code, content}, empty when creating
 --}}
 <h1>{{#if is_new}}New Person{{else}}Edit Person{{/if}}</h1>
 <div class="form-group mt-3">
@@ -25,6 +26,26 @@
 <div class="form-group mt-3">
     <label for="overlay_person_ror">ROR (optional)</label>
     <input type="text" id="overlay_person_ror" value="{{ror}}" autocomplete="off">
+</div>
+<div class="form-group mt-3">
+    <label>Biographies</label>
+    <div id="overlay_person_biographies">
+        {{#each bios}}
+            <div class="row">
+                <label class="col-sm-1 col-form-label">{{language_code}}</label>
+                <div class="col-sm-11">
+                    <textarea class="form-control person_biography persons_edit_field" data-language="{{language_code}}" id="person_biography_{{language_code}}" rows="3">{{content}}</textarea>
+                </div>
+            </div>
+        {{/each}}
+    </div>
+    <div class="d-flex mt-2">
+        <select class="form-select" id="overlay_person_add_bio_lang" style="width: 200px;" aria-label="Language">
+            <option value="none" disabled selected>Select Language</option>
+            {{> languages_options}}
+        </select>
+        <button class="btn btn-secondary ms-1" type="button" id="overlay_person_add_bio_btn">Add</button>
+    </div>
 </div>
 {{#if is_new}}
     <div class="form-group mt-3">

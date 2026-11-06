@@ -16,6 +16,10 @@ function to_identifier(type: "ORCID" | "GND" | "ROR", value: string): any {
     return value ? {name: type, value: value, identifier_type: type} : null;
 }
 
+function bio_textareas(): HTMLTextAreaElement[] {
+    return Array.from(document.querySelectorAll<HTMLTextAreaElement>("#overlay_person_biographies .person_biography"));
+}
+
 function display_name(person: Person): string {
     return [person.first_names, person.last_names].filter(Boolean).join(" ");
 }
@@ -54,13 +58,29 @@ export async function open_person_overlay(options: PersonOverlayOptions){
         last_names: existing?.last_names ?? "",
         orcid: identifier_value(existing?.orcid),
         gnd: identifier_value(existing?.gnd),
-        ror: identifier_value(existing?.ror)
+        ror: identifier_value(existing?.ror),
+        bios: (existing?.bios ?? []).map(bio => ({language_code: bio.lang, content: bio.content}))
     }));
 
     const save_btn = document.getElementById("overlay_person_save") as HTMLButtonElement | null;
     if(!save_btn){
         return;
     }
+
+    document.getElementById("overlay_person_add_bio_btn")?.addEventListener("click", function(){
+        const select = document.getElementById("overlay_person_add_bio_lang") as HTMLSelectElement;
+        const language_code = select.value;
+        if(!language_code || language_code === "none"){
+            return;
+        }
+        if(bio_textareas().some(textarea => textarea.dataset.language === language_code)){
+            show_alert("There is already a biography for this language.", "warning");
+            return;
+        }
+        // @ts-ignore
+        document.getElementById("overlay_person_biographies")?.insertAdjacentHTML("beforeend", Handlebars.templates.persons_bio_edit({language_code: language_code}));
+        select.selectedIndex = 0;
+    });
 
     save_btn.addEventListener("click", async function(){
         const last_names = input_value("overlay_person_last_names");
@@ -74,7 +94,11 @@ export async function open_person_overlay(options: PersonOverlayOptions){
             last_names: last_names,
             orcid: to_identifier("ORCID", input_value("overlay_person_orcid")),
             gnd: to_identifier("GND", input_value("overlay_person_gnd")),
-            ror: to_identifier("ROR", input_value("overlay_person_ror"))
+            ror: to_identifier("ROR", input_value("overlay_person_ror")),
+            // Empty textareas are dropped, so clearing a biography removes it.
+            bios: bio_textareas()
+                .filter(textarea => textarea.value.trim() !== "")
+                .map(textarea => ({lang: textarea.dataset.language, content: textarea.value}))
         };
 
         save_btn.disabled = true;
@@ -86,7 +110,6 @@ export async function open_person_overlay(options: PersonOverlayOptions){
                 const to_team = (document.getElementById("overlay_person_scope_team") as HTMLInputElement | null)?.checked;
                 saved = await personsApi.send_create_person_request({
                     ...fields,
-                    bios: [],
                     scope: {Project: options.project_id}
                 } as Person);
                 if(to_team && saved.id){
