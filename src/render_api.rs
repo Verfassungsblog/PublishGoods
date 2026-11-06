@@ -1170,6 +1170,9 @@ mod inner {
         }
 
         async fn test_client(pool: PgPool, settings: Settings) -> Client {
+            // Both `ring` and `aws-lc-rs` are compiled in, so rustls can't pick a default itself.
+            // Tests run in one process, so a provider installed by another test is fine.
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
             let csl_data = Arc::new(CslData::new(&settings));
             let client_config =
                 tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(&[

@@ -16,7 +16,7 @@ use crate::storage::project_storage::current::{
     PersonUuidOrString, ProjectMetadataV5, license_to_string,
 };
 use sqlx::postgres::PgExecutor;
-use sqlx::types::Json;
+use sqlx::types::{Json, JsonValue};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -321,7 +321,7 @@ pub(crate) async fn update_metadata_in_tx(
         metadata.edition,
         metadata.publisher,
         metadata.keywords.as_ref().map(Json) as Option<Json<&Vec<Keyword>>>,
-        Json(&metadata.custom_fields) as Json<&HashMap<String, String>>,
+        Json(&metadata.custom_fields) as Json<&HashMap<String, JsonValue>>,
         metadata.identifiers.as_ref().map(Json) as Option<Json<&Vec<Identifier>>>,
     )
     .execute(&mut **tx)
@@ -445,7 +445,7 @@ mod tests {
         }]);
         metadata
             .custom_fields
-            .insert("k".to_string(), "v".to_string());
+            .insert("k".to_string(), JsonValue::String("v".to_string()));
 
         update_metadata(&pool, project_id, &metadata).await.unwrap();
 
@@ -463,7 +463,10 @@ mod tests {
         );
         assert!(matches!(fetched.license, Some(License::CC_BY_4)));
         assert_eq!(fetched.keywords.unwrap()[0].title, "topic");
-        assert_eq!(fetched.custom_fields.get("k"), Some(&"v".to_string()));
+        assert_eq!(
+            fetched.custom_fields.get("k"),
+            Some(&JsonValue::String("v".to_string()))
+        );
 
         let mut settings = get_settings(&pool, project_id).await.unwrap();
         settings.toc_enabled = true;
