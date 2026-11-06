@@ -4,7 +4,6 @@ module.exports = {
     mode: 'production',
     entry: {
         editor: { import: './Editor/Main.ts', dependOn: 'vendor' },
-        settings: { import: './Settings.ts', dependOn: 'vendor' },
         import: { import: './Import.ts', dependOn: 'vendor' },
         user_tools: { import: './UserTools.ts', dependOn: 'vendor' },
         template_editor: { import: './TemplateEditor.ts', dependOn: 'vendor' },

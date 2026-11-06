@@ -26,6 +26,35 @@
                     Too many failed login attempts, please wait 15 minutes or reset your password!
                 </div>
             {{/if}}
+            {{#if error_account-exists}}
+                <div class="alert alert-info" role="alert">
+                    An account with the invited email address already exists. Please log in and accept the invitation in your profile settings.
+                </div>
+            {{/if}}
+            {{#if error_email-not-verified}}
+                <div class="alert alert-warning" role="alert">
+                    Please confirm your email address first using the link we sent you.
+                    <form method="post" action="/resend-verification" class="mt-2">
+                        <input type="hidden" name="email" id="resend_email">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('resend_email').value = document.getElementById('email').value;">Send the link again</button>
+                    </form>
+                </div>
+            {{/if}}
+            {{#if error_verification-sent}}
+                <div class="alert alert-success" role="alert">
+                    If this account still needs verification, we sent a link to confirm the email address.
+                </div>
+            {{/if}}
+            {{#if error_email-verified}}
+                <div class="alert alert-success" role="alert">
+                    Your email address was confirmed. You can now log in.
+                </div>
+            {{/if}}
+            {{#if error_verification-invalid}}
+                <div class="alert alert-danger" role="alert">
+                    This confirmation link is invalid or expired. Try to log in to request a new one.
+                </div>
+            {{/if}}
             {{#if error_pw-reset}}
                 <div class="alert alert-success" role="alert">
                     If an account with the specified email address exists, you will receive a password reset email soon.
@@ -47,6 +76,7 @@
                 </div>
                 <button type="submit" class="btn btn-primary">Login</button>
                 <a class="float-end" href="/pw-reset">Reset Password</a>
+                {{#if public_registration}}<a href="/register">Create an account</a>{{/if}}
             </form>
 
         </div>

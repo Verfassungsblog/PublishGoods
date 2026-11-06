@@ -292,6 +292,7 @@ mod integration_tests {
             revocation_list_path: "".to_string(),
             version: "test".to_string(),
             max_login_attempts: 5,
+            public_registration: false,
             lockout_window_minutes: 15,
             smtp_connection_url: "".to_string(),
             mail_from_address: "".to_string(),
@@ -300,6 +301,11 @@ mod integration_tests {
             smtp_pool_idle_timeout: 0,
             mail_max_retries: 0,
             mail_base_retry_delay_seconds: 0,
+            email_verification_validity_hours: 24,
+            email_verification_resend_cooldown_minutes: 1,
+            min_password_length: 8,
+            zotero_translation_timeout: 2,
+            import_media_download_timeout: 30,
         }
     }
 

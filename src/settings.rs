@@ -1,6 +1,7 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use std::env;
+use url::{Origin, ParseError, Url};
 
 /// Stores settings read from config files.
 #[derive(Debug, Deserialize, Clone)]
@@ -51,6 +52,9 @@ pub struct Settings {
     /// Rolling window (in minutes) used both to count recent failed login attempts and to
     /// lock the account.
     pub lockout_window_minutes: i64,
+    /// Whether anyone may create an account via `/register`. Registering through a team
+    /// invitation is always possible, regardless of this setting.
+    pub public_registration: bool,
     /// Connection string for smtp server
     pub smtp_connection_url: String,
     /// From Adress used for outgoing mails
@@ -65,6 +69,16 @@ pub struct Settings {
     pub mail_max_retries: u8,
     /// Base delay in seconds before the first retry attempt, multiplied by the retry attempt number for each subsequent retry
     pub mail_base_retry_delay_seconds: u64,
+    /// Hours an email verification link stays valid.
+    pub email_verification_validity_hours: i64,
+    /// Minutes that must pass before another verification mail is sent to the same account.
+    pub email_verification_resend_cooldown_minutes: i64,
+    /// Minimum number of characters for a new password.
+    pub min_password_length: usize,
+    /// Seconds a request to the zotero translation server may take before it is aborted.
+    pub zotero_translation_timeout: u64,
+    /// Seconds downloading a single media file during import may take before it is aborted.
+    pub import_media_download_timeout: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -88,6 +102,20 @@ impl Settings {
             .set_override("version", version)?
             .build()?;
 
-        s.try_deserialize()
+        let mut settings: Settings = s.try_deserialize()?;
+
+        // Check if instance url is valid and remove trailing slashes, so that paths can be
+        // appended with a plain `format!("{}/path", ...)`.
+        settings.instance_url = settings.instance_url.trim_end_matches('/').to_string();
+        if let Err(e) = settings.instance_url.parse::<Url>() {
+            error!("Invalid instance url: {}", e);
+            panic!("Invalid instance url: {}", e);
+        }
+
+        Ok(settings)
+    }
+
+    pub fn get_instance_url(&self) -> Url {
+        self.instance_url.parse().expect("Instance URL is invalid!")
     }
 }

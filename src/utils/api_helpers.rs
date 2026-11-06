@@ -164,8 +164,6 @@ pub struct APIResponse<T: Serialize> {
 impl<'r, T: Serialize + std::fmt::Debug> Responder<'r, 'static> for APIResponse<T> {
     /// Implements Rocket responder for `NewAPIResponse`, returning JSON data and HTTP 200.
     fn respond_to(self, _request: &'r Request<'_>) -> rocket::response::Result<'static> {
-        debug!("Responding with data {:?}", self.data);
-
         let mut response = Response::new();
         let serialized_body = serde_json::to_string(&self).unwrap();
         response.set_sized_body(serialized_body.len(), Cursor::new(serialized_body));
@@ -187,5 +185,12 @@ impl From<reqwest::Error> for ApiError {
     fn from(value: reqwest::Error) -> Self {
         error!("Reqwest Error: {:?}", value);
         ApiErrorType::InternalServerError.into()
+    }
+}
+
+impl From<lettre::address::AddressError> for ApiError {
+    fn from(value: lettre::address::AddressError) -> Self {
+        debug!("Invalid E-Mail Address: {}", value);
+        ApiErrorType::UnparsableParameter("email".to_string()).into()
     }
 }

@@ -48,7 +48,6 @@ pub mod render_api;
 pub mod session;
 mod settings;
 #[doc(hidden)]
-pub mod settings_page;
 #[doc(hidden)]
 pub mod storage;
 #[doc(hidden)]
@@ -270,6 +269,10 @@ async fn rocket() -> _ {
                 session::login::pw_reset_confirmation_page,
                 session::login::pw_reset_confirmation_form,
                 session::login::process_login_form,
+                session::verify_email::verify_email,
+                session::verify_email::resend_verification,
+                session::register::register_page,
+                session::register::process_register_form,
                 projects::create::show_create_project,
                 projects::api::delete_project_upload,
                 projects::create::process_create_project,
@@ -308,12 +311,9 @@ async fn rocket() -> _ {
                 projects::api::get_project_upload,
                 import::api::import_from_wordpress,
                 export::download::download_rendering,
-                settings_page::settings_page,
-                settings_page::api::get_current_user,
-                settings_page::api::add_user,
-                settings_page::api::update_user,
-                settings_page::api::delete_user,
-                settings_page::api::delete_own_account,
+                profile_settings::account::get_current_user,
+                profile_settings::account::update_user,
+                profile_settings::account::delete_own_account,
                 import::api::import_from_upload,
                 projects::websocket::websocket,
                 profile_settings::profile_settings,
@@ -324,6 +324,8 @@ async fn rocket() -> _ {
                 profile_settings::teams::leave_team,
                 profile_settings::teams::delete_team,
                 profile_settings::teams::create_invitation,
+                profile_settings::teams::register_with_invitation_page,
+                profile_settings::teams::register_with_invitation,
                 profile_settings::teams::list_invitations,
                 profile_settings::teams::decline_invitation,
                 profile_settings::teams::accept_invitation,
