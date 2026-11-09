@@ -85,6 +85,84 @@ pub struct WordpressUser {
     pub description: String,
     pub link: String,
     pub slug: String,
+    /// Custom fields of the user (Advanced Custom Fields). Verfassungsblog keeps the translated
+    /// biographies here, while `description` often only holds the (German) default one.
+    #[serde(default, deserialize_with = "deserialize_acf")]
+    pub acf: Option<WordpressUserAcf>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct WordpressUserAcf {
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
+    pub author_eng_desc: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
+    pub author_fr_desc: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
+    pub orcid: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
+    pub gndid: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
+    pub rorid: Option<String>,
+}
+
+/// Persistent identifiers of a WordPress user (plain ids without URL prefix).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct WpAuthorIds {
+    pub orcid: Option<String>,
+    pub gnd: Option<String>,
+    pub ror: Option<String>,
+}
+
+/// A biography (still as HTML) fetched from WordPress. `lang` is only set if WordPress tells us
+/// the language (e.g. via the name of the custom field), otherwise it has to be detected.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WpBio {
+    pub lang: Option<language::Language>,
+    pub html: String,
+}
+
+impl WordpressUser {
+    /// ORCID, GND and ROR from the custom fields; empty values are dropped.
+    pub fn identifiers(&self) -> WpAuthorIds {
+        // Editors sometimes paste the full URL (https://orcid.org/0000-...); keep only the id.
+        let clean = |v: &Option<String>| {
+            v.as_deref()
+                .map(|v| v.trim().trim_end_matches('/'))
+                .and_then(|v| v.rsplit('/').next())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        match &self.acf {
+            Some(acf) => WpAuthorIds {
+                orcid: clean(&acf.orcid),
+                gnd: clean(&acf.gndid),
+                ror: clean(&acf.rorid),
+            },
+            None => WpAuthorIds::default(),
+        }
+    }
+
+    /// All non-empty biographies of this user: the default `description` and the translated ones
+    /// from the custom fields.
+    pub fn biographies(&self) -> Vec<WpBio> {
+        let mut bios = vec![WpBio {
+            lang: None,
+            html: self.description.clone(),
+        }];
+        if let Some(acf) = &self.acf {
+            bios.push(WpBio {
+                lang: Some(language::Language::EnUs),
+                html: acf.author_eng_desc.clone().unwrap_or_default(),
+            });
+            bios.push(WpBio {
+                lang: Some(language::Language::FrFr),
+                html: acf.author_fr_desc.clone().unwrap_or_default(),
+            });
+        }
+        bios.retain(|b| !b.html.trim().is_empty());
+        bios
+    }
 }
 
 #[derive(Debug, Default)]
@@ -743,15 +821,29 @@ where
     })
 }
 
-/// WordPress returns an empty list (`[]`) instead of an object if a post has no ACF data.
-/// Treat anything that isn't an object as "no ACF data".
-fn deserialize_acf<'de, D>(deserializer: D) -> Result<Option<PostAcf>, D::Error>
+/// Ids are usually numbers; anything that isn't a non-negative number (or numeric string) is
+/// treated as "no id" instead of failing the whole post.
+fn deserialize_lenient_id<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Number(n) => n.as_u64().and_then(|n| usize::try_from(n).ok()),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    })
+}
+
+/// WordPress returns an empty list (`[]`) instead of an object if a post or user has no ACF data.
+/// Treat anything that isn't an object as "no ACF data".
+fn deserialize_acf<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
     let value = serde_json::Value::deserialize(deserializer)?;
     if value.is_object() {
-        PostAcf::deserialize(value)
+        T::deserialize(value)
             .map(Some)
             .map_err(serde::de::Error::custom)
     } else {
@@ -778,6 +870,9 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoAuthor {
+    /// WordPress user id, or the post id of a "guest author" (Co-Authors Plus)
+    #[serde(default, deserialize_with = "deserialize_lenient_id")]
+    pub id: Option<usize>,
     pub display_name: String,
     /// Only present for some Co-Authors Plus setups
     #[serde(default)]
@@ -970,5 +1065,105 @@ mod acf_tests {
         assert_eq!(acf.crossref_doi.as_deref(), Some("12"));
         assert!(acf.other.contains_key("extra"));
         assert!(serde_json::from_str::<PostAcf>("{}").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod user_bio_tests {
+    use super::{WordpressUser, WpAuthorIds, WpBio};
+
+    #[test]
+    fn coauthor_tolerates_unexpected_id_types() {
+        for id in ["5", r#""5""#, "-1", "null", "false", r#""x""#] {
+            let c: super::CoAuthor =
+                serde_json::from_str(&format!(r#"{{"id": {id}, "display_name": "A B"}}"#)).unwrap();
+            assert_eq!(
+                c.id,
+                if id == "5" || id == r#""5""# {
+                    Some(5)
+                } else {
+                    None
+                }
+            );
+        }
+        assert_eq!(
+            serde_json::from_str::<super::CoAuthor>(r#"{"display_name": "A"}"#)
+                .unwrap()
+                .id,
+            None
+        );
+    }
+
+    #[test]
+    fn user_parses_with_any_combination_of_acf_fields() {
+        for acf in [
+            r#""acf": {"orcid": "0000-0001-9810-6222"}"#,
+            r#""acf": {"author_fr_desc": "Bio"}"#,
+            r#""acf": {"gndid": false, "rorid": [], "orcid": null, "author_eng_desc": 5}"#,
+            r#""acf": null"#,
+            r#""acf": false"#,
+            r#""acf": {}"#,
+            r#""acf": []"#,
+            r#""other": 1"#,
+        ] {
+            let user: WordpressUser = serde_json::from_str(&format!(
+                r#"{{"id": 1, "name": "A B", "url": "", "description": "", "link": "", "slug": "a-b", {acf}}}"#
+            ))
+            .unwrap_or_else(|e| panic!("{acf}: {e}"));
+            let _ = user.identifiers();
+            let _ = user.biographies();
+        }
+        let user: WordpressUser = serde_json::from_str(
+            r#"{"id": 1, "name": "A B", "url": "", "description": "", "link": "", "slug": "a-b", "acf": {"gndid": false, "rorid": [], "orcid": null}}"#,
+        )
+        .unwrap();
+        assert_eq!(user.identifiers(), WpAuthorIds::default());
+        assert!(user.biographies().is_empty());
+    }
+
+    #[test]
+    fn reads_identifiers_from_user_acf() {
+        let user: WordpressUser = serde_json::from_str(
+            r#"{"id": 1, "name": "A B", "url": "", "description": "", "link": "", "slug": "a-b",
+                "acf": {"orcid": "https://orcid.org/0000-0001-9810-6222/ ", "gndid": "", "rorid": "00rcxh774"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            user.identifiers(),
+            WpAuthorIds {
+                orcid: Some("0000-0001-9810-6222".to_string()),
+                gnd: None,
+                ror: Some("00rcxh774".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn reads_translated_bios_from_user_acf() {
+        let user: WordpressUser = serde_json::from_str(
+            r#"{"id": 2696, "name": "Joana Setzer", "url": "", "description": "", "link": "", "slug": "joana-setzer",
+                "acf": {"orcid": "", "author_eng_desc": "<p>Joana is a professor.</p>\n", "author_fr_desc": false}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            user.biographies(),
+            vec![WpBio {
+                lang: Some(language::Language::EnUs),
+                html: "<p>Joana is a professor.</p>\n".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn tolerates_missing_or_empty_user_acf() {
+        for acf in [r#""acf": []"#, r#""acf": {}"#, r#""x": 1"#] {
+            let user: WordpressUser = serde_json::from_str(&format!(
+                r#"{{"id": 1, "name": "A B", "url": "", "description": "Bio", "link": "", "slug": "a-b", {acf}}}"#
+            ))
+            .unwrap();
+            let bios = user.biographies();
+            assert_eq!(bios.len(), 1);
+            assert_eq!(bios[0].lang, None);
+        }
     }
 }

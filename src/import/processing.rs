@@ -18,7 +18,7 @@ use crate::import::language_detection::{
 };
 use crate::import::link_converter;
 use crate::import::wordpress::{
-    Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError,
+    Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError, WpAuthorIds, WpBio,
 };
 use crate::settings::Settings;
 use crate::storage::BibEntryV3;
@@ -924,7 +924,8 @@ impl ImportProcessor {
                     &author.name,
                     first_names,
                     last_names,
-                    Some(&author.description),
+                    author.biographies(),
+                    author.identifiers(),
                     &mut new_persons,
                 )
                 .await,
@@ -962,13 +963,34 @@ impl ImportProcessor {
                     first_names = explicit_first.or(derived_first).or(first_names);
                     last_names = last.to_string();
                 }
+                // The coauthors endpoint usually has no (or only the default) biography, the
+                // translated ones are only available on the user itself.
+                let mut bios = Vec::new();
+                let mut ids = WpAuthorIds::default();
+                if let Some(id) = coauthor.id
+                    && let Ok(user) = api.get_user(id).await
+                    && user.name.trim().to_lowercase()
+                        == coauthor.display_name.trim().to_lowercase()
+                {
+                    bios = user.biographies();
+                    ids = user.identifiers();
+                }
+                if bios.is_empty()
+                    && let Some(description) = coauthor.description.filter(|d| !d.trim().is_empty())
+                {
+                    bios.push(WpBio {
+                        lang: None,
+                        html: description,
+                    });
+                }
                 authors.push(
                     self.wp_author_to_person(
                         project_id,
                         &coauthor.display_name,
                         first_names,
                         last_names,
-                        coauthor.description.as_deref(),
+                        bios,
+                        ids,
                         &mut new_persons,
                     )
                     .await,
@@ -993,7 +1015,8 @@ impl ImportProcessor {
         display_name: &str,
         first_names: Option<String>,
         last_names: String,
-        description: Option<&str>,
+        wp_bios: Vec<WpBio>,
+        ids: WpAuthorIds,
         new_persons: &mut Vec<Person>,
     ) -> PersonUuidOrString {
         let fallback = || PersonUuidOrString::NameString(display_name.to_string());
@@ -1001,35 +1024,48 @@ impl ImportProcessor {
             return fallback();
         }
 
-        let bio_text = description.map(html_to_plain_text).unwrap_or_default();
-        let bio = (!bio_text.is_empty()).then(|| Biography {
-            lang: if cfg!(feature = "language_detection") {
-                detect_language_for_text(&bio_text)
-            } else {
-                None
-            },
-            content: bio_text,
-        });
+        // Bios with a known language go first, so they win over an identical default bio.
+        let mut wp_bios = wp_bios;
+        wp_bios.sort_by_key(|b| b.lang.is_none());
+        let mut bios: Vec<Biography> = Vec::new();
+        for wp_bio in wp_bios {
+            let content = html_to_plain_text(&wp_bio.html);
+            if content.is_empty() || bios.iter().any(|b| b.content == content) {
+                continue;
+            }
+            let lang = wp_bio.lang.or_else(|| {
+                if cfg!(feature = "language_detection") {
+                    detect_language_for_text(&content)
+                } else {
+                    None
+                }
+            });
+            bios.push(Biography { lang, content });
+        }
+        let bios = (!bios.is_empty()).then_some(bios);
+
+        let identifier = |identifier_type, value: Option<String>| {
+            value.map(|value| Identifier::new(identifier_type, value, None))
+        };
+        let mut person = Person {
+            id: None,
+            first_names,
+            last_names,
+            orcid: identifier(IdentifierType::ORCID, ids.orcid),
+            gnd: identifier(IdentifierType::GND, ids.gnd),
+            bios,
+            ror: identifier(IdentifierType::ROR, ids.ror),
+            scope: None,
+        };
 
         let Some(project_id) = project_id else {
             let id = uuid::Uuid::new_v4();
-            new_persons.push(Person {
-                id: Some(id),
-                first_names,
-                last_names,
-                orcid: None,
-                gnd: None,
-                bios: bio.map(|b| vec![b]),
-                ror: None,
-                scope: None,
-            });
+            person.id = Some(id);
+            new_persons.push(person);
             return PersonUuidOrString::PersonUuid(id);
         };
 
-        match self
-            .find_or_create_project_person(project_id, first_names, last_names, bio)
-            .await
-        {
+        match self.find_or_create_project_person(project_id, person).await {
             Ok(id) => PersonUuidOrString::PersonUuid(id),
             Err(e) => {
                 warn!(
@@ -1041,52 +1077,53 @@ impl ImportProcessor {
         }
     }
 
+    /// Reuses the person of the project with the same name, or stores `new_person` as a new
+    /// person scoped to the project. An existing person keeps what it already has; only missing
+    /// biographies and identifiers are filled in from `new_person`.
     async fn find_or_create_project_person(
         &self,
         project_id: uuid::Uuid,
-        first_names: Option<String>,
-        last_names: String,
-        bio: Option<Biography>,
+        mut new_person: Person,
     ) -> Result<uuid::Uuid, crate::db::repositories::DbError> {
         let normalize = |s: &str| s.trim().to_lowercase();
         let existing = persons::list_for_project(&self.pool, project_id)
             .await?
             .into_iter()
             .find(|p| {
-                normalize(&p.last_names) == normalize(&last_names)
+                normalize(&p.last_names) == normalize(&new_person.last_names)
                     && normalize(p.first_names.as_deref().unwrap_or(""))
-                        == normalize(first_names.as_deref().unwrap_or(""))
+                        == normalize(new_person.first_names.as_deref().unwrap_or(""))
             });
 
         if let Some(existing) = existing
             && let Some(id) = existing.id
         {
-            // Keep what the user already has, only fill in a missing biography.
-            if let Some(bio) = bio {
-                let mut person = persons::get(&self.pool, id).await?;
-                if person.bios.as_ref().is_none_or(|b| b.is_empty()) {
-                    person.bios = Some(vec![bio]);
-                    persons::update(&self.pool, &person).await?;
+            let mut person = persons::get(&self.pool, id).await?;
+            let mut changed = false;
+            if person.bios.as_ref().is_none_or(|b| b.is_empty()) && new_person.bios.is_some() {
+                person.bios = new_person.bios;
+                changed = true;
+            }
+            for (current, imported) in [
+                (&mut person.orcid, new_person.orcid),
+                (&mut person.gnd, new_person.gnd),
+                (&mut person.ror, new_person.ror),
+            ] {
+                if current.is_none() && imported.is_some() {
+                    *current = imported;
+                    changed = true;
                 }
+            }
+            if changed {
+                persons::update(&self.pool, &person).await?;
             }
             return Ok(id);
         }
 
         let id = uuid::Uuid::new_v4();
-        persons::insert(
-            &self.pool,
-            &Person {
-                id: Some(id),
-                first_names,
-                last_names,
-                orcid: None,
-                gnd: None,
-                bios: bio.map(|b| vec![b]),
-                ror: None,
-                scope: Some(PersonScope::Project(project_id)),
-            },
-        )
-        .await?;
+        new_person.id = Some(id);
+        new_person.scope = Some(PersonScope::Project(project_id));
+        persons::insert(&self.pool, &new_person).await?;
         Ok(id)
     }
 
