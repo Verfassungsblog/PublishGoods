@@ -176,3 +176,39 @@ export async function confirm_and_delete_person(person: Person): Promise<boolean
         });
     });
 }
+
+/**
+ * Makes the persons listed in `container` open the edit overlay (with their biographies) when
+ * their name is clicked. Free-text names and the remove button are left alone.
+ *
+ * @param entry_selector selects the list entries; person entries have `data-entry-type="Person"`
+ * and their id in `data-id`
+ * @param name_selector selects the clickable name element within an entry
+ */
+export function open_person_overlay_on_click(container: HTMLElement, entry_selector: string, name_selector: string, project_id: string, on_saved: (person: Person) => void | Promise<void>){
+    container.querySelectorAll<HTMLElement>(entry_selector).forEach(entry => {
+        const person_id = entry.getAttribute("data-id");
+        const name = entry.querySelector<HTMLElement>(name_selector);
+        if(entry.getAttribute("data-entry-type") !== "Person" || !person_id || !name){
+            return;
+        }
+        // The list may be bound again after entries were added
+        if(name.dataset.personOverlayBound){
+            return;
+        }
+        name.dataset.personOverlayBound = "true";
+        name.style.cursor = "pointer";
+        name.title = "Show person details";
+        name.addEventListener("click", (e) => {
+            // The remove button lives inside the name element
+            if((e.target as HTMLElement).closest("button")){
+                return;
+            }
+            open_person_overlay({
+                project_id: project_id,
+                person: {id: person_id} as Person,
+                on_saved: on_saved
+            }).then();
+        });
+    });
+}

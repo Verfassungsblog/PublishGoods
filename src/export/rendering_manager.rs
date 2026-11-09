@@ -53,6 +53,9 @@ pub struct RenderingJob {
     /// If set, every result file is written to this directory individually (no zip is created).
     /// If None, results are written to a fresh directory in `data/temp` and zipped if there are multiple.
     pub result_dir: Option<PathBuf>,
+    /// Persons referenced by the project that aren't stored in the database (projects that only
+    /// exist in memory), by id
+    pub persons: HashMap<uuid::Uuid, vb_exchange::projects::Person>,
 }
 
 /// Returns `name`, or `name` with a numeric suffix before the extension (`main-2.pdf`) if a file
@@ -255,6 +258,7 @@ impl RenderingManager {
                 sections: request.sections,
                 export_formats: request.export_formats,
                 result_dir: None,
+                persons: HashMap::new(),
             },
         )
         .await
@@ -283,6 +287,7 @@ impl RenderingManager {
             sections,
             export_formats,
             result_dir,
+            persons,
             ..
         } = job;
 
@@ -295,6 +300,7 @@ impl RenderingManager {
                 rendering_manager.csl_data.clone(),
                 sections,
                 &uploads_dir,
+                &persons,
             )
             .await?;
 

@@ -29,9 +29,21 @@ use std::sync::Arc;
 use vb_exchange::RenderingError;
 use vb_exchange::projects::PreparedProject;
 use vb_exchange::projects::{
-    PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedLicense, PreparedMetadata,
-    PreparedSection, PreparedSectionMetadata,
+    Person, PersonOrString, PreparedContentBlock, PreparedEndnote, PreparedLicense,
+    PreparedMetadata, PreparedSection, PreparedSectionMetadata,
 };
+
+/// Looks `id` up in `in_memory_persons` before falling back to the database.
+async fn get_person(
+    pool: &sqlx::PgPool,
+    in_memory_persons: &HashMap<uuid::Uuid, Person>,
+    id: uuid::Uuid,
+) -> Result<Person, crate::db::repositories::DbError> {
+    match in_memory_persons.get(&id) {
+        Some(person) => Ok(person.clone()),
+        None => persons::get(pool, id).await,
+    }
+}
 
 /// Prepares a project for rendering or export by processing its metadata, authors, editors, and sections.
 ///
@@ -54,6 +66,7 @@ use vb_exchange::projects::{
 /// * `csl_data` - Shared reference for citation style language data required for rendering citations.
 /// * `sections_to_include` - Optional list of UUIDs representing the sections to include in preparation.
 /// * `uploads_dir` - Directory containing the files uploaded to the project (e.g. images referenced by content blocks).
+/// * `in_memory_persons` - Persons that don't exist in the database (projects that only exist in memory); consulted before the database when resolving person UUIDs.
 ///
 /// # Returns
 /// Returns `Ok(PreparedProject)` on success with all relevant data ready for export or further processing.
@@ -64,6 +77,7 @@ pub async fn prepare_project(
     csl_data: Arc<CslData>,
     sections_to_include: Option<Vec<uuid::Uuid>>,
     uploads_dir: &Path,
+    in_memory_persons: &HashMap<uuid::Uuid, Person>,
 ) -> Result<PreparedProject, RenderingError> {
     let citation_bib = render_citations(&project_data, csl_data);
 
@@ -81,7 +95,7 @@ pub async fn prepare_project(
     for author in metadata.authors.unwrap_or_default() {
         match author {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match persons::get(&pool, id).await {
+                let person = match get_person(&pool, in_memory_persons, id).await {
                     Ok(person) => person,
                     Err(e) => {
                         eprintln!(
@@ -103,7 +117,7 @@ pub async fn prepare_project(
     for editor in metadata.editors.unwrap_or_default() {
         match editor {
             PersonUuidOrString::PersonUuid(id) => {
-                let person = match persons::get(&pool, id).await {
+                let person = match get_person(&pool, in_memory_persons, id).await {
                     Ok(person) => person,
                     Err(e) => {
                         eprintln!(
@@ -138,6 +152,7 @@ pub async fn prepare_project(
                                 &citation_bib,
                                 uploads_dir,
                                 add_soft_hyphens,
+                                in_memory_persons,
                             )
                             .await,
                         )
@@ -150,6 +165,7 @@ pub async fn prepare_project(
                         &citation_bib,
                         uploads_dir,
                         add_soft_hyphens,
+                        in_memory_persons,
                     )
                     .await,
                 ), // Prepare all sections
@@ -339,22 +355,25 @@ pub async fn render_section(
     citation_bib: &HashMap<String, String>,
     uploads_dir: &Path,
     add_soft_hyphens: bool,
+    in_memory_persons: &HashMap<uuid::Uuid, Person>,
 ) -> PreparedSection {
     let published = section.metadata.published.map(|date| date.into());
 
     let mut authors = vec![];
     for author in section.metadata.authors {
         let person = match author {
-            PersonUuidOrString::PersonUuid(id) => match persons::get(&pool, id).await {
-                Ok(person) => PersonOrString::Person(person.into()),
-                Err(e) => {
-                    eprintln!(
-                        "Author with id {} not found while rendering section for export! {:?}",
-                        id, e
-                    );
-                    continue;
+            PersonUuidOrString::PersonUuid(id) => {
+                match get_person(&pool, in_memory_persons, id).await {
+                    Ok(person) => PersonOrString::Person(person.into()),
+                    Err(e) => {
+                        eprintln!(
+                            "Author with id {} not found while rendering section for export! {:?}",
+                            id, e
+                        );
+                        continue;
+                    }
                 }
-            },
+            }
             PersonUuidOrString::NameString(name) => PersonOrString::NameString(name),
         };
 
@@ -364,16 +383,18 @@ pub async fn render_section(
     let mut editors = vec![];
     for editor in section.metadata.editors {
         let person = match editor {
-            PersonUuidOrString::PersonUuid(id) => match persons::get(&pool, id).await {
-                Ok(person) => PersonOrString::Person(person.into()),
-                Err(e) => {
-                    eprintln!(
-                        "Editor with id {} not found while rendering section for export! {:?}",
-                        id, e
-                    );
-                    continue;
+            PersonUuidOrString::PersonUuid(id) => {
+                match get_person(&pool, in_memory_persons, id).await {
+                    Ok(person) => PersonOrString::Person(person.into()),
+                    Err(e) => {
+                        eprintln!(
+                            "Editor with id {} not found while rendering section for export! {:?}",
+                            id, e
+                        );
+                        continue;
+                    }
                 }
-            },
+            }
             PersonUuidOrString::NameString(name) => PersonOrString::NameString(name),
         };
 
@@ -446,6 +467,7 @@ pub async fn render_section(
                 citation_bib,
                 uploads_dir,
                 add_soft_hyphens,
+                in_memory_persons,
             )
             .await,
         );

@@ -1,7 +1,8 @@
 use crate::import::wordpress::Post;
 use crate::storage::project_storage::sections::Section;
 use crate::storage::project_storage::sections::content::current::{BlockData, decode_yjs_content};
-use lingua::{Language, LanguageDetectorBuilder};
+use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 /// Attempts to detect the language of a WordPress post's content.
@@ -17,10 +18,20 @@ use std::time::SystemTime;
 /// * `None` - If the language could not be detected or could not be mapped to a BCP-47 code
 pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
     debug!("Trying to detect language for post");
+    detect_language_for_text(&post.content.rendered)
+}
+
+/// Building the detector loads the models of all languages, so it is only done once.
+fn language_detector() -> &'static LanguageDetector {
+    static DETECTOR: OnceLock<LanguageDetector> = OnceLock::new();
+    DETECTOR.get_or_init(|| LanguageDetectorBuilder::from_all_languages().build())
+}
+
+/// Attempts to detect the language of an arbitrary text and returns it in BCP-47 format.
+pub fn detect_language_for_text(text: &str) -> Option<language::Language> {
     let start_time = SystemTime::now();
 
-    let detector = LanguageDetectorBuilder::from_all_languages().build();
-    let detected_lang = detector.detect_language_of(&post.content.rendered);
+    let detected_lang = language_detector().detect_language_of(text);
 
     debug!(
         "Language detection took {} ms.",

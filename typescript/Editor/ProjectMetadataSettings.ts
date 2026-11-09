@@ -12,7 +12,7 @@ import {init, main_col} from "./Editor";
 import {state} from "./Main";
 import {add_search, show_alert} from "../tools";
 import {AutoPatch} from "../autopatch";
-import {confirm_and_delete_person, open_person_overlay} from "./PersonOverlay";
+import {confirm_and_delete_person, open_person_overlay, open_person_overlay_on_click} from "./PersonOverlay";
 
 /**
  * Represents the primary interface for interacting with the editor.
@@ -689,7 +689,16 @@ function init_project_persons(){
     }
 }
 
+/** Clicking a person in the given authors/editors list shows their details (e.g. biographies). */
+function open_person_details_on_click(container_id: string){
+    const container = document.getElementById(container_id);
+    if(container){
+        open_person_overlay_on_click(container, ".metadata_persons_div", ".metadata_person_div_name", state.project_id, async () => { await init(); });
+    }
+}
+
 function add_authors_listeners(){
+    open_person_details_on_click("metadata_authors_div");
     const authors_divs = Array.from(document.querySelectorAll<HTMLElement>(".metadata_editors_div[data-group='authors']"));
     const authors_dropzones = Array.from(document.getElementsByClassName("metadata_editors_div_after"))
         .filter(el => (el as HTMLElement).closest('#metadata_authors_div')) as HTMLElement[];
@@ -718,6 +727,7 @@ function add_authors_listeners(){
 }
 
 function add_editors_listeners(){
+    open_person_details_on_click("metadata_editors_div");
     const editors_divs = Array.from(document.querySelectorAll<HTMLElement>(".metadata_editors_div[data-group='editors']"));
     const editors_dropzones = Array.from(document.getElementsByClassName("metadata_editors_div_after"))
         .filter(el => (el as HTMLElement).closest('#metadata_editors_div')) as HTMLElement[];

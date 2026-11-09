@@ -455,6 +455,7 @@ mod inner {
                 shift_headings_up: rendering.shift_headings_up,
                 convert_links: rendering.convert_links,
                 import_author_names: rendering.import_author_names,
+                person_project_id: None,
             };
             let import_timeout = self.settings.import_timeout;
             let imported = with_timeout(
@@ -509,6 +510,12 @@ mod inner {
                 .await
                 .expect("semaphore is never closed");
 
+            let persons = imported
+                .iter()
+                .flat_map(|section| section.persons.iter())
+                .filter_map(|person| Some((person.id?, person.clone())))
+                .collect();
+
             let render_result = RenderingManager::prepare_and_send(
                 Arc::clone(&self.rendering_manager),
                 RenderingJob {
@@ -522,6 +529,7 @@ mod inner {
                     sections: None,
                     export_formats: rendering.export_formats.clone(),
                     result_dir: Some(result_dir.clone()),
+                    persons,
                 },
             )
             .await;
@@ -868,6 +876,7 @@ mod inner {
                     },
                 },
                 bib_entries: vec![],
+                persons: vec![],
             }
         }
 

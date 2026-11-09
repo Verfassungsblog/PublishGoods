@@ -24,7 +24,7 @@ import {createMutex} from "./Mutex";
 import {FixedLinkTool} from "./Tools/FixedLinkTool";
 import {PersonsAPI, PersonUuidOrString, SectionAPI} from "../api_requests";
 import {add_search, show_alert} from "../tools";
-import {open_person_overlay} from "./PersonOverlay";
+import {open_person_overlay, open_person_overlay_on_click} from "./PersonOverlay";
 
 const personsApi = new (PersonsAPI as any)();
 const sectionApi = new (SectionAPI as any)();
@@ -1304,6 +1304,19 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
     // Authors and Editors
     let dragged_section_metadata_element: HTMLElement | null = null;
 
+    // Reloads the authors/editors (with their expanded person data) from the server
+    const refreshAuthorsEditors = async () => {
+        const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
+        if (r.ok) {
+            const resp = await r.json();
+            const data = resp?.data || resp;
+            sectionData.metadata.authors = data?.metadata?.authors || [];
+            sectionData.metadata.editors = data?.metadata?.editors || [];
+            sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
+            sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
+        }
+    };
+
     const patchPersonsOrder = async (type: 'authors' | 'editors') => {
         const container = document.getElementById(`section_metadata_${type}_div`) as HTMLElement | null;
         if (!container) return;
@@ -1330,15 +1343,7 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
         sectionData.metadata[type] = next;
 
         // Refresh expanded data for stable rendering
-        const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
-        if (r.ok) {
-            const resp = await r.json();
-            const data = resp?.data || resp;
-            sectionData.metadata.authors = data?.metadata?.authors || [];
-            sectionData.metadata.editors = data?.metadata?.editors || [];
-            sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
-            sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
-        }
+        await refreshAuthorsEditors();
     };
 
     const addDragAndDropListeners = (type: 'authors' | 'editors') => {
@@ -1508,18 +1513,22 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
                 // Update local data and rerender
                 sectionData.metadata[type] = currentList;
                 // We need expanded data for rendering, so refetching is easiest
-                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
-                if (r.ok) {
-                    const resp = await r.json();
-                    const data = resp?.data || resp;
-                    sectionData.metadata.authors = data?.metadata?.authors || [];
-                    sectionData.metadata.editors = data?.metadata?.editors || [];
-                    sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
-                    sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
-                }
+                await refreshAuthorsEditors();
                 renderAuthorsEditors(type);
             });
         });
+
+        // Clicking a person shows their details (e.g. biographies)
+        open_person_overlay_on_click(
+            div,
+            '.section_metadata_persons_div',
+            '.section_metadata_person_div_name',
+            state.project_id,
+            async () => {
+                await refreshAuthorsEditors();
+                renderAuthorsEditors(type);
+            }
+        );
 
         addDragAndDropListeners(type);
     }
@@ -1542,15 +1551,7 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
                 await patchSectionMeta(section_id, patch);
 
                 // Update and rerender
-                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
-                if (r.ok) {
-                    const resp = await r.json();
-                    const data = resp?.data || resp;
-                    sectionData.metadata.authors = data?.metadata?.authors || [];
-                    sectionData.metadata.editors = data?.metadata?.editors || [];
-                    sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
-                    sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
-                }
+                await refreshAuthorsEditors();
                 renderAuthorsEditors(type);
             };
 
@@ -1591,15 +1592,7 @@ function setupSectionMetadataUI(section_id: string, sectionData: any) {
                 await patchSectionMeta(section_id, patch);
 
                 // Update and rerender
-                const r = await fetch(`/api/projects/${state.project_id}/sections/${section_id}?expand=authors,editors`, { credentials: 'include' });
-                if (r.ok) {
-                    const resp = await r.json();
-                    const data = resp?.data || resp;
-                    sectionData.metadata.authors = data?.metadata?.authors || [];
-                    sectionData.metadata.editors = data?.metadata?.editors || [];
-                    sectionData.metadata.authors_expanded = data?.metadata?.authors_expanded || [];
-                    sectionData.metadata.editors_expanded = data?.metadata?.editors_expanded || [];
-                }
+                await refreshAuthorsEditors();
                 renderAuthorsEditors(type);
             });
         }

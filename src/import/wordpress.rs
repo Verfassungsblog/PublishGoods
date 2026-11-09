@@ -717,15 +717,76 @@ pub struct RenderedContent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostAcf {
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
     pub subheadline: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
     pub copyright: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
     pub doi: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_lenient_string")]
     pub crossref_doi: Option<String>,
+    /// All other ACF fields returned by the API
+    #[serde(flatten)]
+    pub other: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// ACF returns `false` (or `[]`, `null`) for empty fields. Only strings and numbers are kept;
+/// anything else is treated as "not set" instead of failing the whole post.
+fn deserialize_lenient_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    })
+}
+
+/// WordPress returns an empty list (`[]`) instead of an object if a post has no ACF data.
+/// Treat anything that isn't an object as "no ACF data".
+fn deserialize_acf<'de, D>(deserializer: D) -> Result<Option<PostAcf>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_object() {
+        PostAcf::deserialize(value)
+            .map(Some)
+            .map_err(serde::de::Error::custom)
+    } else {
+        Ok(None)
+    }
+}
+
+/// The coauthors endpoint returns the description as `{"raw": "...", "rendered": "<p>...</p>"}`,
+/// other setups as a plain string. Prefers the raw variant.
+fn deserialize_coauthor_description<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::String(s)) => Some(s),
+        Some(serde_json::Value::Object(o)) => ["raw", "rendered"]
+            .iter()
+            .find_map(|k| o.get(*k).and_then(|v| v.as_str()))
+            .map(str::to_string),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoAuthor {
     pub display_name: String,
+    /// Only present for some Co-Authors Plus setups
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    /// The author's biography, if the API returns one (a plain string or `{"raw", "rendered"}`)
+    #[serde(default, deserialize_with = "deserialize_coauthor_description")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -747,6 +808,7 @@ pub struct Post {
     pub categories: Vec<usize>,
     pub tags: Vec<usize>,
     /// Optionally additional fields from the Advanced Custom Fields Plugin
+    #[serde(default, deserialize_with = "deserialize_acf")]
     pub acf: Option<PostAcf>,
     /// Optionally additional co-authors (Co-Authors Plus WP Plugin)
     #[serde(skip)]
@@ -889,5 +951,24 @@ mod tests {
         let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
         let categories = api.get_category_tree().await.unwrap();
         println!("Category tree: {:?}", categories.categories);
+    }
+}
+
+#[cfg(test)]
+mod acf_tests {
+    use super::PostAcf;
+
+    #[test]
+    fn tolerates_unexpected_acf_field_types() {
+        let acf: PostAcf = serde_json::from_str(
+            r#"{"doi": false, "subheadline": "Sub", "copyright": [], "crossref_doi": 12, "extra": {"a": 1}}"#,
+        )
+        .unwrap();
+        assert_eq!(acf.doi, None);
+        assert_eq!(acf.subheadline.as_deref(), Some("Sub"));
+        assert_eq!(acf.copyright, None);
+        assert_eq!(acf.crossref_doi.as_deref(), Some("12"));
+        assert!(acf.other.contains_key("extra"));
+        assert!(serde_json::from_str::<PostAcf>("{}").is_ok());
     }
 }

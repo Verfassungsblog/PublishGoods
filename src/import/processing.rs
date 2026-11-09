@@ -11,8 +11,11 @@ use markup5ever::{Attribute, local_name, ns};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
-use crate::db::repositories::{bibliography, projects};
-use crate::import::language_detection::{detect_language_for_post, detect_language_for_section};
+use crate::db::repositories::{bibliography, persons, projects};
+#[cfg(feature = "language_detection")]
+use crate::import::language_detection::{
+    detect_language_for_post, detect_language_for_section, detect_language_for_text,
+};
 use crate::import::link_converter;
 use crate::import::wordpress::{
     Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError,
@@ -27,11 +30,15 @@ use crate::storage::project_storage::sections::{Section, SectionMetadata};
 use crate::utils::dedup::dedup_vec;
 use crate::utils::timeout::{limit_from_seconds, with_timeout};
 use log::{debug, error, warn};
+#[cfg(not(feature = "language_detection"))]
+use no_language_detection::{
+    detect_language_for_post, detect_language_for_section, detect_language_for_text,
+};
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::task::spawn_blocking;
-use vb_exchange::projects::{Identifier, IdentifierType};
+use vb_exchange::projects::{Biography, Identifier, IdentifierType, Person, PersonScope};
 use yrs::{ReadTxn, StateVector, Transact};
 
 /// Where imported media files are stored and how content references them.
@@ -62,6 +69,9 @@ impl MediaStore {
 pub struct ImportedSection {
     pub section: Section,
     pub bib_entries: Vec<BibEntryV3>,
+    /// Persons (with biographies) referenced by `section`'s authors that only exist in memory,
+    /// because the section wasn't imported into a project. Empty otherwise.
+    pub persons: Vec<Person>,
 }
 
 /// Where a WordPress post to import (or, for the external rendering api, render) is located.
@@ -81,6 +91,9 @@ pub struct ContentImportOptions {
     pub shift_headings_up: bool,
     pub convert_links: bool,
     pub import_author_names: bool,
+    /// If set, imported authors are created as persons scoped to this project (including their
+    /// biographies). Without it, they are kept in memory as [`ImportedSection::persons`].
+    pub person_project_id: Option<uuid::Uuid>,
 }
 
 /// Struct wrapping all import jobs
@@ -605,14 +618,16 @@ impl ImportProcessor {
 
         let number_of_posts = posts.len();
 
-        for (num, post) in posts.into_iter().enumerate() {
+        for (num, mut post) in posts.into_iter().enumerate() {
             self.update_import_status(
                 &job.id,
                 ImportStatus::Processing(ProcessingDetails::new(num + 1, Some(number_of_posts))),
             );
 
             let additional_author_names = if job.import_author_names {
-                self.resolve_wp_authors(&post, &api).await
+                self.resolve_wp_authors(&mut post, &api, Some(job.project_id))
+                    .await
+                    .authors
             } else {
                 vec![]
             };
@@ -683,6 +698,7 @@ impl ImportProcessor {
                     shift_headings_up,
                     convert_links,
                     import_author_names,
+                    person_project_id: Some(project_id),
                 },
             )
             .await?;
@@ -825,15 +841,16 @@ impl ImportProcessor {
     /// Resolves author names (if requested) and converts the post into a section in memory.
     async fn build_wp_post_with_authors(
         &self,
-        post: Post,
+        mut post: Post,
         api: &WordpressAPI,
         media: &MediaStore,
         options: ContentImportOptions,
     ) -> Result<ImportedSection, ImportError> {
-        let additional_author_names = if options.import_author_names {
-            self.resolve_wp_authors(&post, api).await
+        let resolved = if options.import_author_names {
+            self.resolve_wp_authors(&mut post, api, options.person_project_id)
+                .await
         } else {
-            vec![]
+            ResolvedAuthors::default()
         };
         self.build_wp_post(
             post,
@@ -841,7 +858,8 @@ impl ImportProcessor {
             options.convert_footnotes_to_endnotes,
             options.shift_headings_up,
             options.convert_links,
-            additional_author_names,
+            resolved.authors,
+            resolved.persons,
         )
         .await
     }
@@ -879,19 +897,197 @@ impl ImportProcessor {
 
     /// Tries to resolve the author id from the wordpress api
     ///
-    /// Returns a Vec with ['PersonUuidOrString'] with the authors as NameString variants
-    async fn resolve_wp_authors(&self, post: &Post, api: &WordpressAPI) -> Vec<PersonUuidOrString> {
+    /// The post's authors and co-authors become persons including the biography WordPress returns
+    /// for them, and the result contains `PersonUuid` variants. With a `project_id` the persons
+    /// are stored scoped to that project; without one they are only returned in
+    /// [`ResolvedAuthors::persons`]. If creating a person fails, the author is returned as
+    /// `NameString` instead. Co-authors are removed from `post.coauthors`, so they aren't added a
+    /// second time as plain names.
+    async fn resolve_wp_authors(
+        &self,
+        post: &mut Post,
+        api: &WordpressAPI,
+        project_id: Option<uuid::Uuid>,
+    ) -> ResolvedAuthors {
         debug!("Trying to resolve author names for post.");
-        let mut author_names = vec![];
+        let mut authors = vec![];
+        let mut new_persons = vec![];
 
         // Resolve author name
+        let mut authors_names = vec![];
         if let Ok(author) = api.get_user(post.author).await {
-            author_names.push(PersonUuidOrString::NameString(author.name));
+            authors_names.push(author.name.trim().to_lowercase());
+            let (first_names, last_names) = split_name(&author.name);
+            authors.push(
+                self.wp_author_to_person(
+                    project_id,
+                    &author.name,
+                    first_names,
+                    last_names,
+                    Some(&author.description),
+                    &mut new_persons,
+                )
+                .await,
+            );
         }
 
-        debug!("Resolved author names: {:?}", author_names);
+        if let Some(coauthors) = post.coauthors.take() {
+            // The post author usually also shows up in the coauthors list.
+            let mut seen: Vec<String> = authors_names.clone();
+            for coauthor in coauthors {
+                let normalized = coauthor.display_name.trim().to_lowercase();
+                if seen.contains(&normalized) {
+                    continue;
+                }
+                seen.push(normalized);
+                let (mut first_names, mut last_names) = split_name(&coauthor.display_name);
+                if let Some(last) = coauthor.last_name.as_deref().map(str::trim)
+                    && !last.is_empty()
+                {
+                    // Without an explicit first name, whatever precedes the last name in the
+                    // display name is the best guess; otherwise keep what `split_name` found.
+                    let explicit_first = coauthor
+                        .first_name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|f| !f.is_empty())
+                        .map(str::to_string);
+                    let derived_first = coauthor
+                        .display_name
+                        .trim()
+                        .strip_suffix(last)
+                        .map(str::trim)
+                        .filter(|f| !f.is_empty())
+                        .map(str::to_string);
+                    first_names = explicit_first.or(derived_first).or(first_names);
+                    last_names = last.to_string();
+                }
+                authors.push(
+                    self.wp_author_to_person(
+                        project_id,
+                        &coauthor.display_name,
+                        first_names,
+                        last_names,
+                        coauthor.description.as_deref(),
+                        &mut new_persons,
+                    )
+                    .await,
+                );
+            }
+        }
 
-        author_names
+        debug!("Resolved authors: {:?}", authors);
+
+        ResolvedAuthors {
+            authors,
+            persons: new_persons,
+        }
+    }
+
+    /// Turns a WordPress author into a person. With a `project_id` it is stored scoped to that
+    /// project (reusing an existing person of the project with the same name); otherwise it is
+    /// pushed to `new_persons`. Falls back to a free-text name if that isn't possible.
+    async fn wp_author_to_person(
+        &self,
+        project_id: Option<uuid::Uuid>,
+        display_name: &str,
+        first_names: Option<String>,
+        last_names: String,
+        description: Option<&str>,
+        new_persons: &mut Vec<Person>,
+    ) -> PersonUuidOrString {
+        let fallback = || PersonUuidOrString::NameString(display_name.to_string());
+        if last_names.is_empty() {
+            return fallback();
+        }
+
+        let bio_text = description.map(html_to_plain_text).unwrap_or_default();
+        let bio = (!bio_text.is_empty()).then(|| Biography {
+            lang: if cfg!(feature = "language_detection") {
+                detect_language_for_text(&bio_text)
+            } else {
+                None
+            },
+            content: bio_text,
+        });
+
+        let Some(project_id) = project_id else {
+            let id = uuid::Uuid::new_v4();
+            new_persons.push(Person {
+                id: Some(id),
+                first_names,
+                last_names,
+                orcid: None,
+                gnd: None,
+                bios: bio.map(|b| vec![b]),
+                ror: None,
+                scope: None,
+            });
+            return PersonUuidOrString::PersonUuid(id);
+        };
+
+        match self
+            .find_or_create_project_person(project_id, first_names, last_names, bio)
+            .await
+        {
+            Ok(id) => PersonUuidOrString::PersonUuid(id),
+            Err(e) => {
+                warn!(
+                    "Couldn't create person for wordpress author {}: {:?}",
+                    display_name, e
+                );
+                fallback()
+            }
+        }
+    }
+
+    async fn find_or_create_project_person(
+        &self,
+        project_id: uuid::Uuid,
+        first_names: Option<String>,
+        last_names: String,
+        bio: Option<Biography>,
+    ) -> Result<uuid::Uuid, crate::db::repositories::DbError> {
+        let normalize = |s: &str| s.trim().to_lowercase();
+        let existing = persons::list_for_project(&self.pool, project_id)
+            .await?
+            .into_iter()
+            .find(|p| {
+                normalize(&p.last_names) == normalize(&last_names)
+                    && normalize(p.first_names.as_deref().unwrap_or(""))
+                        == normalize(first_names.as_deref().unwrap_or(""))
+            });
+
+        if let Some(existing) = existing
+            && let Some(id) = existing.id
+        {
+            // Keep what the user already has, only fill in a missing biography.
+            if let Some(bio) = bio {
+                let mut person = persons::get(&self.pool, id).await?;
+                if person.bios.as_ref().is_none_or(|b| b.is_empty()) {
+                    person.bios = Some(vec![bio]);
+                    persons::update(&self.pool, &person).await?;
+                }
+            }
+            return Ok(id);
+        }
+
+        let id = uuid::Uuid::new_v4();
+        persons::insert(
+            &self.pool,
+            &Person {
+                id: Some(id),
+                first_names,
+                last_names,
+                orcid: None,
+                gnd: None,
+                bios: bio.map(|b| vec![b]),
+                ror: None,
+                scope: Some(PersonScope::Project(project_id)),
+            },
+        )
+        .await?;
+        Ok(id)
     }
 
     /// Imports a WordPress post into a project as a new section.
@@ -935,6 +1131,7 @@ impl ImportProcessor {
                 shift_headings_up,
                 convert_links,
                 imported_authors,
+                vec![],
             )
             .await?;
         self.persist_imported(project_id, imported).await
@@ -949,6 +1146,7 @@ impl ImportProcessor {
         shift_headings_up: bool,
         convert_links: bool,
         imported_authors: Vec<PersonUuidOrString>,
+        author_persons: Vec<Person>,
     ) -> Result<ImportedSection, ImportError> {
         let subtitle = match &post.acf {
             None => None,
@@ -996,6 +1194,19 @@ impl ImportProcessor {
 
         authors = dedup_vec(authors);
 
+        let mut custom_fields: HashMap<String, serde_json::Value> = HashMap::new();
+        custom_fields.insert("wp_slug".to_string(), serde_json::json!(post.slug));
+        custom_fields.insert(
+            "wp_categories".to_string(),
+            serde_json::json!(post.categories),
+        );
+        custom_fields.insert("wp_tags".to_string(), serde_json::json!(post.tags));
+        if let Some(acf) = &post.acf
+            && let Ok(acf) = serde_json::to_value(acf)
+        {
+            custom_fields.insert("wp_acf".to_string(), acf);
+        }
+
         let section = Section {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
@@ -1013,21 +1224,24 @@ impl ImportProcessor {
                 published: Some(post.date.date()),
                 last_changed: Some(post.modified),
                 lang,
-                custom_fields: HashMap::new(),
+                custom_fields,
             },
         };
 
         debug!("{:?}", section);
 
-        self.build_section_from_wp_html(
-            section,
-            post.content.rendered.clone(),
-            media,
-            endnotes,
-            shift_headings_up,
-            convert_links,
-        )
-        .await
+        let mut imported = self
+            .build_section_from_wp_html(
+                section,
+                post.content.rendered.clone(),
+                media,
+                endnotes,
+                shift_headings_up,
+                convert_links,
+            )
+            .await?;
+        imported.persons = author_persons;
+        Ok(imported)
     }
 
     async fn get_wp_post_by_link(
@@ -1316,6 +1530,7 @@ impl ImportProcessor {
         Ok(ImportedSection {
             section,
             bib_entries,
+            persons: vec![],
         })
     }
 
@@ -2791,6 +3006,99 @@ mod postprocess {
     }
 }
 
+/// Authors of a WordPress post, as resolved by [`ImportProcessor::resolve_wp_authors`].
+/// Stand-ins for the language detection so the `cfg!(feature = "language_detection")` call sites
+/// still type-check when the feature (and with it the `lingua` dependency) is disabled.
+#[cfg(not(feature = "language_detection"))]
+mod no_language_detection {
+    use super::{Post, Section};
+
+    pub fn detect_language_for_post(_post: &Post) -> Option<language::Language> {
+        None
+    }
+
+    pub fn detect_language_for_text(_text: &str) -> Option<language::Language> {
+        None
+    }
+
+    pub fn detect_language_for_section(_section: &Section) -> Option<language::Language> {
+        None
+    }
+}
+
+#[derive(Debug, Default)]
+struct ResolvedAuthors {
+    authors: Vec<PersonUuidOrString>,
+    /// Persons that only exist in memory (see [`ImportedSection::persons`])
+    persons: Vec<Person>,
+}
+
+/// Name particles that belong to the last name when they directly precede it.
+const NAME_PARTICLES: &[&str] = &[
+    "van", "von", "de", "der", "den", "di", "da", "du", "del", "della", "la", "le", "zu", "zur",
+    "ter", "ten", "dos", "das", "bin", "ibn", "al", "el", "af", "av", "op", "het", "'t",
+];
+
+/// Generational suffixes that stay attached to the last name.
+const NAME_SUFFIXES: &[&str] = &["jr", "sr", "ii", "iii", "iv"];
+
+/// Splits a display name into (first names, last names). The last word is the last name, extended
+/// to the left by name particles ("van", "von", "de", ...) and extended by a trailing generational
+/// suffix ("Jr."). Multi-word last names without particles can't be told apart from middle names.
+fn split_name(name: &str) -> (Option<String>, String) {
+    let tokens: Vec<&str> = name.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return (None, tokens.join(" "));
+    }
+    let mut start = tokens.len() - 1;
+    let last = tokens[start].trim_end_matches('.').to_lowercase();
+    if tokens.len() >= 3 && NAME_SUFFIXES.contains(&last.as_str()) {
+        start -= 1;
+    }
+    while start > 1 && NAME_PARTICLES.contains(&tokens[start - 1].to_lowercase().as_str()) {
+        start -= 1;
+    }
+    (Some(tokens[..start].join(" ")), tokens[start..].join(" "))
+}
+
+/// Converts an html snippet (e.g. a WordPress user description) to plain text. Paragraph and
+/// line breaks become newlines; `<script>` and `<style>` content is dropped.
+fn html_to_plain_text(html: &str) -> String {
+    fn walk(handle: &Handle, out: &mut String) {
+        match &handle.data {
+            NodeData::Text { contents } => out.push_str(&contents.borrow()),
+            NodeData::Element { .. } => {
+                let tag = tag_name(handle).unwrap_or_default();
+                if matches!(tag.as_str(), "script" | "style") {
+                    return;
+                }
+                if tag == "br" {
+                    out.push('\n');
+                }
+                for child in handle.children.borrow().iter() {
+                    walk(child, out);
+                }
+                if matches!(tag.as_str(), "p" | "div" | "li") {
+                    out.push('\n');
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let dom = parse_dom(html);
+    let mut out = String::with_capacity(html.len());
+    for node in top_level_nodes(&dom) {
+        walk(&node, &mut out);
+    }
+    out.lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3154,6 +3462,7 @@ mod tests {
             shift_headings_up: false,
             convert_links: false,
             import_author_names: false,
+            person_project_id: None,
         };
 
         let bad_host = processor
@@ -3750,5 +4059,69 @@ mod tests {
             _ => panic!("Expected BibEntry, found folder"),
         };
         assert_eq!(parent_entry_v3.title.as_ref().unwrap().value, "Parent");
+    }
+}
+
+#[cfg(test)]
+mod author_helper_tests {
+    use super::{html_to_plain_text, split_name};
+
+    #[test]
+    fn splits_names_at_last_whitespace() {
+        assert_eq!(
+            split_name("Anna Maria Müller"),
+            (Some("Anna Maria".to_string()), "Müller".to_string())
+        );
+        assert_eq!(split_name("Cher"), (None, "Cher".to_string()));
+    }
+
+    #[test]
+    fn keeps_particles_and_suffixes_with_last_name() {
+        assert_eq!(
+            split_name("Ludwig van Beethoven"),
+            (Some("Ludwig".to_string()), "van Beethoven".to_string())
+        );
+        assert_eq!(
+            split_name("Karl-Theodor zu Guttenberg"),
+            (
+                Some("Karl-Theodor".to_string()),
+                "zu Guttenberg".to_string()
+            )
+        );
+        assert_eq!(
+            split_name("Martin Luther King Jr."),
+            (Some("Martin Luther".to_string()), "King Jr.".to_string())
+        );
+        assert_eq!(
+            split_name("von Beethoven"),
+            (Some("von".to_string()), "Beethoven".to_string())
+        );
+        assert_eq!(
+            split_name("King Jr."),
+            (Some("King".to_string()), "Jr.".to_string())
+        );
+    }
+
+    #[test]
+    fn strips_html_from_bios() {
+        assert_eq!(
+            html_to_plain_text("<p>Prof. <b>Dr.</b> A &amp; B&#8217;s bio</p><p>Second</p>"),
+            "Prof. Dr. A & B’s bio\nSecond"
+        );
+        assert_eq!(html_to_plain_text("AT&T"), "AT&T");
+        assert_eq!(
+            html_to_plain_text("Wien &ndash; K&ouml;ln&hellip; &#x41;"),
+            "Wien – Köln… A"
+        );
+        assert_eq!(
+            html_to_plain_text("Preis < 5 und x > 3"),
+            "Preis < 5 und x > 3"
+        );
+        assert_eq!(html_to_plain_text("a<!-- x > y -->b<br/>c"), "ab\nc");
+        assert_eq!(html_to_plain_text("a&lt;b and c&gt;d"), "a<b and c>d");
+        assert_eq!(
+            html_to_plain_text("x<script>alert(1)</script><style>p{}</style>y"),
+            "xy"
+        );
     }
 }
