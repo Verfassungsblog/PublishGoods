@@ -116,6 +116,30 @@ jobs:
           ssh -i ~/.ssh/staging_ssh_key -T verfassungsbooks@editor-staging.verfassungsblog.de "rm -Rf /home/verfassungsbooks/verfassungsbooks-server/data"
           rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/prod_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" verfassungsbooks@editor.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/ data/
           rsync -avz --timeout=60 --progress -e "ssh -i ~/.ssh/staging_ssh_key -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new" data/ verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/verfassungsbooks-server/data/
+      - name: Copy PostgreSQL database from production server to staging server
+        env:
+          PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+
+          echo "Dumping production database"
+          ssh -i ~/.ssh/prod_ssh_key $SSH_OPTS -T verfassungsbooks@editor.verfassungsblog.de \
+            "pg_dump --no-owner --no-privileges $(printf '%q' "$PROD_DATABASE_URL")" > prod-dump.sql
+          test -s prod-dump.sql
+
+          echo "Restoring dump on staging database"
+          {
+            # Drop everything instead of relying on pg_dump --clean, so tables that only exist on staging
+            # (e.g. from migrations not yet applied to production) don't conflict with later migrations.
+            echo "DROP SCHEMA IF EXISTS public CASCADE;"
+            echo "CREATE SCHEMA public;"
+            cat prod-dump.sql
+          } | ssh -i ~/.ssh/staging_ssh_key $SSH_OPTS -T verfassungsbooks@editor-staging.verfassungsblog.de \
+            "psql --single-transaction -v ON_ERROR_STOP=1 -q -o /dev/null $(printf '%q' "$STAGING_DATABASE_URL")"
+
+          rm -f prod-dump.sql
       - name: Upload artifact to staging server
         run: scp -i ~/.ssh/staging_ssh_key dest/publishgoods-bundled-x86_64-unknown-linux-gnu.tar.gz verfassungsbooks@editor-staging.verfassungsblog.de:/home/verfassungsbooks/publishgoods-bundled.tar.gz
       - name: Start update and start staging server
