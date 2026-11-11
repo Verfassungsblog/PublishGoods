@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Error;
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use yrs::StateVector;
@@ -488,6 +489,15 @@ pub struct ErrorMessage {
     pub error: String,
 }
 
+/// Interval between server-initiated WebSocket `Ping` frames. Keeps idle connections alive through
+/// reverse proxies / load balancers that close connections without traffic (e.g. nginx's default
+/// `proxy_read_timeout` of 60s), so it must stay well below the shortest such timeout.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
+
+/// A connection that sent nothing (not even a `Pong` answering our pings) for this long is
+/// considered dead, e.g. a client that lost its network without the TCP connection being closed.
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Upgrades the connection to a WebSocket and drives the collaborative-editing protocol
 /// for a project: parses/dispatches incoming client messages via [`handle_client_msg`],
 /// relays broadcast updates from other clients, and on disconnect removes the client from
@@ -527,18 +537,52 @@ pub async fn websocket<'a>(
         let mut document_id : Option<uuid::Uuid> = None;
         let mut broadcast_rx : Option<broadcast::Receiver<BroadcastMessage>> = None;
 
-        loop {
+        let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        heartbeat.tick().await; // the first tick completes immediately
+        let mut last_activity = tokio::time::Instant::now();
+
+        'conn: loop {
             tokio::select! {
+                // Keep the connection from looking idle to proxies
+                _ = heartbeat.tick() => {
+                    if last_activity.elapsed() > HEARTBEAT_TIMEOUT {
+                        info!("WebSocket client {} timed out, no frames for {:?} (document {:?})", client_id, last_activity.elapsed(), document_id);
+                        break;
+                    }
+                    if let Err(e) = stream.send(ws::Message::Ping(Vec::new())).await {
+                        info!("WebSocket client {} gone, failed to send heartbeat ping: {}", client_id, e);
+                        break;
+                    }
+                },
                 // Handle messages from the client
                 msg_result = stream.next() => {
                     let result = match msg_result {
                         Some(result) => result,
-                        None => break, // Stream closed
+                        None => {
+                            info!("WebSocket client {} closed the stream (document {:?})", client_id, document_id);
+                            break;
+                        }
                     };
                     let msg = match result {
                         Ok(msg) => msg,
-                        Err(_) => break, // Connection closed
+                        Err(e) => {
+                            info!("WebSocket client {} connection error (document {:?}): {}", client_id, document_id, e);
+                            break;
+                        }
                     };
+
+                    last_activity = tokio::time::Instant::now();
+
+                    match msg {
+                        // Control frames carry no protocol message (browsers answer our pings with pongs).
+                        ws::Message::Ping(_) | ws::Message::Pong(_) => continue,
+                        ws::Message::Close(frame) => {
+                            info!("WebSocket client {} sent close frame {:?} (document {:?})", client_id, frame, document_id);
+                            break;
+                        }
+                        _ => {}
+                    }
 
                     let data = msg.into_data();
                     let ws_msg = match WebsocketMessage::try_from(data) {
@@ -574,7 +618,7 @@ pub async fn websocket<'a>(
                                 let data: Vec<u8> = error_ws_msg.into();
                                 if let Err(e) = stream.send(data.into()).await {
                                     error!("Failed to send error message: {}", e);
-                                    break;
+                                    break 'conn;
                                 }
                             }
                             continue;
@@ -598,7 +642,7 @@ pub async fn websocket<'a>(
                                 let data: Vec<u8> = response.into();
                                 if let Err(e) = stream.send(data.into()).await {
                                     error!("Failed to send response: {}", e);
-                                    break;
+                                    break 'conn;
                                 }
                             }
                         }
@@ -612,18 +656,30 @@ pub async fn websocket<'a>(
                     }
                 },
                 // Handle messages from the broadcast channel
-                Some(broadcast_msg) = async {
-                    if let Some(rx) = broadcast_rx.as_mut() {
-                        rx.recv().await.ok()
-                    } else {
-                        None
+                Some(recv_result) = async {
+                    match broadcast_rx.as_mut() {
+                        Some(rx) => Some(rx.recv().await),
+                        None => None,
                     }
                 } => {
-                    if broadcast_msg.sender_id != client_id { // Don't send messages back to the sender
-                        let data: Vec<u8> = broadcast_msg.message.into();
-                        if let Err(e) = stream.send(data.into()).await {
-                            error!("Failed to send broadcast message: {}", e);
+                    match recv_result {
+                        Ok(broadcast_msg) => {
+                            if broadcast_msg.sender_id != client_id { // Don't send messages back to the sender
+                                let data: Vec<u8> = broadcast_msg.message.into();
+                                if let Err(e) = stream.send(data.into()).await {
+                                    error!("Failed to send broadcast message: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            // Updates were lost for this client; closing makes it reconnect and
+                            // resync (CONNECT/GETDOC + push of its local state) instead of diverging.
+                            warn!("WebSocket client {} lagged behind and missed {} broadcast messages, closing connection to force a resync", client_id, skipped);
                             break;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            broadcast_rx = None;
                         }
                     }
                 },
@@ -684,12 +740,28 @@ async fn handle_client_msg(
             *document_id = Some(msg.document_id);
             let doc_id = msg.document_id;
 
-            let state = websocket_manager
+            let Some(state) = websocket_manager
                 .get_or_load_from_storage(project_id, &doc_id, Some(client_id))
                 .await
-                .unwrap();
+            else {
+                *document_id = None;
+                return Err(ErrorMessage {
+                    status: 404,
+                    error: "Document could not be loaded.".to_string(),
+                });
+            };
 
             broadcast_rx.replace(state.broadcast_tx.subscribe());
+            drop(state); // release the read guard before taking the write guard below
+
+            // Loading a document registers the client, but joining an already-loaded one (e.g. a
+            // second collaborator or a reconnect) doesn't. Without this the client wouldn't count as
+            // active and the document would be saved and evicted while it is still connected.
+            if let Some(mut state) = websocket_manager.get_document_mut(&doc_id)
+                && !state.active_clients.contains(client_id)
+            {
+                state.active_clients.push(*client_id);
+            }
 
             let responses = vec![WebsocketMessage::WELCOME(WelcomeMessage {
                 client_id: *client_id,
@@ -997,6 +1069,54 @@ mod tests {
             .save_document_to_storage(&other_project, &section_id, &pool, &settings)
             .await;
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn connect_registers_every_client_on_an_already_loaded_document(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let project_id = seed_project(&pool).await;
+        let section_id: Uuid = sqlx::query_scalar!(
+            "INSERT INTO sections (project_id, position, title) VALUES ($1, 1000, 'S') RETURNING id",
+            project_id
+        )
+        .fetch_one(&pool)
+        .await?;
+
+        let settings = Arc::new(dummy_settings());
+        let manager = Arc::new(WebsocketManager::new(pool.clone(), settings.clone()));
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+
+        // Two sessions (a collaborator, or the same user after a reconnect) CONNECT in turn.
+        for client_id in [first, second] {
+            let mut document_id = None;
+            let mut broadcast_rx = None;
+            let responses = handle_client_msg(
+                WebsocketMessage::CONNECT(ConnectMessage {
+                    document_id: section_id,
+                }),
+                &client_id,
+                &project_id,
+                &mut document_id,
+                &mut broadcast_rx,
+                manager.clone(),
+                pool.clone(),
+                &settings,
+            )
+            .await
+            .expect("CONNECT should succeed");
+            assert!(matches!(
+                responses.as_slice(),
+                [WebsocketMessage::WELCOME(_)]
+            ));
+            assert!(broadcast_rx.is_some());
+        }
+
+        // Otherwise the first session leaving would empty the list and evict the document under
+        // the second one.
+        let state = manager.get_document(&section_id).unwrap();
+        assert_eq!(state.active_clients, vec![first, second]);
         Ok(())
     }
 }

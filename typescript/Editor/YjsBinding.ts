@@ -14,7 +14,7 @@ const DEBUG_YJS_UPDATES = false;
  *
  * Responsibilities:
  * - Maintain a local `Y.Doc`.
- * - Request initial document state after `welcome`.
+ * - Redo the CONNECT handshake on every (re)connect and request the document state after `welcome`.
  * - Apply server updates (`origin = 'server'`).
  * - Send local updates back to the server (everything except `origin = 'server'`).
  *
@@ -32,6 +32,19 @@ export function YjsBinding(projectId: string, documentId: string) {
      * @param documentId The document id to connect to.
      */
     function setupWebsocket(documentId: string) {
+        // Set after a reconnect: local edits made while offline never reached the server, so once the
+        // server state has been merged we push our full state (Yjs updates are idempotent).
+        let pushLocalStateAfterSync = false;
+
+        // Every (re)connection is a new server-side session that doesn't know the document yet, so the
+        // CONNECT -> WELCOME -> GETDOC handshake has to be repeated each time the socket opens.
+        ws.on('open', ({reconnect}) => {
+            if (destroyed) return;
+            console.log(reconnect ? 'WebSocket reopened, sending CONNECT...' : 'WebSocket open, sending CONNECT...');
+            pushLocalStateAfterSync = reconnect;
+            ws.sendConnect(documentId);
+        });
+
         ws.on('welcome', () => {
             if (destroyed) return;
             console.log('Received welcome from server, requesting document state...');
@@ -45,7 +58,12 @@ export function YjsBinding(projectId: string, documentId: string) {
             if (destroyed) return;
             console.log('Received document update, length:', update.length);
             Y.applyUpdate(doc, update, 'server');
-            
+
+            if (pushLocalStateAfterSync) {
+                pushLocalStateAfterSync = false;
+                ws.sendDocUpdate(Y.encodeStateAsUpdate(doc));
+            }
+
             trigger('update', doc);
 
             if (DEBUG_YJS_UPDATES) {
@@ -82,11 +100,7 @@ export function YjsBinding(projectId: string, documentId: string) {
             console.error('YjsBinding websocket error:', err);
         });
 
-        ws.connect().then(() => {
-            if (destroyed) return;
-            console.log('WebSocket open, sending CONNECT...');
-            ws.sendConnect(documentId);
-        }).catch(err => {
+        ws.connect().catch(err => {
             if (destroyed) return;
             console.error('Failed to connect to websocket:', err);
         });

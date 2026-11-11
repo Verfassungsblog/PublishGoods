@@ -39,7 +39,13 @@ export interface ErrorMessage {
     error: string;
 }
 
+export interface OpenMessage {
+    /** True if this is a re-established connection (not the first one of this client). */
+    reconnect: boolean;
+}
+
 export type WebsocketEventMap = {
+    'open': OpenMessage;
     'welcome': WelcomeMessage;
     'docUpdate': Uint8Array;
     'receivedDocUpdate': null;
@@ -54,44 +60,89 @@ export function WebsocketClient(projectId: string) {
     let clientId: string | null = null;
     let connection_end_requested: boolean = false;
     let first_connection: boolean = true;
+    let connection_lost_alerted: boolean = false;
+    let reconnect_attempts: number = 0;
+    let reconnect_timer: ReturnType<typeof setTimeout> | null = null;
 
     const handlers: { [K in keyof WebsocketEventMap]?: ((data: WebsocketEventMap[K]) => void)[] } = {};
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${window.location.host}/api/projects/${projectId}/websocket`;
 
+    const RECONNECT_BASE_DELAY_MS = 1000;
+    const RECONNECT_MAX_DELAY_MS = 30000;
+
+    /**
+     * Exponential backoff with jitter: ~1s, 2s, 4s, ... capped at 30s (each randomized to 50-100%).
+     */
+    function nextReconnectDelay(): number {
+        const exp = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** reconnect_attempts);
+        reconnect_attempts++;
+        return exp * (0.5 + Math.random() * 0.5);
+    }
+
+    function scheduleReconnect(): void {
+        if (reconnect_timer !== null) return;
+        const delay = nextReconnectDelay();
+        reconnect_timer = setTimeout(() => {
+            reconnect_timer = null;
+            if (connection_end_requested) return;
+            // Failures are handled by onclose scheduling the next attempt.
+            connect().catch(() => {});
+        }, delay);
+    }
+
     function connect(): Promise<void> {
         return new Promise((resolve, reject) => {
-            ws = new WebSocket(url);
-            ws.binaryType = 'arraybuffer';
+            const socket = new WebSocket(url);
+            ws = socket;
+            socket.binaryType = 'arraybuffer';
+            let opened = false;
+            let opened_time = 0;
 
-            ws.onopen = () => {
+            socket.onopen = () => {
+                opened = true;
+                opened_time = performance.now();
                 console.log('WebSocket connected');
-                // Signal to user that connection is restored if not first connection
-                if(!first_connection) {
-                    show_alert('Verbindung zum Server wiederhergestellt!', 'success');
-                }else{
-                    first_connection = false;
-                }
+                // Also a reconnect if the very first attempts failed and an alert was shown.
+                const reconnect = !first_connection || connection_lost_alerted;
+                first_connection = false;
                 resolve();
+                // Every (re)connection is a fresh server-side session, so listeners must redo the handshake.
+                trigger('open', { reconnect });
             };
 
-            ws.onerror = (error) => {
+            socket.onerror = (error) => {
                 console.error('WebSocket error:', error);
-                reject(error);
+                // Only meaningful while the promise is still pending; rejecting a settled promise is a no-op.
+                if (!opened) reject(error);
             };
 
-            ws.onmessage = (event) => {
+            socket.onmessage = (event) => {
                 handleMessage(event.data);
             };
 
-            ws.onclose = () => {
+            socket.onclose = (event) => {
+                // Ignore close events of sockets that were already replaced (but don't strand their promise).
+                if (ws !== socket) {
+                    if (!opened) reject(new Error(`WebSocket replaced before opening (code ${event.code})`));
+                    return;
+                }
                 ws = null;
+                clientId = null;
+                console.log(
+                    `WebSocket closed: code=${event.code} reason=${JSON.stringify(event.reason)} ` +
+                    `wasClean=${event.wasClean} openFor=${opened ? Math.round(performance.now() - opened_time) + 'ms' : 'never opened'}`
+                );
+                if (!opened) reject(new Error(`WebSocket closed before opening (code ${event.code})`));
                 if(!connection_end_requested) { // Only try to reconnect if disconnect wasn't requested by the user
                     console.log('WebSocket closed. Trying to reconnect...');
-                    // Signal to user that connection is lost
-                    show_alert('Verbindung zum Server verloren. Versuche, die Verbindung wiederherzustellen...', 'warning');
-                    setTimeout(connect, 1000);
+                    // Signal to user that connection is lost (once, not per retry)
+                    if (!connection_lost_alerted) {
+                        connection_lost_alerted = true;
+                        show_alert('Verbindung zum Server verloren. Versuche, die Verbindung wiederherzustellen...', 'warning');
+                    }
+                    scheduleReconnect();
                 }
             };
         });
@@ -122,6 +173,14 @@ export function WebsocketClient(projectId: string) {
             case WebsocketMessageType.WELCOME:
                 const welcome: WelcomeMessage = JSON.parse(new TextDecoder().decode(payload));
                 clientId = welcome.client_id;
+                // Only now is the connection proven usable: the server accepted the session. Resetting
+                // the backoff on mere socket open would let a server that accepts and immediately closes
+                // be retried at the minimum delay forever.
+                reconnect_attempts = 0;
+                if (connection_lost_alerted) {
+                    connection_lost_alerted = false;
+                    show_alert('Verbindung zum Server wiederhergestellt!', 'success');
+                }
                 trigger('welcome', welcome);
                 break;
             case WebsocketMessageType.DOCUPDATE:
@@ -185,9 +244,14 @@ export function WebsocketClient(projectId: string) {
     function sendDisconnect(): void {
         connection_end_requested = true;
         first_connection = true;
-        if (!clientId) return;
-        const msg: DisconnectMessage = { client_id: clientId };
-        sendJson(WebsocketMessageType.DISCONNECT, msg);
+        if (reconnect_timer !== null) {
+            clearTimeout(reconnect_timer);
+            reconnect_timer = null;
+        }
+        if (clientId && ws && ws.readyState === WebSocket.OPEN) {
+            const msg: DisconnectMessage = { client_id: clientId };
+            sendJson(WebsocketMessageType.DISCONNECT, msg);
+        }
         ws?.close();
     }
 
