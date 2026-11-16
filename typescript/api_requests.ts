@@ -130,6 +130,7 @@ export interface WeasyprintExportStep{
     input_file: string;
     output_file: string;
     pdf_variant: PdfVariant;
+    xmp_metadata_files?: string[] | null;
 }
 
 export enum PdfVariant{

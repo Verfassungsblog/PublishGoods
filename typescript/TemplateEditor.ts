@@ -537,6 +537,12 @@ async function save_export_steps() {
             let input_file = (export_step.getElementsByClassName("export_step_weasyprint_input_file")[0] as HTMLInputElement).value || null;
             let output_file = (export_step.getElementsByClassName("export_step_weasyprint_output_file")[0] as HTMLInputElement).value || null;
             let pdf_variant = (export_step.getElementsByClassName("export_step_weasyprint_pdf_variant")[0] as HTMLInputElement).value || null;
+            let xmp_metadata_files_raw = (export_step.getElementsByClassName("export_step_weasyprint_xmp_metadata_files")[0] as HTMLTextAreaElement).value || "";
+            // One path per line, optional: empty lines are ignored, no entries -> null
+            let xmp_metadata_files: string[] | null = xmp_metadata_files_raw.split("\n").map(entry => entry.trim()).filter(entry => entry !== "");
+            if (xmp_metadata_files.length === 0) {
+                xmp_metadata_files = null;
+            }
 
             //Check if all required filled out
             if (!name || !input_file || !output_file) {
@@ -562,7 +568,8 @@ async function save_export_steps() {
                     "Weasyprint": {
                         input_file,
                         output_file,
-                        pdf_variant: parsed_pdf_variant
+                        pdf_variant: parsed_pdf_variant,
+                        xmp_metadata_files
                     }
                 },
                 files_to_keep: [output_file]

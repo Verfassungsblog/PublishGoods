@@ -33,5 +33,7 @@
             <option value="PDFUA1" {{#is data.Weasyprint.pdf_variant "PDFUA1"}}selected{{/is}}>PDF/UA-1</option>
             <option value="DEBUG" {{#is data.Weasyprint.pdf_variant "DEBUG"}}selected{{/is}}>debug</option>
         </select>
+        <label for="{{id}}_xmp_metadata_files">XMP Metadata Files (optional, one path per line)</label>
+        <textarea id="{{id}}_xmp_metadata_files" class="form-control export_step_weasyprint_xmp_metadata_files autosave" placeholder="e.g. metadata.xmp">{{#each data.Weasyprint.xmp_metadata_files}}{{this}}&#10;{{/each}}</textarea>
     </div>
 </div>
