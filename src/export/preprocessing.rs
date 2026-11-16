@@ -435,6 +435,7 @@ pub async fn render_section(
         identifiers: section.metadata.identifiers,
         published,
         lang: section.metadata.lang,
+        custom_fields: section.metadata.custom_fields,
     };
 
     let mut content = vec![];
