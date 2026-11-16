@@ -202,7 +202,7 @@ pub async fn prepare_project(
         volume: metadata.volume,
         edition: metadata.edition,
         publisher: metadata.publisher,
-        custom_fields: metadata.custom_fields,
+        custom_fields: metadata.custom_fields.into(),
     };
 
     Ok(PreparedProject {
@@ -435,7 +435,7 @@ pub async fn render_section(
         identifiers: section.metadata.identifiers,
         published,
         lang: section.metadata.lang,
-        custom_fields: section.metadata.custom_fields,
+        custom_fields: section.metadata.custom_fields.into(),
     };
 
     let mut content = vec![];
