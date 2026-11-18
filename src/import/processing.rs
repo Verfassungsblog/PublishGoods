@@ -614,6 +614,7 @@ impl ImportProcessor {
         // Add co authors if any
         for post in posts.iter_mut() {
             let _ = api.add_coauthors(post).await;
+            let _ = api.add_resolved_tags(post).await;
         }
 
         let number_of_posts = posts.len();
@@ -809,6 +810,7 @@ impl ImportProcessor {
             // Add co authors if any
             for post in posts.iter_mut() {
                 let _ = api.add_coauthors(post).await;
+                let _ = api.add_resolved_tags(post).await;
             }
 
             for post in posts {
@@ -1238,6 +1240,17 @@ impl ImportProcessor {
             serde_json::json!(post.categories),
         );
         custom_fields.insert("wp_tags".to_string(), serde_json::json!(post.tags));
+        if let Some(tags_resolved) = &post.tags_resolved {
+            // WordPress html-encodes tag names (e.g. `&amp;`)
+            let tags_resolved: Vec<String> = tags_resolved
+                .iter()
+                .map(|name| html_to_plain_text(name))
+                .collect();
+            custom_fields.insert(
+                "wp_tags_resolved".to_string(),
+                serde_json::json!(tags_resolved),
+            );
+        }
         if let Some(acf) = &post.acf
             && let Ok(acf) = serde_json::to_value(acf)
         {
@@ -1311,6 +1324,7 @@ impl ImportProcessor {
         // Add co authors if any
         for post in posts.iter_mut() {
             let _ = api.add_coauthors(post).await;
+            let _ = api.add_resolved_tags(post).await;
         }
 
         if posts.len() != 1 {
@@ -3565,6 +3579,92 @@ mod tests {
             .await?;
         assert_eq!(sections, 0);
         Ok(())
+    }
+
+    fn test_post(tags: Vec<usize>, tags_resolved: Option<Vec<&str>>) -> Post {
+        let mut post: Post = serde_json::from_value(serde_json::json!({
+            "date_gmt": "2024-01-02T03:04:05",
+            "id": 1,
+            "link": "https://example.org/post",
+            "modified_gmt": "2024-01-03T03:04:05",
+            "slug": "post",
+            "type": "post",
+            "title": {"rendered": "Title"},
+            "content": {"rendered": "<p>Hello</p>"},
+            "excerpt": {"rendered": ""},
+            "author": 1,
+            "featured_media": 0,
+            "categories": [],
+            "tags": tags,
+        }))
+        .unwrap();
+        post.tags_resolved = tags_resolved.map(|t| t.into_iter().map(String::from).collect());
+        post
+    }
+
+    async fn build_test_post(pool: &PgPool, post: Post) -> ImportedSection {
+        make_processor(pool.clone())
+            .build_wp_post(
+                post,
+                &MediaStore {
+                    dir: PathBuf::from("/tmp/vb-test-unused-media"),
+                    url_prefix: "/unused".to_string(),
+                },
+                false,
+                false,
+                false,
+                vec![],
+                vec![],
+            )
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn resolved_wp_tags_are_stored_as_decoded_string_list(pool: PgPool) -> sqlx::Result<()> {
+        let post = test_post(vec![3, 7], Some(vec!["Rule of Law", "Recht &amp; Politik"]));
+        let imported = build_test_post(&pool, post).await;
+
+        let fields = &imported.section.metadata.custom_fields;
+        assert_eq!(fields["wp_tags"], serde_json::json!([3, 7]));
+        assert_eq!(
+            fields["wp_tags_resolved"],
+            serde_json::json!(["Rule of Law", "Recht & Politik"])
+        );
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn wp_tags_resolved_is_omitted_when_tags_were_not_resolved(
+        pool: PgPool,
+    ) -> sqlx::Result<()> {
+        let post = test_post(vec![3], None);
+        let imported = build_test_post(&pool, post).await;
+
+        let fields = &imported.section.metadata.custom_fields;
+        assert_eq!(fields["wp_tags"], serde_json::json!([3]));
+        assert!(!fields.contains_key("wp_tags_resolved"));
+        Ok(())
+    }
+
+    /// Live test against verfassungsblog.de. Requires network access.
+    #[tokio::test]
+    async fn add_resolved_tags_resolves_ids_of_a_real_post() {
+        let api = WordpressAPI::new("verfassungsblog.de".to_string()).unwrap();
+        let mut post = api.get_post(79100).await.unwrap();
+        post.tags_resolved = None;
+        api.add_resolved_tags(&mut post).await.unwrap();
+
+        if post.tags.is_empty() {
+            assert!(post.tags_resolved.is_none());
+        } else {
+            let resolved = post.tags_resolved.expect("tags should be resolved");
+            // WordPress can list tag ids whose term no longer exists (e.g. 11547 on this
+            // post); `/tags?post=` doesn't return those, so there can be fewer names than ids.
+            assert!(!resolved.is_empty());
+            assert!(resolved.len() <= post.tags.len());
+            assert!(resolved.iter().all(|name| !name.trim().is_empty()));
+        }
     }
 
     #[sqlx::test]
