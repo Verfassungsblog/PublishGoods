@@ -1026,13 +1026,10 @@ impl ImportProcessor {
             return fallback();
         }
 
-        // Bios with a known language go first, so they win over an identical default bio.
-        let mut wp_bios = wp_bios;
-        wp_bios.sort_by_key(|b| b.lang.is_none());
         let mut bios: Vec<Biography> = Vec::new();
         for wp_bio in wp_bios {
             let content = html_to_plain_text(&wp_bio.html);
-            if content.is_empty() || bios.iter().any(|b| b.content == content) {
+            if content.is_empty() {
                 continue;
             }
             let lang = wp_bio.lang.or_else(|| {
