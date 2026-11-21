@@ -7,25 +7,22 @@
             <h1 class="d-inline">Projects</h1><a href="/projects/create" class="btn d-flex align-content-center btn-outline-success align-self-center ms-2" style="flex-wrap: wrap; height: 80%;">+</a>
         </div>
     </div>
-    <div class="project_list">
-        <div class="row list_row">
-            <div class="col d-flex align-content-center flex-wrap">
-                <b>Name</b>
-            </div>
-        </div>
-        {{#each projects}}
-            {{#if Folder}}
-                Folders aren't supported yet.
-            {{/if}}
-            {{#if Project}}
+    {{#each teams}}
+        <div class="project_list team_project_list mb-3">
+            <h2 class="team_project_list_title">{{team_name}}</h2>
+            {{#each projects}}
                 <div class="row list_row">
                     <div class="col d-flex align-content-center flex-wrap">
-                        <a href="/projects/{{Project.id}}">{{Project.name}}</a>
+                        <a href="/projects/{{id}}">{{name}}</a>
                     </div>
                 </div>
-            {{/if}}
-        {{/each}}
-    </div>
+            {{else}}
+                <p class="templates_list_empty">This team has no projects yet.</p>
+            {{/each}}
+        </div>
+    {{else}}
+        <p class="templates_list_empty">You aren't a member of any team yet, so there are no projects to show.</p>
+    {{/each}}
 </div>
 <footer class="footer">
     <div class="container-fluid">

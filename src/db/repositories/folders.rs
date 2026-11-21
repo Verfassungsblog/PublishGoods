@@ -75,6 +75,61 @@ pub async fn get_project_list_tree(pool: &PgPool, user_id: Uuid) -> Result<Proje
     })
 }
 
+/// The projects of one team, as shown on the dashboard.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TeamProjects {
+    pub team_id: Uuid,
+    pub team_name: String,
+    /// Most recently used first.
+    pub projects: Vec<ProjectListProject>,
+}
+
+/// Returns every team `user_id` belongs to (ordered by name, empty teams included) together
+/// with that team's projects, most recently used first. Folders are not part of this view.
+pub async fn get_projects_by_team(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> Result<Vec<TeamProjects>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT t.id AS team_id, t.name AS team_name,
+                  p.id AS "project_id?", p.title AS "title?",
+                  p.last_interaction AS "last_interaction?"
+           FROM teams t
+           JOIN users_teams ut ON ut.team_id = t.id
+           LEFT JOIN projects p ON p.owner_team_id = t.id
+           WHERE ut.user_id = $1
+           ORDER BY t.name, t.id, p.last_interaction DESC, p.id"#,
+        user_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut teams: Vec<TeamProjects> = Vec::new();
+    for row in rows {
+        if teams.last().is_none_or(|t| t.team_id != row.team_id) {
+            teams.push(TeamProjects {
+                team_id: row.team_id,
+                team_name: row.team_name,
+                projects: Vec::new(),
+            });
+        }
+        if let (Some(id), Some(name), Some(last_interaction)) =
+            (row.project_id, row.title, row.last_interaction)
+        {
+            teams
+                .last_mut()
+                .expect("a team was just pushed")
+                .projects
+                .push(ProjectListProject {
+                    id,
+                    name,
+                    last_interaction: last_interaction.naive_utc(),
+                });
+        }
+    }
+    Ok(teams)
+}
+
 /// Updates a project's `last_interaction` timestamp to now. Fails with
 /// [`DbError::NotFound`] if no project with that id exists.
 pub async fn touch_project_last_interaction<'e>(
@@ -144,6 +199,46 @@ mod tests {
             })
             .unwrap();
         assert_eq!(folder.children.len(), 1);
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn projects_are_grouped_per_team_including_empty_teams(pool: PgPool) -> sqlx::Result<()> {
+        let default_team = users::ensure_default_team(&pool).await.unwrap();
+        let alice = users::insert(&pool, "alice@example.com", "Alice", "hash", default_team)
+            .await
+            .unwrap();
+        let personal_team: Uuid = sqlx::query_scalar!(
+            "SELECT team_id FROM users_teams WHERE user_id = $1 AND team_id <> $2",
+            alice.id,
+            default_team
+        )
+        .fetch_one(&pool)
+        .await?;
+        let other_team: Uuid =
+            sqlx::query_scalar!("INSERT INTO teams (name) VALUES ('Other') RETURNING id")
+                .fetch_one(&pool)
+                .await?;
+
+        // "Old" is inserted last but is the older one, so insertion order can't satisfy the assertion
+        let new = seed_project(&pool, "New", None, default_team).await;
+        let old = seed_project(&pool, "Old", None, default_team).await;
+        sqlx::query!(
+            "UPDATE projects SET last_interaction = now() - interval '2 days' WHERE id = $1",
+            old
+        )
+        .execute(&pool)
+        .await?;
+        seed_project(&pool, "Not mine", None, other_team).await;
+
+        let teams = get_projects_by_team(&pool, alice.id).await.unwrap();
+        assert_eq!(teams.len(), 2);
+        let personal = teams.iter().find(|t| t.team_id == personal_team).unwrap();
+        assert!(personal.projects.is_empty());
+        let shared = teams.iter().find(|t| t.team_id == default_team).unwrap();
+        assert_eq!(shared.projects.len(), 2);
+        let order: Vec<Uuid> = shared.projects.iter().map(|p| p.id).collect();
+        assert_eq!(order, [new, old]);
         Ok(())
     }
 

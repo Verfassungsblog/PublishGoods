@@ -1,43 +1,38 @@
-use crate::db::repositories::folders;
+use crate::db::repositories::folders::{self, TeamProjects};
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
-use crate::storage::data_storage::current::ProjectListEntry;
 use rocket::State;
 use rocket_dyn_templates::Template;
 use sqlx::PgPool;
 
-/// Renders the dashboard page listing all projects and folders, sorted with folders
-/// first and projects ordered by most recent interaction.
+/// Renders the dashboard page listing the user's projects grouped by team, with each team's
+/// projects ordered by most recent interaction.
 #[get("/")]
 pub async fn list_projects(
     session: Session,
     pool: &State<PgPool>,
     settings: &State<Settings>,
 ) -> Template {
-    let mut projects = folders::get_project_list_tree(pool.inner(), session.user_id)
+    let teams = folders::get_projects_by_team(pool.inner(), session.user_id)
         .await
-        .map(|tree| tree.entries)
-        .unwrap_or_default();
-    projects.sort_by(|b, a| match a {
-        ProjectListEntry::Folder(_) => std::cmp::Ordering::Greater,
-        ProjectListEntry::Project(project) => match b {
-            ProjectListEntry::Folder(_) => std::cmp::Ordering::Equal,
-            ProjectListEntry::Project(project_b) => {
-                project.last_interaction.cmp(&project_b.last_interaction)
-            }
-        },
-    });
+        .unwrap_or_else(|e| {
+            error!(
+                "Couldn't load the project list of user {}: {}",
+                session.user_id, e
+            );
+            Vec::new()
+        });
 
     #[derive(serde::Serialize)]
     struct DashboardData<'a> {
-        projects: Vec<ProjectListEntry>,
+        teams: Vec<TeamProjects>,
         version: &'a str,
     }
 
     Template::render(
         "dashboard",
         DashboardData {
-            projects,
+            teams,
             version: &settings.version,
         },
     )
