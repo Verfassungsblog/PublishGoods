@@ -1,8 +1,8 @@
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
+use rocket::State;
 use rocket::fs::NamedFile;
 use rocket::http::Status;
-use rocket::State;
 
 /// GET /download/renderings/<id>
 ///

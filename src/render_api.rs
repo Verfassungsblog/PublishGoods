@@ -5,6 +5,7 @@
 //! rendering pipeline and the results are offered as download links that expire after one hour.
 use crate::db::repositories::templates::{self, Template};
 
+use crate::permissions::{ResourceType, has_permission, has_permission_for_persons};
 use crate::session::session_guard::APISession;
 use crate::utils::api_helpers::{ApiError, ApiErrorType};
 use rocket::State;
@@ -1217,13 +1218,33 @@ mod inner {
             Client::tracked(rocket).await.unwrap()
         }
 
-        fn minimal_request_body(job_id: Uuid) -> serde_json::Value {
+        /// A template of the `Default` team, which the user of [`seed_api_key`] is a member of.
+        async fn seed_template(pool: &PgPool) -> Uuid {
+            let default_team = users::ensure_default_team(pool).await.unwrap();
+            crate::db::repositories::templates::insert(pool, default_team, "Book", "")
+                .await
+                .unwrap()
+        }
+
+        /// A template of a team the user of [`seed_api_key`] is not a member of.
+        async fn seed_foreign_template(pool: &PgPool) -> Uuid {
+            let team =
+                sqlx::query_scalar!("INSERT INTO teams (name) VALUES ('Other') RETURNING id")
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            crate::db::repositories::templates::insert(pool, team, "Foreign", "")
+                .await
+                .unwrap()
+        }
+
+        fn minimal_request_body(job_id: Uuid, template_id: Uuid) -> serde_json::Value {
             serde_json::json!({
                 "job_id": job_id,
                 "data_source": { "WordPressByURL": "https://example.org/2024/01/01/my-post/" },
                 "rendering_settings": {
                     "add_soft_hyphens": false,
-                    "template_id": Uuid::new_v4(),
+                    "template_id": template_id,
                     "export_formats": ["pdf"]
                 }
             })
@@ -1236,6 +1257,7 @@ mod inner {
             let data_dir = isolated_data_dir();
             let settings = test_settings(data_dir.to_string_lossy().to_string());
             let (_, api_key) = seed_api_key(&pool).await;
+            let template_id = seed_template(&pool).await;
             let client = test_client(pool, settings).await;
 
             let job_id = Uuid::new_v4();
@@ -1243,7 +1265,7 @@ mod inner {
                 .post("/api/v1/rendering_jobs")
                 .header(rocket::http::ContentType::JSON)
                 .header(Header::new("X-API-KEY", api_key))
-                .body(minimal_request_body(job_id).to_string())
+                .body(minimal_request_body(job_id, template_id).to_string())
                 .dispatch()
                 .await;
 
@@ -1268,10 +1290,11 @@ mod inner {
             let data_dir = isolated_data_dir();
             let settings = test_settings(data_dir.to_string_lossy().to_string());
             let (_, api_key) = seed_api_key(&pool).await;
+            let template_id = seed_template(&pool).await;
             let client = test_client(pool, settings).await;
 
             let job_id = Uuid::new_v4();
-            let body = minimal_request_body(job_id).to_string();
+            let body = minimal_request_body(job_id, template_id).to_string();
             let first = client
                 .post("/api/v1/rendering_jobs")
                 .header(rocket::http::ContentType::JSON)
@@ -1301,9 +1324,10 @@ mod inner {
             let data_dir = isolated_data_dir();
             let settings = test_settings(data_dir.to_string_lossy().to_string());
             let (_, api_key) = seed_api_key(&pool).await;
+            let template_id = seed_template(&pool).await;
             let client = test_client(pool, settings).await;
 
-            let mut body = minimal_request_body(Uuid::new_v4());
+            let mut body = minimal_request_body(Uuid::new_v4(), template_id);
             body["webhook_url"] = serde_json::json!("not a url");
 
             let response = client
@@ -1387,9 +1411,11 @@ mod inner {
             let data_dir = isolated_data_dir();
             let settings = test_settings(data_dir.to_string_lossy().to_string());
             let (_, api_key) = seed_api_key(&pool).await;
-            let template_id = templates_repo::insert(&pool, "Book", "A book template")
-                .await
-                .unwrap();
+            let default_team = users::ensure_default_team(&pool).await.unwrap();
+            let template_id =
+                templates_repo::insert(&pool, default_team, "Book", "A book template")
+                    .await
+                    .unwrap();
             for (slug, name) in [("pdf", "PDF"), ("epub", "EPUB")] {
                 templates_repo::insert_export_format(
                     &pool,
@@ -1447,6 +1473,44 @@ mod inner {
             let _ = std::fs::remove_dir_all(&data_dir);
             Ok(())
         }
+
+        #[sqlx::test]
+        async fn templates_of_other_teams_are_invisible_and_unusable(
+            pool: PgPool,
+        ) -> sqlx::Result<()> {
+            let data_dir = isolated_data_dir();
+            let settings = test_settings(data_dir.to_string_lossy().to_string());
+            let (_, api_key) = seed_api_key(&pool).await;
+            let foreign = seed_foreign_template(&pool).await;
+            let client = test_client(pool, settings).await;
+
+            let list = client
+                .get("/api/v1/templates")
+                .header(Header::new("X-API-KEY", api_key.clone()))
+                .dispatch()
+                .await;
+            assert_eq!(list.status(), Status::Ok);
+            assert_eq!(list.into_string().await.unwrap(), "[]");
+
+            let single = client
+                .get(format!("/api/v1/templates/{foreign}"))
+                .header(Header::new("X-API-KEY", api_key.clone()))
+                .dispatch()
+                .await;
+            assert_eq!(single.status(), Status::NotFound);
+
+            let job = client
+                .post("/api/v1/rendering_jobs")
+                .header(rocket::http::ContentType::JSON)
+                .header(Header::new("X-API-KEY", api_key))
+                .body(minimal_request_body(Uuid::new_v4(), foreign).to_string())
+                .dispatch()
+                .await;
+            assert_eq!(job.status(), Status::NotFound);
+
+            let _ = std::fs::remove_dir_all(&data_dir);
+            Ok(())
+        }
     }
 }
 #[doc(hidden)]
@@ -1461,8 +1525,8 @@ pub use inner::*;
 /// explicitly to make the request idempotent (resubmitting the same `job_id` returns a 409
 /// Conflict instead of creating a second job). `data_source` accepts either a `WordPressByURL`
 /// variant (a link to a single post) or a `WordPressBySlug` variant (`host` + `slug`).
-/// `rendering_settings.template_id` and every entry of `export_formats` must exist on that
-/// template. `project_metadata` is optional; every one of its fields is optional too, and any
+/// `rendering_settings.template_id` must be a template of one of the key's user's teams (any
+/// other id yields a 404), and every entry of `export_formats` must exist on that template. `project_metadata` is optional; every one of its fields is optional too, and any
 /// field left out (or set to `null`) is instead derived from the imported post.
 ///
 /// Example request body:
@@ -1564,8 +1628,16 @@ pub async fn add_render_job(
         }
         ids
     };
-    crate::permissions::has_permission_for_persons(pool, &referenced_persons, api_session.user_id)
-        .await?;
+    has_permission_for_persons(pool, &referenced_persons, api_session.user_id).await?;
+    // Templates are team-owned: only accept a template of one of the key's user's teams.
+    has_permission(
+        pool,
+        ResourceType::Template,
+        data.rendering_settings.template_id,
+        api_session.user_id,
+        None,
+    )
+    .await?;
 
     match manager.submit(api_session.user_id, data.into_inner()).await {
         Ok(status) => {
@@ -1699,7 +1771,7 @@ impl From<Template> for ApiTemplate {
 
 /// GET /api/v1/templates
 ///
-/// Lists all available templates together with their export formats, ordered by template name
+/// Lists the templates of every team the key's user is a member of, together with their export formats, ordered by template name
 /// (export formats by slug). Requires the `X-API-KEY` header. The `id` of a template and the
 /// `slug` of one of its export formats are what `rendering_settings.template_id` and
 /// `rendering_settings.export_formats` of `POST /api/v1/rendering_jobs` expect.
@@ -1720,24 +1792,26 @@ impl From<Template> for ApiTemplate {
 /// ```
 #[get("/api/v1/templates")]
 pub async fn list_templates(
-    _api_session: APISession,
+    api_session: APISession,
     pool: &State<sqlx::PgPool>,
 ) -> Result<Json<Vec<ApiTemplate>>, ApiError> {
-    let templates = templates::list_all(pool.inner()).await?;
+    let templates = templates::list_for_user(pool.inner(), api_session.user_id).await?;
     Ok(Json(templates.into_iter().map(ApiTemplate::from).collect()))
 }
 
 /// GET /api/v1/templates/\<id\>
 ///
 /// Returns a single template (same shape as one entry of `GET /api/v1/templates`) including its
-/// export formats. Requires the `X-API-KEY` header. An unknown id yields a 404.
+/// export formats. Requires the `X-API-KEY` header. An unknown id, or a template of a team the
+/// key's user isn't a member of, yields a 404.
 #[get("/api/v1/templates/<id>")]
 pub async fn get_template(
-    _api_session: APISession,
+    api_session: APISession,
     pool: &State<sqlx::PgPool>,
     id: &str,
 ) -> Result<Json<ApiTemplate>, ApiError> {
     let id = Uuid::parse_str(id)?;
+    has_permission(pool, ResourceType::Template, id, api_session.user_id, None).await?;
     let template = templates::get(pool.inner(), id).await?;
     Ok(Json(template.into()))
 }

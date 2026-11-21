@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO persons_sections (section_id, role, position) VALUES ($1, 'author', 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "812baccaef989f9fb68fabeb65fe4cc6933e33f03c1d642d25e89511b251d1b0"
+}

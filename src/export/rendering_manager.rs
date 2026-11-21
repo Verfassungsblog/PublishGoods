@@ -217,7 +217,8 @@ impl RenderingManager {
         let description = projects::get_description(pool, request.project_id)
             .await
             .map_err(|_| RenderingError::ProjectNotFound)?;
-        let template_id = projects::get_template_id(pool, request.project_id)
+        // Only a template of the project's own team is rendered with
+        let template_id = projects::get_usable_template_id(pool, request.project_id)
             .await
             .map_err(|_| RenderingError::ProjectNotFound)?
             .ok_or(RenderingError::TemplateNotFound)?;

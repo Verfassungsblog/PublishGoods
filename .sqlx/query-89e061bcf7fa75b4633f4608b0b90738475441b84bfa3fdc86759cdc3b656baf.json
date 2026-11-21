@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE persons_sections\n         SET name = (SELECT concat_ws(' ', first_names, last_names) FROM persons WHERE id = $1),\n             person_id = NULL\n         WHERE person_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "89e061bcf7fa75b4633f4608b0b90738475441b84bfa3fdc86759cdc3b656baf"
+}

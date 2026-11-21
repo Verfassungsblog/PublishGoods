@@ -5,7 +5,7 @@ import {
     PersonsAPI,
     PersonUuidOrString,
     send_get_template_id_for_project,
-    send_list_templates,
+    send_list_project_templates,
     send_set_project_template
 } from "../api_requests";
 import {init, main_col} from "./Editor";
@@ -44,12 +44,15 @@ export async function show_project_metadata_settings(data: APIProjectData) {
     // Fetch templates + current template id to render selector
     try{
         const [templates, currentTmpl] = await Promise.all([
-            send_list_templates(),
+            send_list_project_templates(state.project_id),
             send_get_template_id_for_project(state.project_id)
         ]);
+        const available_templates = templates || [];
         const viewData = Object.assign({}, data, {
-            available_templates: templates || [],
-            current_template_id: currentTmpl || null
+            available_templates: available_templates,
+            current_template_id: currentTmpl || null,
+            // Only templates of the project's team can be used; flag a missing or foreign one
+            current_template_available: available_templates.some((t: any) => t.id === currentTmpl)
         });
         // @ts-ignore
         main_col.innerHTML = Handlebars.templates.editor_project_metadata_settings(viewData);

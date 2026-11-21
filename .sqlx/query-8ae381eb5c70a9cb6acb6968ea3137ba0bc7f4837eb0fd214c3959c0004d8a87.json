@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT folder FROM bibliography_entries WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "folder",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bibliography_entries",
+            "name": "folder"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "8ae381eb5c70a9cb6acb6968ea3137ba0bc7f4837eb0fd214c3959c0004d8a87"
+}

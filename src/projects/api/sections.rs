@@ -1,6 +1,6 @@
 use crate::db::repositories::{persons, sections};
 use crate::db::section_content;
-use crate::permissions::{ResourceType, has_permission};
+use crate::permissions::AuthorizedProject;
 use crate::persons::ensure_linkable;
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
@@ -64,28 +64,19 @@ pub struct APISectionMetadataResult {
 /// Use the optional expand query parameter to expand these fields
 /// E.g. ?expand=authors,editors will show the full data
 ///
-#[get("/api/projects/<project_id>/sections/<section_id>?<expand>")]
+#[get("/api/projects/<_>/sections/<section_id>?<expand>")]
 pub async fn get_section(
-    project_id: &str,
     section_id: &str,
     expand: Option<&str>,
-    session: Session,
+    auth: AuthorizedProject,
     pool: &State<PgPool>,
 ) -> APIResult<APISectionResult> {
+    let project_id = auth.id;
     debug!(
         "get_section API request: project_id={:?}, section_id={:?}, expand={:?}",
         project_id, section_id, expand
     );
-    let project_id = uuid::Uuid::parse_str(project_id)?;
     let section_id = uuid::Uuid::parse_str(section_id)?;
-    has_permission(
-        pool,
-        ResourceType::Project,
-        project_id,
-        session.user_id,
-        None,
-    )
-    .await?;
 
     // Parse expand:
     let expand_parts = if let Some(expand) = expand {
@@ -254,27 +245,15 @@ pub async fn get_section(
 /// PATCH /api/projects/<project_id>/sections/<section_id>
 /// Patch a section, but without content (subsections / content blocks)
 /// Check [PatchSection] for more information
-#[patch(
-    "/api/projects/<project_id>/sections/<section_id>",
-    data = "<section_patch>"
-)]
+#[patch("/api/projects/<_>/sections/<section_id>", data = "<section_patch>")]
 pub async fn update_section(
-    project_id: String,
     section_id: String,
     section_patch: Json<PatchSection>,
-    session: Session,
+    auth: AuthorizedProject,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    let project_id = uuid::Uuid::parse_str(&project_id)?;
+    let project_id = auth.id;
     let section_id = uuid::Uuid::parse_str(&section_id)?;
-    has_permission(
-        pool,
-        ResourceType::Project,
-        project_id,
-        session.user_id,
-        None,
-    )
-    .await?;
     let pool = pool.inner();
 
     let section = sections::get_by_id(pool, project_id, section_id).await?;

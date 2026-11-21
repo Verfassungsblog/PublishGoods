@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id AS \"id!\"\n           FROM persons p\n           LEFT JOIN projects pr ON pr.id = p.project_id\n           JOIN users_teams ut ON ut.team_id = COALESCE(p.owner_team_id, pr.owner_team_id)\n           WHERE p.id = ANY($1) AND ut.user_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "persons",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "51541c07e72792c400bdfea3a38d1ab85816658a0314ab6a082199a172f91c6f"
+}

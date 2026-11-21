@@ -10,6 +10,7 @@ module.exports = {
         export: { import: './Export.ts', dependOn: 'vendor' },
         profile_settings: {import: './ProfileSettings', dependOn: 'vendor'},
         dashboard: {import: './Dashboard.ts', dependOn: 'vendor'},
+        create_project: {import: './CreateProject.ts', dependOn: 'vendor'},
         vendor: ['yjs', 'pdfjs-dist', 'handlebars', '@editorjs/editorjs'],
     },
     devtool: false,

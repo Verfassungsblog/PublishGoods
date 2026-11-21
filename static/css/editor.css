@@ -957,6 +957,11 @@ customstyle{
 .mb-4{
     margin-bottom: 12px;
 }
+.project_template_hint{
+    color: var(--red);
+    font-size: 12px;
+    margin-top: 4px;
+}
 .fullwidth-select{
     max-width: 100% !important;
     width: 100% !important;

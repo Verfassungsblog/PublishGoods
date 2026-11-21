@@ -1,9 +1,8 @@
 use crate::db::repositories::DbError;
 use crate::db::repositories::projects;
-use crate::permissions::{ResourceType, has_permission};
+use crate::permissions::AuthorizedProject;
 use crate::persons::ensure_linkable;
 use crate::projects::api::Patch;
-use crate::session::session_guard::Session;
 use crate::storage::project_storage::current::PersonUuidOrString;
 use crate::utils::api_helpers::APIResult;
 use bincode::{Decode, Encode};
@@ -363,18 +362,15 @@ pub struct PatchProjectSettings {
 /// if any individual update fails the whole patch is rolled back rather than leaving the
 /// project partially updated. An explicit `name` takes precedence over a patched
 /// `metadata.title`, but either one renames the project.
-#[patch("/api/projects/<project_id>", data = "<patch>")]
+#[patch("/api/projects/<_>", data = "<patch>")]
 pub async fn patch_project(
-    project_id: &str,
     patch: Json<PatchProjectData>,
-    session: Session,
+    auth: AuthorizedProject,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    let id = uuid::Uuid::parse_str(project_id)?;
+    let id = auth.id;
     let pool = pool.inner();
     let patch = patch.into_inner();
-
-    has_permission(pool, ResourceType::Project, id, session.user_id, None).await?;
 
     // Authors/editors may only be persons belonging to this project or to its team's library.
     if let Some(Some(metadata_patch)) = &patch.metadata {

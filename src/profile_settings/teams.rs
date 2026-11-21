@@ -3,7 +3,7 @@ use crate::db::repositories::teams as teams_repo;
 use crate::db::repositories::teams::{Invitation, InvitationWithTeam, Team};
 use crate::db::repositories::users::{self, TeamRole};
 use crate::mailer::{MailJob, Mailer};
-use crate::permissions::{ResourceType, has_permission};
+use crate::permissions::{AdminRole, Authorized, AuthorizedTeam, OwnerRole};
 use crate::session::login::start_session;
 use crate::session::register::{
     RegisterError, create_account, normalize_email, render_register_page,
@@ -142,12 +142,10 @@ pub async fn create_team(
 /// Fetches a single team, including its members. Only accessible to members of the team;
 /// returns 404 for anyone else, matching [`list_teams`] only ever surfacing teams the
 /// requesting user belongs to.
-#[get("/api/teams/<team_id>")]
-pub async fn get_team(team_id: &str, session: Session, pool: &State<PgPool>) -> APIResult<Team> {
-    let team_id = Uuid::parse_str(team_id)?;
+#[get("/api/teams/<_>")]
+pub async fn get_team(auth: AuthorizedTeam, pool: &State<PgPool>) -> APIResult<Team> {
+    let team_id = auth.id;
     let pool = pool.inner();
-
-    has_permission(pool, ResourceType::Team, team_id, session.user_id, None).await?;
 
     let team = teams_repo::get(pool, team_id).await?;
     Ok(APIResponse::from(team))
@@ -182,26 +180,19 @@ pub struct PatchTeamData {
 /// only an `owner` may touch the owner set. Whoever submits the patch, the resulting
 /// membership must still include at least one owner; [`teams_repo::replace_members`]
 /// enforces that as the final backstop.
-#[patch("/api/teams/<team_id>", data = "<patch>")]
+#[patch("/api/teams/<_>", data = "<patch>")]
 pub async fn patch_team(
-    team_id: &str,
+    auth: AuthorizedTeam<AdminRole>,
     patch: Json<PatchTeamData>,
-    session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<Team> {
-    let team_id = Uuid::parse_str(team_id)?;
+    // The role is needed beyond the check: only an owner may change who owns the team.
+    let Authorized {
+        id: team_id, role, ..
+    } = auth;
     let patch = patch.into_inner();
     let pool = pool.inner();
 
-    // The role is needed beyond the check: only an owner may change who owns the team.
-    let role = has_permission(
-        pool,
-        ResourceType::Team,
-        team_id,
-        session.user_id,
-        Some(TeamRole::Admin),
-    )
-    .await?;
     require_not_default_team(pool, team_id).await?;
 
     let mut tx = pool.begin().await.map_err(DbError::from)?;
@@ -284,19 +275,11 @@ pub async fn leave_team(team_id: &str, session: Session, pool: &State<PgPool>) -
 /// DELETE /api/teams/<team_id>
 ///
 /// Deletes a team. Requires the requesting user to be an `owner` of the team.
-#[delete("/api/teams/<team_id>")]
-pub async fn delete_team(team_id: &str, session: Session, pool: &State<PgPool>) -> APIResult<()> {
-    let team_id = Uuid::parse_str(team_id)?;
+#[delete("/api/teams/<_>")]
+pub async fn delete_team(auth: AuthorizedTeam<OwnerRole>, pool: &State<PgPool>) -> APIResult<()> {
+    let team_id = auth.id;
     let pool = pool.inner();
 
-    has_permission(
-        pool,
-        ResourceType::Team,
-        team_id,
-        session.user_id,
-        Some(TeamRole::Owner),
-    )
-    .await?;
     require_not_default_team(pool, team_id).await?;
 
     teams_repo::delete(pool, team_id).await?;
@@ -317,28 +300,21 @@ pub struct CreateInvitationData {
 ///
 /// Invites a user to a team, by id (if they're already registered) or by email. Requires
 /// the requesting user to be an `owner` or `admin` of the team.
-#[post("/api/teams/<team_id>/invitations", data = "<data>")]
+#[post("/api/teams/<_>/invitations", data = "<data>")]
 pub async fn create_invitation(
-    team_id: &str,
+    auth: AuthorizedTeam<AdminRole>,
     data: Json<CreateInvitationData>,
-    session: Session,
     pool: &State<PgPool>,
     settings: &State<Settings>,
     mailer: &State<Mailer>,
     metadata: Metadata<'_>,
 ) -> APIResult<Invitation> {
-    let team_id = Uuid::parse_str(team_id)?;
+    let Authorized {
+        id: team_id, role, ..
+    } = auth;
     let data = data.into_inner();
     let pool = pool.inner();
 
-    let role = has_permission(
-        pool,
-        ResourceType::Team,
-        team_id,
-        session.user_id,
-        Some(TeamRole::Admin),
-    )
-    .await?;
     // Like patch_team, only an owner may create further owners.
     if data.role == TeamRole::Owner && role != TeamRole::Owner {
         return Err(ApiErrorType::Forbidden("insufficient team role".to_string()).into());
@@ -549,23 +525,13 @@ pub async fn register_with_invitation(
 ///
 /// Lists every pending invitation for a team. Requires the requesting user to be an
 /// `owner` or `admin` of the team.
-#[get("/api/teams/<team_id>/invitations")]
+#[get("/api/teams/<_>/invitations")]
 pub async fn list_invitations(
-    team_id: &str,
-    session: Session,
+    auth: AuthorizedTeam<AdminRole>,
     pool: &State<PgPool>,
 ) -> APIResult<Vec<Invitation>> {
-    let team_id = Uuid::parse_str(team_id)?;
+    let team_id = auth.id;
     let pool = pool.inner();
-
-    has_permission(
-        pool,
-        ResourceType::Team,
-        team_id,
-        session.user_id,
-        Some(TeamRole::Admin),
-    )
-    .await?;
 
     let invitations = teams_repo::list_invitations_for_team(pool, team_id).await?;
     Ok(APIResponse::from(invitations))
@@ -575,25 +541,15 @@ pub async fn list_invitations(
 ///
 /// Revokes a pending invitation. Requires the requesting user to be an `owner` or `admin`
 /// of the team; returns 404 if the invitation doesn't belong to `team_id`.
-#[delete("/api/teams/<team_id>/invitations/<invitation_id>")]
+#[delete("/api/teams/<_>/invitations/<invitation_id>")]
 pub async fn decline_invitation(
-    team_id: &str,
+    auth: AuthorizedTeam<AdminRole>,
     invitation_id: &str,
-    session: Session,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    let team_id = Uuid::parse_str(team_id)?;
+    let team_id = auth.id;
     let invitation_id = Uuid::parse_str(invitation_id)?;
     let pool = pool.inner();
-
-    has_permission(
-        pool,
-        ResourceType::Team,
-        team_id,
-        session.user_id,
-        Some(TeamRole::Admin),
-    )
-    .await?;
 
     let invitation = teams_repo::get_invitation(pool, invitation_id).await?;
     if invitation.team_id != team_id {

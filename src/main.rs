@@ -226,6 +226,7 @@ async fn rocket() -> _ {
     info!("Starting web server...");
     rocket::build()
         .register("/", catchers![forward_to_login])
+        .register("/api", catchers![permissions::api_error_catcher])
         .attach(Template::fairing())
         .mount("/css", rocket::fs::FileServer::from("static/css"))
         .mount("/js", rocket::fs::FileServer::from("static/js"))
@@ -289,6 +290,7 @@ async fn rocket() -> _ {
                 projects::api::set_project_template,
                 projects::api::patch::patch_project,
                 projects::api::list_templates,
+                projects::api::list_project_templates,
                 projects::api::delete_project,
                 persons::api::delete_person,
                 persons::list::list_persons,

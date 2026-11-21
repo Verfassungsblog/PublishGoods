@@ -49,7 +49,7 @@ pub async fn migrate_from_bincode(
 
     migrate_users(&mut tx, data_storage, default_team_id).await?;
     let person_ids = migrate_persons(&mut tx, data_storage, default_team_id).await?;
-    let template_ids = migrate_templates(&mut tx, data_storage).await?;
+    let template_ids = migrate_templates(&mut tx, data_storage, default_team_id).await?;
 
     let project_list = data_storage.data.projects.read().unwrap().clone();
     let mut project_to_folder: std::collections::HashMap<Uuid, Option<Uuid>> =
@@ -190,11 +190,13 @@ fn identifier_value(identifier: &Option<Identifier>) -> Option<String> {
     identifier.as_ref().map(|i| i.value.clone())
 }
 
-/// Migrates project templates + their export formats. Returns the set of migrated
-/// template ids, used to validate a project's `template_id` reference.
+/// Migrates project templates + their export formats into the default team (which owns every
+/// migrated project too). Returns the set of migrated template ids, used to validate a
+/// project's `template_id` reference.
 async fn migrate_templates(
     tx: &mut Transaction<'_, Postgres>,
     data_storage: &DataStorage,
+    default_team_id: Uuid,
 ) -> Result<HashSet<Uuid>, sqlx::Error> {
     let templates: Vec<ProjectTemplateV2> = data_storage
         .data
@@ -210,12 +212,13 @@ async fn migrate_templates(
         let version = template.version.unwrap_or_else(Uuid::new_v4);
 
         sqlx::query(
-            "INSERT INTO project_templates (id, version, name, description) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO project_templates (id, version, name, description, owner_team_id) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(template.id)
         .bind(version)
         .bind(&template.name)
         .bind(&template.description)
+        .bind(default_team_id)
         .execute(&mut **tx)
         .await?;
 

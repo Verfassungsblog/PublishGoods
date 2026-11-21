@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(p.owner_team_id, pr.owner_team_id) AS \"team_id\"\n               FROM persons p\n               LEFT JOIN projects pr ON pr.id = p.project_id\n               WHERE p.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "team_id",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1d4c631916d35db4a1000df06331cf030d0d11a392235da5c217bb0df2a233e6"
+}

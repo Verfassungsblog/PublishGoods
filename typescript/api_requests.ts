@@ -8,8 +8,8 @@ export async function send_get_template_id_for_project(project_id: string) {
     return await unwrap<any>(response, "get project template");
 }
 
-export async function send_list_templates() {
-    const response = await fetch(`/api/templates`, {
+export async function send_list_project_templates(project_id: string) {
+    const response = await fetch(`/api/projects/${project_id}/templates`, {
         method: 'GET',
         headers: {
             'Content-Type': 'application/json'

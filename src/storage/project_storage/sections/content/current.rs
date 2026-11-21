@@ -1,6 +1,6 @@
 use crate::projects::api::UploadedImage;
-use crate::storage::project_storage::sections::content::current::NewContentBlockConversionError::UnknownBlockType;
 use crate::storage::project_storage::sections::Section;
+use crate::storage::project_storage::sections::content::current::NewContentBlockConversionError::UnknownBlockType;
 use crate::utils::block_id_generator::generate_id;
 use bincode::{Decode, Encode};
 use rocket::serde::{Deserialize, Serialize};

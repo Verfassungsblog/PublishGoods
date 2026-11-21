@@ -1,29 +1,28 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO project_templates (name, description) VALUES ($1, $2) RETURNING id",
+  "query": "SELECT owner_team_id FROM projects WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
+        "name": "owner_team_id",
         "type_info": "Uuid",
         "origin": {
           "Table": {
-            "table": "project_templates",
-            "name": "id"
+            "table": "projects",
+            "name": "owner_team_id"
           }
         }
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "47236c9563eaaf9049225f1fff16ead0e83ed9e553c7258c27e5dc23e8b85514"
+  "hash": "f739441809114d16baa96ce6a2e27bb88cff38a5034e91b058dc15c06c2c7c0b"
 }

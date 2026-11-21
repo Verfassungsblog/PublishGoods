@@ -24,7 +24,7 @@ pub fn parse_uuid(uuid: &str) -> Result<uuid::Uuid, ApiError> {
 pub type APIResult<T> = Result<APIResponse<T>, ApiError>;
 
 /// Enumeration of possible new-style API error types.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub enum ApiErrorType {
     /// Session invalid or expired
     Unauthorized,
@@ -45,7 +45,7 @@ pub enum ApiErrorType {
 }
 
 /// The new-style API error object for JSON responses.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ApiError {
     /// The type/category of the error.
     pub error: ApiErrorType,
@@ -65,14 +65,10 @@ impl ApiError {
             error_description,
         }
     }
-}
 
-/// Allows Rocket to send `ApiError` as a JSON response, with status code selected based on the error type.
-impl<'r> Responder<'r, 'static> for ApiError {
-    fn respond_to(self, _request: &'r Request<'_>) -> rocket::response::Result<'static> {
-        debug!("Responding with error {:?}", self.error);
-
-        let status = match self.error {
+    /// The HTTP status this error is answered with.
+    pub fn status(&self) -> Status {
+        match self.error {
             ApiErrorType::Unauthorized => Status::Unauthorized,
             ApiErrorType::Forbidden(_) => Status::Forbidden,
             ApiErrorType::UnparsableParameter(_) => Status::BadRequest,
@@ -81,7 +77,16 @@ impl<'r> Responder<'r, 'static> for ApiError {
             ApiErrorType::Conflict(_) => Status::Conflict,
             ApiErrorType::InternalServerError => Status::InternalServerError,
             ApiErrorType::Other(_) => Status::ImATeapot,
-        };
+        }
+    }
+}
+
+/// Allows Rocket to send `ApiError` as a JSON response, with status code selected based on the error type.
+impl<'r> Responder<'r, 'static> for ApiError {
+    fn respond_to(self, _request: &'r Request<'_>) -> rocket::response::Result<'static> {
+        debug!("Responding with error {:?}", self.error);
+
+        let status = self.status();
 
         let mut response = Response::new();
         let serialized_body = serde_json::to_string(&self).unwrap();

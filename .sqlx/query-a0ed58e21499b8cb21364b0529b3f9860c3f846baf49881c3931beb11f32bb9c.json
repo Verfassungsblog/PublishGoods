@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE persons SET owner_team_id = pr.owner_team_id, project_id = NULL\n         FROM projects pr\n         WHERE persons.id = $1 AND persons.project_id = pr.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a0ed58e21499b8cb21364b0529b3f9860c3f846baf49881c3931beb11f32bb9c"
+}

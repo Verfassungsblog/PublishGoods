@@ -1,0 +1,51 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pr.id AS \"project_id!\", pr.title AS \"project_title!\", NULL::uuid AS section_id,\n                  NULL::text AS section_title, pp.role AS \"role!\"\n           FROM persons_projects pp\n           JOIN projects pr ON pr.id = pp.project_id\n           WHERE pp.person_id = $1\n           UNION ALL\n           SELECT pr.id, pr.title, s.id, s.title, ps.role\n           FROM persons_sections ps\n           JOIN sections s ON s.id = ps.section_id\n           JOIN projects pr ON pr.id = s.project_id\n           WHERE ps.person_id = $1\n           ORDER BY 2, 4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "project_title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "section_id",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "section_title",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "role!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "419c134868f053b01c0a30641a52645f29341c20536eef37f04074f1200d3d34"
+}

@@ -1,6 +1,6 @@
 use crate::db::repositories::DbError;
 use crate::db::repositories::persons::{self, PersonUsage, ScopeFilter};
-use crate::permissions::{ResourceType, has_permission};
+use crate::permissions::{AuthorizedPerson, AuthorizedProject, ResourceType, has_permission};
 use crate::session::session_guard::Session;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType, parse_uuid};
 use rocket::State;
@@ -98,17 +98,14 @@ pub async fn create_person(
 /// PUT /api/persons/<id>
 /// Update specified person. A `scope` in the body is ignored: the scope only changes through
 /// `POST /api/persons/<id>/promote`.
-#[put("/api/persons/<id>", data = "<person>")]
+#[put("/api/persons/<_>", data = "<person>")]
 pub async fn update_person(
-    session: Session,
+    auth: AuthorizedPerson,
     pool: &State<PgPool>,
     person: Json<Person>,
-    id: &str,
 ) -> APIResult<Person> {
     let person = person.into_inner();
-    let id = parse_uuid(id)?;
-
-    has_permission(pool, ResourceType::Person, id, session.user_id, None).await?;
+    let id = auth.id;
 
     // Check if id in url matches id in body
     match person.id {
@@ -136,10 +133,9 @@ pub async fn update_person(
 
 // GET /api/persons/<id>
 /// Get a person by id
-#[get("/api/persons/<id>")]
-pub async fn get_person(session: Session, pool: &State<PgPool>, id: String) -> APIResult<Person> {
-    let id = parse_uuid(&id)?;
-    has_permission(pool, ResourceType::Person, id, session.user_id, None).await?;
+#[get("/api/persons/<_>")]
+pub async fn get_person(auth: AuthorizedPerson, pool: &State<PgPool>) -> APIResult<Person> {
+    let id = auth.id;
     let person = persons::get(pool.inner(), id).await?;
     Ok(APIResponse::from(person))
 }
@@ -198,21 +194,12 @@ pub async fn search_persons(
 
 /// GET /api/projects/<project_id>/persons
 /// List the persons that are private to the project (not those of its team's library).
-#[get("/api/projects/<project_id>/persons")]
+#[get("/api/projects/<_>/persons")]
 pub async fn list_project_persons(
-    session: Session,
+    auth: AuthorizedProject,
     pool: &State<PgPool>,
-    project_id: String,
 ) -> APIResult<Vec<Person>> {
-    let project_id = parse_uuid(&project_id)?;
-    has_permission(
-        pool,
-        ResourceType::Project,
-        project_id,
-        session.user_id,
-        None,
-    )
-    .await?;
+    let project_id = auth.id;
     Ok(APIResponse::from(
         persons::list_for_project(pool.inner(), project_id).await?,
     ))
@@ -220,14 +207,12 @@ pub async fn list_project_persons(
 
 /// GET /api/persons/<id>/usage
 /// List the projects (and sections) that link to the person as author/editor.
-#[get("/api/persons/<id>/usage")]
+#[get("/api/persons/<_>/usage")]
 pub async fn get_person_usage(
-    session: Session,
+    auth: AuthorizedPerson,
     pool: &State<PgPool>,
-    id: String,
 ) -> APIResult<Vec<PersonUsage>> {
-    let id = parse_uuid(&id)?;
-    has_permission(pool, ResourceType::Person, id, session.user_id, None).await?;
+    let id = auth.id;
     Ok(APIResponse::from(persons::usage(pool.inner(), id).await?))
 }
 
@@ -238,15 +223,13 @@ pub async fn get_person_usage(
 /// `confirm=true` (clients show `GET /api/persons/<id>/usage` first); without it the request
 /// fails with a 409. On confirmed deletion the links are turned into free-text names, so the
 /// credits stay visible in the affected projects.
-#[delete("/api/persons/<id>?<confirm>")]
+#[delete("/api/persons/<_>?<confirm>")]
 pub async fn delete_person(
-    session: Session,
+    auth: AuthorizedPerson,
     pool: &State<PgPool>,
-    id: String,
     confirm: Option<bool>,
 ) -> APIResult<()> {
-    let id = parse_uuid(&id)?;
-    has_permission(pool, ResourceType::Person, id, session.user_id, None).await?;
+    let id = auth.id;
 
     // Converting the links doubles as the usage check: deciding on the number of links it
     // actually rewrote (instead of a separate earlier read) means a link added concurrently
@@ -268,14 +251,9 @@ pub async fn delete_person(
 /// POST /api/persons/<id>/promote
 /// Move a project-private person into the library of the team owning the project. The person
 /// keeps its id, so existing links stay valid.
-#[post("/api/persons/<id>/promote")]
-pub async fn promote_person(
-    session: Session,
-    pool: &State<PgPool>,
-    id: String,
-) -> APIResult<Person> {
-    let id = parse_uuid(&id)?;
-    has_permission(pool, ResourceType::Person, id, session.user_id, None).await?;
+#[post("/api/persons/<_>/promote")]
+pub async fn promote_person(auth: AuthorizedPerson, pool: &State<PgPool>) -> APIResult<Person> {
+    let id = auth.id;
     persons::promote_to_team(pool.inner(), id).await?;
     Ok(APIResponse::from(persons::get(pool.inner(), id).await?))
 }
@@ -317,6 +295,7 @@ mod integration_tests {
             .manage(dummy_settings())
             .manage(SessionStorage::new())
             .attach(Template::fairing())
+            .register("/api", catchers![crate::permissions::api_error_catcher])
             .mount(
                 "/",
                 routes![
@@ -521,6 +500,36 @@ mod integration_tests {
             Status::NotFound
         );
         assert!(persons::exists(&w.pool, id.parse().unwrap()).await.unwrap());
+        Ok(())
+    }
+
+    /// The permission check runs before the body is read: a non-member sending an unparsable
+    /// body gets the JSON 404 of the guard, not the 400 of the body parser.
+    #[sqlx::test]
+    async fn authorization_runs_before_the_body_is_read(pool: PgPool) -> sqlx::Result<()> {
+        let w = world(pool).await;
+        let (_, body) = create(&w.alice, json!({"Team": w.team})).await;
+        let id = body["data"]["id"].as_str().unwrap().to_string();
+
+        let response = w
+            .bob
+            .put(format!("/api/persons/{id}"))
+            .header(ContentType::JSON)
+            .body("not json")
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::NotFound);
+        let body: Value = response.into_json().await.unwrap();
+        assert!(body["error"]["ResourceNotFound"].is_string(), "{body}");
+
+        let response = w
+            .alice
+            .put(format!("/api/persons/{id}"))
+            .header(ContentType::JSON)
+            .body("not json")
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::BadRequest);
         Ok(())
     }
 

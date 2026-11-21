@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT owner_team_id FROM project_templates WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner_team_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "project_templates",
+            "name": "owner_team_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "64c9b0654500b6f4953d603920cfcd55573c8b979cd0af97146300d1e4862024"
+}

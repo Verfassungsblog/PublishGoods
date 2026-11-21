@@ -589,13 +589,75 @@ customstyle{
 .dropdown:hover .dropdown-content{
     display: block;
 }
+.page-toolbar{
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+}
+.page-panel{
+    background-color: white;
+    border-radius: 5px;
+    padding: 15px 20px;
+}
+/* editor.css-style underlined inputs, for forms outside the editor */
+.editor-form{
+    max-width: 700px;
+}
+.editor-form input[type=text], .editor-form textarea, .editor-form select{
+    background-color: unset;
+    border: unset;
+    border-bottom: 1px solid lightgray;
+    width: 100%;
+    max-width: 100%;
+}
+.editor-form input[type=text]{
+    height: 30px;
+}
+.editor-form textarea{
+    resize: vertical;
+}
+.editor-form input:focus, .editor-form textarea:focus, .editor-form select:focus{
+    outline: none;
+    border-bottom-color: var(--blue);
+}
 .templates_list{
     background-color: white;
     border-radius: 5px;
-    padding: 10px 20px;
+    padding: 5px;
 }
 .templates_list a{
     text-decoration: none;
+}
+.templates_list_head, .templates_list_row{
+    min-height: 40px;
+    padding: 8px 0;
+    margin: initial;
+    align-items: center;
+}
+.templates_list_head{
+    font-weight: bold;
+}
+.templates_list_row{
+    color: inherit;
+}
+.templates_list_row:nth-child(even){
+    background-color: var(--light-gray);
+}
+.templates_list_row:hover{
+    background-color: var(--light-blue) !important;
+    color: inherit;
+}
+.templates_list_description{
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--grey);
+}
+.templates_list_empty{
+    color: var(--grey);
+    padding: 10px;
+    margin: 0;
 }
 #template_editor_sidebar{
     background-color: white;

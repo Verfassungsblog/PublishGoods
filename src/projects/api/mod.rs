@@ -1,3 +1,5 @@
+use crate::db::repositories::templates;
+use crate::permissions::AuthorizedProject;
 use crate::session::session_guard::Session;
 use crate::settings::Settings;
 use crate::storage::project_storage::sections::Section;
@@ -309,13 +311,12 @@ pub async fn get_project_upload(
 
 /// Get the id of the template currently set in project
 /// GET /api/projects/<project_id>/template
-#[get("/api/projects/<project_id>/template")]
+#[get("/api/projects/<_>/template")]
 pub async fn get_project_template(
-    project_id: String,
     pool: &State<sqlx::PgPool>,
-    _session: Session,
+    auth: AuthorizedProject,
 ) -> APIResult<Option<uuid::Uuid>> {
-    let project_id = uuid::Uuid::parse_str(&project_id)?;
+    let project_id = auth.id;
     let template_id =
         crate::db::repositories::projects::get_template_id(pool.inner(), project_id).await?;
     Ok(template_id.into())
@@ -323,30 +324,44 @@ pub async fn get_project_template(
 
 /// Set project's template to the specified template_id
 /// PUT /api/projects/<project_id>/template
-#[put("/api/projects/<project_id>/template", data = "<template_id>")]
+///
+/// The template must be owned by the team the project belongs to (enforced by
+/// [`crate::db::repositories::projects::update_template`]); any other template is
+/// `ResourceNotFound`.
+#[put("/api/projects/<_>/template", data = "<template_id>")]
 pub async fn set_project_template(
-    project_id: String,
     template_id: Json<uuid::Uuid>,
     pool: &State<sqlx::PgPool>,
-    _session: Session,
+    auth: AuthorizedProject,
 ) -> APIResult<()> {
-    let project_id = uuid::Uuid::parse_str(&project_id)?;
-    crate::db::repositories::projects::update_template(
-        pool.inner(),
-        project_id,
-        Some(template_id.into_inner()),
-    )
-    .await?;
+    let template_id = template_id.into_inner();
+    let project_id = auth.id;
+    crate::db::repositories::projects::update_template(pool.inner(), project_id, Some(template_id))
+        .await?;
     Ok(().into())
 }
 
-/// List all templates
+/// List the templates the project may use, i.e. those of the team owning the project
+/// GET /api/projects/<project_id>/templates
+#[get("/api/projects/<_>/templates")]
+pub async fn list_project_templates(
+    pool: &State<sqlx::PgPool>,
+    auth: AuthorizedProject,
+) -> APIResult<Vec<templates::Template>> {
+    let project_id = auth.id;
+    Ok(templates::list_for_project(pool.inner(), project_id)
+        .await?
+        .into())
+}
+
+/// List the templates of all teams the user is a member of
 /// GET /api/templates
 #[get("/api/templates")]
 pub async fn list_templates(
-    _session: Session,
+    session: Session,
     pool: &State<sqlx::PgPool>,
-) -> APIResult<Vec<crate::db::repositories::templates::Template>> {
-    let templates = crate::db::repositories::templates::list_all(pool.inner()).await?;
-    Ok(templates.into())
+) -> APIResult<Vec<templates::Template>> {
+    Ok(templates::list_for_user(pool.inner(), session.user_id)
+        .await?
+        .into())
 }

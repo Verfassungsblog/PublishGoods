@@ -14,38 +14,38 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use vb_exchange::export_formats::{ExportFormat, ExportStep};
 
-/// Loads every export format row for a template, keyed by slug.
+/// Loads the export format rows of every template in `template_ids` in one query, keyed by
+/// template id and then by slug. Templates without export formats are absent from the map.
 async fn fetch_export_formats(
     pool: &PgPool,
-    template_id: Uuid,
-) -> Result<HashMap<String, ExportFormat>, DbError> {
+    template_ids: &[Uuid],
+) -> Result<HashMap<Uuid, HashMap<String, ExportFormat>>, DbError> {
     let rows = sqlx::query!(
-        r#"SELECT slug, name, preview_pdf_path, output_files,
+        r#"SELECT project_template_id, slug, name, preview_pdf_path, output_files,
                   export_steps as "export_steps: Json<Vec<ExportStep>>"
-           FROM export_formats WHERE project_template_id = $1"#,
-        template_id
+           FROM export_formats WHERE project_template_id = ANY($1)"#,
+        template_ids
     )
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            (
-                row.slug.clone(),
-                ExportFormat {
-                    slug: row.slug,
-                    name: row.name,
-                    export_steps: row
-                        .export_steps
-                        .map(|Json(steps)| steps)
-                        .unwrap_or_default(),
-                    output_files: row.output_files.unwrap_or_default(),
-                    preview_pdf_path: row.preview_pdf_path,
-                },
-            )
-        })
-        .collect())
+    let mut formats: HashMap<Uuid, HashMap<String, ExportFormat>> = HashMap::new();
+    for row in rows {
+        formats.entry(row.project_template_id).or_default().insert(
+            row.slug.clone(),
+            ExportFormat {
+                slug: row.slug,
+                name: row.name,
+                export_steps: row
+                    .export_steps
+                    .map(|Json(steps)| steps)
+                    .unwrap_or_default(),
+                output_files: row.output_files.unwrap_or_default(),
+                preview_pdf_path: row.preview_pdf_path,
+            },
+        );
+    }
+    Ok(formats)
 }
 
 /// Inserts a single `export_formats` row for `format` under `template_id`.
@@ -70,32 +70,39 @@ async fn insert_export_format_row<'e>(
 }
 
 /// A project template, assembled from `project_templates` plus its `export_formats` rows.
+/// Every template is owned by exactly one team (`owner_team_id`); only that team's members may
+/// see or edit it, and only that team's projects may use it.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Template {
     pub id: Uuid,
     pub version: Uuid,
     pub name: String,
     pub description: String,
+    pub owner_team_id: Uuid,
     pub export_formats: HashMap<String, ExportFormat>,
 }
 
 /// Fetches a template by id, including its export formats.
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Template, DbError> {
     let row = sqlx::query!(
-        "SELECT id, version, name, description FROM project_templates WHERE id = $1",
+        "SELECT id, version, name, description, owner_team_id FROM project_templates WHERE id = $1",
         id
     )
     .fetch_optional(pool)
     .await?
     .ok_or(DbError::NotFound("template"))?;
 
-    let export_formats = fetch_export_formats(pool, id).await?;
+    let export_formats = fetch_export_formats(pool, &[id])
+        .await?
+        .remove(&id)
+        .unwrap_or_default();
 
     Ok(Template {
         id: row.id,
         version: row.version,
         name: row.name,
         description: row.description.unwrap_or_default(),
+        owner_team_id: row.owner_team_id,
         export_formats,
     })
 }
@@ -111,33 +118,102 @@ pub async fn exists<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<bool, DbE
     Ok(exists.unwrap_or(false))
 }
 
-/// Returns every template, ordered by name, each with its export formats populated.
-pub async fn list_all(pool: &PgPool) -> Result<Vec<Template>, DbError> {
-    let rows =
-        sqlx::query!("SELECT id, version, name, description FROM project_templates ORDER BY name")
-            .fetch_all(pool)
-            .await?;
-
-    let mut templates = Vec::with_capacity(rows.len());
-    for row in rows {
-        let export_formats = fetch_export_formats(pool, row.id).await?;
-        templates.push(Template {
-            id: row.id,
-            version: row.version,
-            name: row.name,
-            description: row.description.unwrap_or_default(),
-            export_formats,
-        });
-    }
-    Ok(templates)
+/// A template without its export formats: all a template picker needs.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct TemplateSummary {
+    pub id: Uuid,
+    pub version: Uuid,
+    pub name: String,
+    pub description: String,
+    pub owner_team_id: Uuid,
 }
 
-/// Creates a new, empty (no export formats) template, returning its new id.
-pub async fn insert(pool: &PgPool, name: &str, description: &str) -> Result<Uuid, DbError> {
+/// Populates the export formats of `summaries` (one query, independent of their number).
+async fn with_export_formats(
+    pool: &PgPool,
+    summaries: Vec<TemplateSummary>,
+) -> Result<Vec<Template>, DbError> {
+    let ids: Vec<Uuid> = summaries.iter().map(|summary| summary.id).collect();
+    let mut export_formats = fetch_export_formats(pool, &ids).await?;
+    Ok(summaries
+        .into_iter()
+        .map(|summary| Template {
+            export_formats: export_formats.remove(&summary.id).unwrap_or_default(),
+            id: summary.id,
+            version: summary.version,
+            name: summary.name,
+            description: summary.description,
+            owner_team_id: summary.owner_team_id,
+        })
+        .collect())
+}
+
+/// Returns the templates of one team, ordered by name, each with its export formats populated.
+pub async fn list_for_team(pool: &PgPool, team_id: Uuid) -> Result<Vec<Template>, DbError> {
+    let summaries = sqlx::query_as!(
+        TemplateSummary,
+        r#"SELECT id, version, name, COALESCE(description, '') AS "description!", owner_team_id
+           FROM project_templates WHERE owner_team_id = $1 ORDER BY name"#,
+        team_id
+    )
+    .fetch_all(pool)
+    .await?;
+    with_export_formats(pool, summaries).await
+}
+
+/// Returns the templates of every team `user_id` is a member of, ordered by name, without
+/// their export formats.
+pub async fn list_summaries_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> Result<Vec<TemplateSummary>, DbError> {
+    Ok(sqlx::query_as!(
+        TemplateSummary,
+        r#"SELECT id, version, name, COALESCE(description, '') AS "description!", owner_team_id
+           FROM project_templates
+           WHERE owner_team_id IN (SELECT team_id FROM users_teams WHERE user_id = $1)
+           ORDER BY name"#,
+        user_id
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Returns the templates of every team `user_id` is a member of, ordered by name, each with its
+/// export formats populated.
+pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Template>, DbError> {
+    let summaries = list_summaries_for_user(pool, user_id).await?;
+    with_export_formats(pool, summaries).await
+}
+
+/// Returns the templates `project_id` may use (those of the team owning it), ordered by name,
+/// each with its export formats populated.
+pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> Result<Vec<Template>, DbError> {
+    let summaries = sqlx::query_as!(
+        TemplateSummary,
+        r#"SELECT id, version, name, COALESCE(description, '') AS "description!", owner_team_id
+           FROM project_templates
+           WHERE owner_team_id = (SELECT owner_team_id FROM projects WHERE id = $1)
+           ORDER BY name"#,
+        project_id
+    )
+    .fetch_all(pool)
+    .await?;
+    with_export_formats(pool, summaries).await
+}
+
+/// Creates a new, empty (no export formats) template owned by `team_id`, returning its new id.
+pub async fn insert(
+    pool: &PgPool,
+    team_id: Uuid,
+    name: &str,
+    description: &str,
+) -> Result<Uuid, DbError> {
     let id = sqlx::query_scalar!(
-        "INSERT INTO project_templates (name, description) VALUES ($1, $2) RETURNING id",
+        "INSERT INTO project_templates (name, description, owner_team_id) VALUES ($1, $2, $3) RETURNING id",
         name,
-        description
+        description,
+        team_id
     )
     .fetch_one(pool)
     .await?;
@@ -145,7 +221,7 @@ pub async fn insert(pool: &PgPool, name: &str, description: &str) -> Result<Uuid
 }
 
 /// Fully replaces a template's name/description and its entire set of export formats
-/// (delete-then-reinsert), bumping `version`. Mirrors the old code's whole-struct overwrite
+/// (delete-then-reinsert), bumping `version`. The owning team never changes. Mirrors the old code's whole-struct overwrite
 /// semantics for `PUT /api/templates/<id>`.
 pub async fn replace(
     pool: &PgPool,
@@ -345,6 +421,13 @@ mod tests {
     use super::*;
     use vb_exchange::export_formats::{ExportStepData, RawExportStep};
 
+    async fn team(pool: &PgPool) -> Uuid {
+        sqlx::query_scalar!("INSERT INTO teams (name) VALUES ('T') RETURNING id")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     fn sample_format(slug: &str) -> ExportFormat {
         ExportFormat {
             slug: slug.to_string(),
@@ -365,7 +448,9 @@ mod tests {
 
     #[sqlx::test]
     async fn insert_and_get_with_export_formats(pool: PgPool) -> sqlx::Result<()> {
-        let id = insert(&pool, "My Template", "A template").await.unwrap();
+        let id = insert(&pool, team(&pool).await, "My Template", "A template")
+            .await
+            .unwrap();
         insert_export_format(&pool, id, &sample_format("pdf"))
             .await
             .unwrap();
@@ -379,7 +464,7 @@ mod tests {
 
     #[sqlx::test]
     async fn touch_version_changes_version(pool: PgPool) -> sqlx::Result<()> {
-        let id = insert(&pool, "T", "D").await.unwrap();
+        let id = insert(&pool, team(&pool).await, "T", "D").await.unwrap();
         let before = get(&pool, id).await.unwrap().version;
         touch_version(&pool, id).await.unwrap();
         let after = get(&pool, id).await.unwrap().version;
@@ -389,7 +474,7 @@ mod tests {
 
     #[sqlx::test]
     async fn export_steps_read_modify_write_only_touches_target(pool: PgPool) -> sqlx::Result<()> {
-        let id = insert(&pool, "T", "D").await.unwrap();
+        let id = insert(&pool, team(&pool).await, "T", "D").await.unwrap();
         insert_export_format(&pool, id, &sample_format("pdf"))
             .await
             .unwrap();
@@ -410,12 +495,53 @@ mod tests {
 
     #[sqlx::test]
     async fn insert_export_format_rejects_duplicate_slug(pool: PgPool) -> sqlx::Result<()> {
-        let id = insert(&pool, "T", "D").await.unwrap();
+        let id = insert(&pool, team(&pool).await, "T", "D").await.unwrap();
         insert_export_format(&pool, id, &sample_format("pdf"))
             .await
             .unwrap();
         let result = insert_export_format(&pool, id, &sample_format("pdf")).await;
         assert!(matches!(result, Err(DbError::Conflict(_))));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn listings_are_scoped_to_the_owning_team(pool: PgPool) -> sqlx::Result<()> {
+        let (a, b) = (team(&pool).await, team(&pool).await);
+        let ta = insert(&pool, a, "A", "").await.unwrap();
+        let tb = insert(&pool, b, "B", "").await.unwrap();
+
+        let ids = |ts: Vec<Template>| ts.into_iter().map(|t| t.id).collect::<Vec<_>>();
+        assert_eq!(ids(list_for_team(&pool, a).await.unwrap()), vec![ta]);
+        assert_eq!(ids(list_for_team(&pool, b).await.unwrap()), vec![tb]);
+        let project = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO projects (id, title, owner_team_id) VALUES ($1, 'p', $2)",
+            project,
+            a
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            ids(list_for_project(&pool, project).await.unwrap()),
+            vec![ta]
+        );
+
+        let user = sqlx::query_scalar!(
+            "INSERT INTO users (email, name, password_hash) VALUES ('u@example.com', 'u', 'h') RETURNING id"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO users_teams (user_id, team_id, role) VALUES ($1, $2, 'member')",
+            user,
+            a
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ids(list_for_user(&pool, user).await.unwrap()), vec![ta]);
         Ok(())
     }
 }

@@ -1,33 +1,32 @@
 {{> header page_name="Templates" templates_active=true}}
 
-<div class="container-fluid mt-3" style="height: calc(100vh - 47px);">
-    <div class="row">
-        <div class="col-12 d-flex align-content-center mb-4">
-            <div class="col-12 d-flex align-content-center">
-                <h1 class="d-inline">Templates</h1><a href="/templates/create" class="btn d-flex align-content-center btn-outline-success align-self-center ms-2" style="flex-wrap: wrap; height: 80%;">+</a>
-            </div>
+<div class="container-fluid mt-3">
+    <div class="page-toolbar mb-4">
+        <h1 class="mb-0">Templates</h1>
+        <div class="form-group-inline mb-0">
+            <label for="templates_team_select">Team</label>
+            <select id="templates_team_select" aria-label="Team" onchange="window.location.href='/templates?team_id=' + this.value">
+                {{#each teams}}
+                    <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+                {{/each}}
+            </select>
         </div>
+        <a href="/templates/create?team_id={{selected_team_id}}" class="btn btn-primary ms-auto" title="Create a template for this team">+ New Template</a>
     </div>
     <div class="templates_list">
-        <div class="row list_row">
-            <div class="col d-flex align-content-center flex-wrap">
-                <b>Name</b>
-            </div>
-            <div class="col d-flex align-content-center flex-wrap">
-                <b>Description</b>
-            </div>
+        <div class="row templates_list_head">
+            <div class="col-5 col-md-4">Name</div>
+            <div class="col-5 col-md-6">Description</div>
+            <div class="col-2" title="Export formats">Formats</div>
         </div>
-        {{#each this}}
-        <a href="/templates/{{id}}">
-        <div class="row list_row">
-                <div class="col d-flex align-content-center flex-wrap">
-                    <span>{{name}}</span>
-                </div>
-                <div class="col d-flex align-content-center flex-wrap">
-                    <span>{{{description}}}</span>
-                </div>
-        </div>
-        </a>
+        {{#each templates}}
+            <a href="/templates/{{id}}" class="row templates_list_row">
+                <div class="col-5 col-md-4">{{name}}</div>
+                <div class="col-5 col-md-6 templates_list_description">{{description}}</div>
+                <div class="col-2">{{len export_formats}}</div>
+            </a>
+        {{else}}
+            <p class="templates_list_empty">This team has no templates yet.</p>
         {{/each}}
     </div>
 </div>

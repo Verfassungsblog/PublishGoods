@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id FROM persons p\n           JOIN projects pr ON pr.id = $2\n           WHERE p.id = ANY($1)\n             AND (p.project_id = pr.id OR p.owner_team_id = pr.owner_team_id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "persons",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9f3e8335b97f5dcd6af7749f39f9f2a1ce62daebb0f015f4682810379baa94b2"
+}

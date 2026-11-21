@@ -1,4 +1,4 @@
-use crate::db::repositories::{projects, teams, templates};
+use crate::db::repositories::{DbError, projects, teams, templates};
 use crate::permissions::{ResourceType, has_permission};
 use crate::session::session_guard::Session;
 use rocket::State;
@@ -10,7 +10,7 @@ use sqlx::PgPool;
 
 #[derive(Serialize)]
 struct CreateProjectData {
-    templates: Vec<templates::Template>,
+    templates: Vec<templates::TemplateSummary>,
     teams: Vec<teams::TeamOption>,
 }
 
@@ -20,15 +20,13 @@ pub async fn show_create_project(
     session: Session,
     pool: &State<PgPool>,
 ) -> Result<Template, Status> {
-    // Get list of all templates
-    let all_templates = templates::list_all(pool.inner())
-        .await
-        .map_err(|_| Status::InternalServerError)?;
-
-    // The project belongs to a team the user is a member of
-    let user_teams = teams::list_for_user(pool.inner(), session.user_id)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    // The templates of all the user's teams (the form only offers those of the selected team),
+    // and the teams the project may belong to
+    let (user_templates, user_teams) = tokio::try_join!(
+        templates::list_summaries_for_user(pool.inner(), session.user_id),
+        teams::list_for_user(pool.inner(), session.user_id),
+    )
+    .map_err(|_| Status::InternalServerError)?;
     let preselected = teams::preferred_team(&user_teams)
         .map(|t| t.id)
         .ok_or(Status::Forbidden)?;
@@ -36,7 +34,7 @@ pub async fn show_create_project(
     Ok(Template::render(
         "create_project",
         CreateProjectData {
-            templates: all_templates,
+            templates: user_templates,
             teams: teams::team_options(&user_teams, preselected),
         },
     ))
@@ -73,19 +71,12 @@ pub async fn process_create_project(
         }
     };
 
-    //Check if template exists
-    if !templates::exists(pool.inner(), template_id)
-        .await
-        .unwrap_or(false)
-    {
-        return Err(Status::BadRequest);
-    }
-
     let team_id = uuid::Uuid::try_parse(&data.team_id).map_err(|_| Status::BadRequest)?;
     has_permission(pool, ResourceType::Team, team_id, session.user_id, None)
         .await
         .map_err(|_| Status::NotFound)?;
 
+    // A project can only use templates of its own team, `projects::insert` refuses others
     let project_id = uuid::Uuid::new_v4();
     if let Err(e) = projects::insert(
         pool.inner(),
@@ -98,8 +89,13 @@ pub async fn process_create_project(
     )
     .await
     {
-        eprintln!("Couldn't insert project: {:?}", e);
-        return Err(Status::InternalServerError);
+        return Err(match e {
+            DbError::NotFound(_) => Status::BadRequest,
+            e => {
+                eprintln!("Couldn't insert project: {:?}", e);
+                Status::InternalServerError
+            }
+        });
     }
 
     Ok(Redirect::to("/"))

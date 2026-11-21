@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM teams\n         WHERE id IN (SELECT team_id FROM users_teams WHERE user_id = $1)\n           AND NOT EXISTS (\n               SELECT 1 FROM users_teams WHERE team_id = teams.id AND user_id <> $1\n           )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0db48b7149831bcd168e355e27638dc31ed0b6d1768fd5595136e3f3d59e184a"
+}

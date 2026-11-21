@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, version, name, description FROM project_templates ORDER BY name",
+  "query": "SELECT id, version, name, COALESCE(description, '') AS \"description!\", owner_team_id\n           FROM project_templates\n           WHERE owner_team_id IN (SELECT team_id FROM users_teams WHERE user_id = $1)\n           ORDER BY name",
   "describe": {
     "columns": [
       {
@@ -38,25 +38,34 @@
       },
       {
         "ordinal": 3,
-        "name": "description",
+        "name": "description!",
         "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "owner_team_id",
+        "type_info": "Uuid",
         "origin": {
           "Table": {
             "table": "project_templates",
-            "name": "description"
+            "name": "owner_team_id"
           }
         }
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Uuid"
+      ]
     },
     "nullable": [
       false,
       false,
       false,
-      true
+      null,
+      false
     ]
   },
-  "hash": "39fbe4c686fc83bc7496b8757cde0c03b2932302f76840115c48700d46100639"
+  "hash": "bc991fb5cf13a864504cde071f22a2c7c2004d7e1be2ab13b9d71a9143e3be46"
 }

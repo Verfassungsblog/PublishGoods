@@ -1,6 +1,5 @@
 use crate::db::repositories::{bibliography, persons, projects, sections, templates};
-use crate::permissions::{ResourceType, has_permission};
-use crate::session::session_guard::Session;
+use crate::permissions::AuthorizedProject;
 use crate::settings::Settings;
 use crate::storage::project_storage::current::{Bibliography, PersonUuidOrString};
 use crate::storage::project_storage::sections::Section;
@@ -14,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use sqlx::types::JsonValue;
 use std::collections::HashMap;
-use uuid::Uuid;
 use vb_exchange::projects::{Identifier, Keyword, License, PersonOrString, ProjectSettingsV5};
 
 /// Return struct for ['get_project'].
@@ -127,28 +125,20 @@ impl From<crate::storage::project_storage::current::ProjectMetadataV5> for APIPr
 /// template, metadata (with author/editor expansion), settings, section tree,
 /// bibliography, and available CSL styles/locales data by querying the relevant
 /// repositories individually.
-#[get("/api/projects/<project_id>?<extend>")]
+#[get("/api/projects/<_>?<extend>")]
 pub async fn get_project(
-    project_id: &str,
     extend: Option<String>,
-    session: Session,
+    auth: AuthorizedProject,
     settings: &State<Settings>,
     pool: &State<PgPool>,
 ) -> APIResult<APIProjectData> {
-    let project_id = Uuid::parse_str(project_id)?;
-    has_permission(
-        pool,
-        ResourceType::Project,
-        project_id,
-        session.user_id,
-        None,
-    )
-    .await?;
+    let project_id = auth.id;
     let pool = pool.inner();
 
     let title = projects::get_title(pool, project_id).await?;
     let description = projects::get_description(pool, project_id).await?;
-    let template_id = projects::get_template_id(pool, project_id).await?;
+    // only a template of the project's own team is exposed (and used for rendering)
+    let template_id = projects::get_usable_template_id(pool, project_id).await?;
 
     let mut api_response = APIProjectData {
         project_id,
@@ -167,7 +157,7 @@ pub async fn get_project(
     if let Some(extend) = extend {
         let parts = extend.split(",").collect::<Vec<&str>>();
         if parts.contains("template")
-            && let Some(template_id) = api_response.template_id
+            && let Some(template_id) = template_id
         {
             api_response.template_extended = Some(templates::get(pool, template_id).await?);
         }
@@ -275,6 +265,7 @@ pub(crate) mod integration_tests {
     use rocket::http::{ContentType, Status};
     use rocket::local::asynchronous::Client;
     use rocket_dyn_templates::Template;
+    use uuid::Uuid;
 
     pub(crate) fn dummy_settings() -> Settings {
         Settings {

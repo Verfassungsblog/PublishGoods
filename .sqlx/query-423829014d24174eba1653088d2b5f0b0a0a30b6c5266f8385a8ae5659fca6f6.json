@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO projects (title) VALUES ('No owner')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "423829014d24174eba1653088d2b5f0b0a0a30b6c5266f8385a8ae5659fca6f6"
+}

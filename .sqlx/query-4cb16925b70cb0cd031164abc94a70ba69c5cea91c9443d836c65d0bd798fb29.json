@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.id AS \"template_id?\"\n           FROM projects p\n           LEFT JOIN project_templates t\n                  ON t.id = p.template_id AND t.owner_team_id = p.owner_team_id\n           WHERE p.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "template_id?",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "project_templates",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4cb16925b70cb0cd031164abc94a70ba69c5cea91c9443d836c65d0bd798fb29"
+}

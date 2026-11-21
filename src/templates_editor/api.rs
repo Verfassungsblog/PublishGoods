@@ -1,64 +1,63 @@
 use crate::db::repositories::templates::{self, Template};
-use crate::session::session_guard::Session;
+use crate::permissions::AuthorizedTemplate;
 use crate::storage::ProjectTemplateV2;
-use crate::utils::api_helpers::{APIResult, ApiErrorType};
+use crate::utils::api_helpers::{APIResult, ApiError, ApiErrorType};
 use rocket::State;
 use rocket::form::Form;
 use rocket::fs::{NamedFile, TempFile};
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::Path;
 use std::path::PathBuf;
+use std::path::{Component, Path};
 use uuid::Uuid;
 use vb_exchange::export_formats::{ExportFormat, ExportStep};
 
 /// Contains API endpoints for the templates editor.
 
-/// GET /api/templates/<template_id>
+/// GET /api/templates/<_>
 /// Get a template by its id.
-#[get("/api/templates/<template_id>")]
-pub async fn get_template(
-    _session: Session,
-    template_id: String,
-    pool: &State<PgPool>,
-) -> APIResult<Template> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
-
-    let template = templates::get(pool.inner(), template_id).await?;
-    Ok(template.into())
+#[get("/api/templates/<_>")]
+pub async fn get_template(auth: AuthorizedTemplate, pool: &State<PgPool>) -> APIResult<Template> {
+    Ok(templates::get(pool.inner(), auth.id).await?.into())
 }
 
-/// POST /api/templates/<template_id>
+/// Maps a failed [`AuthorizedTemplate`] guard for routes that serve files (and so can't return
+/// an [`ApiError`]): unknown/inaccessible templates and unparsable ids are 404, anything else 500.
+fn file_route_status(error: ApiError) -> Status {
+    match error.error {
+        ApiErrorType::ResourceNotFound(_) | ApiErrorType::UnparsableParameter(_) => {
+            Status::NotFound
+        }
+        _ => Status::InternalServerError,
+    }
+}
+
+/// Canonicalizes one of a template's directories. A template has no files on disk until
+/// something is first written, so a missing directory is `ResourceNotFound`, not a panic.
+fn template_dir(path: &str) -> Result<PathBuf, ApiError> {
+    Path::new(path).canonicalize().map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => ApiErrorType::ResourceNotFound("asset".to_string()).into(),
+        _ => ApiError::from(e),
+    })
+}
+
+/// POST /api/templates/<_>
 /// Update a template by its id.
 /// The template id in the url must match the id in the body.
 /// Can't be used to create a new template.
-#[post("/api/templates/<template_id>", data = "<template>")]
+#[post("/api/templates/<_>", data = "<template>")]
 pub async fn update_template(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     template: Json<ProjectTemplateV2>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let template = template.into_inner();
+    let mut template = template.into_inner();
 
     // Check if id in template matches id in url
     if template_id != template.id {
@@ -69,6 +68,10 @@ pub async fn update_template(
         .into());
     }
 
+    // Formats saved before slugs were validated may have unusable ones: derive valid slugs for
+    // them instead of making the whole template unsaveable.
+    let renamed = normalize_export_format_slugs(&mut template.export_formats);
+
     templates::replace(
         pool.inner(),
         template_id,
@@ -77,6 +80,10 @@ pub async fn update_template(
         &template.export_formats,
     )
     .await?;
+
+    for (old_slug, new_slug) in renamed {
+        move_legacy_format_dir(template_id, &old_slug, &new_slug).await;
+    }
 
     Ok(().into())
 }
@@ -122,21 +129,103 @@ pub struct NewAssetFile<'r> {
     pub file: TempFile<'r>,
 }
 
+/// Reduces a user-supplied path to `/`-separated plain components of allowed characters
+/// (alphanumerics, `_`, `-`, `.`). Empty, `.` and `..` components and a leading `/` are
+/// dropped, so the result can never be absolute or climb out of the directory it's joined to.
 pub fn sanitize_path(path: &str) -> String {
-    // Entfernen von `../` und `./`
-    let path = path.replace("../", "").replace("./", "");
+    let allowed_chars = |c: &char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/');
+    let path: String = path.chars().filter(allowed_chars).collect();
+    path.split('/')
+        .filter(|component| !matches!(*component, "" | "." | ".."))
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
-    // Remove leading / if present
-    let path = if path.starts_with("/") {
-        &path[1..]
+/// Validates the `<slug>` of an export format route before it is used as a directory name or
+/// DB key: it must be a single plain path component, see [`is_valid_slug`]. Slugs are never
+/// rewritten, an invalid one is a `BadRequest`.
+fn checked_slug(slug: &str) -> Result<String, ApiError> {
+    if is_valid_slug(slug) {
+        Ok(slug.to_string())
     } else {
-        &path
-    };
+        Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into())
+    }
+}
 
-    // Erlaubte Zeichen sind alphanumerische Zeichen, Unterstrich, Bindestrich, Punkt und Schrägstrich
-    let allowed_chars =
-        |c: &char| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.' || *c == '/';
-    path.chars().filter(allowed_chars).collect()
+/// An export format slug names a single directory and is used verbatim as the DB key, so it
+/// must be a single normal path component (not `.` or `..`) that survives [`sanitize_path`]
+/// unchanged.
+fn is_valid_slug(slug: &str) -> bool {
+    !slug.is_empty() && !slug.contains('/') && sanitize_path(slug) == slug
+}
+
+/// Derives a valid slug from an invalid `slug`: the part of it [`sanitize_path`] keeps (the
+/// directory the format's files were stored in so far), else one made from the format's `name`,
+/// else `"format"`.
+fn generate_slug(slug: &str, name: &str) -> String {
+    let from_name = name.trim().replace(char::is_whitespace, "-");
+    [slug, &from_name]
+        .into_iter()
+        .map(|s| sanitize_path(s).replace('/', "-"))
+        .find(|candidate| is_valid_slug(candidate))
+        .unwrap_or_else(|| "format".to_string())
+}
+
+/// Replaces every invalid slug in `formats` by a generated one that is unique among the
+/// formats (valid slugs are never touched) and re-keys the map accordingly. Returns the
+/// `(old, new)` slug pairs that changed.
+fn normalize_export_format_slugs(
+    formats: &mut HashMap<String, ExportFormat>,
+) -> Vec<(String, String)> {
+    let (valid, mut invalid): (Vec<_>, Vec<_>) = std::mem::take(formats)
+        .into_values()
+        .partition(|format| is_valid_slug(&format.slug));
+    formats.extend(
+        valid
+            .into_iter()
+            .map(|format| (format.slug.clone(), format)),
+    );
+    invalid.sort_by(|a, b| a.slug.cmp(&b.slug));
+
+    let mut renamed = Vec::new();
+    for mut format in invalid {
+        let old_slug = format.slug.clone();
+        let base = generate_slug(&old_slug, &format.name);
+        let mut slug = base.clone();
+        let mut counter = 2;
+        while formats.contains_key(&slug) {
+            slug = format!("{base}-{counter}");
+            counter += 1;
+        }
+        format.slug = slug.clone();
+        formats.insert(slug.clone(), format);
+        renamed.push((old_slug, slug));
+    }
+    renamed
+}
+
+/// Moves the files of a format whose invalid slug was replaced to the directory of its new
+/// slug. Best effort: the old directory is where [`sanitize_path`] put the files, which is
+/// usually already the new one. Never overwrites an existing directory.
+async fn move_legacy_format_dir(template_id: Uuid, old_slug: &str, new_slug: &str) {
+    let base = format!("data/templates/{template_id}/formats");
+    let (Ok(old_path), Ok(new_path)) = (
+        safe_path_combine(&base, old_slug),
+        safe_path_combine(&base, new_slug),
+    ) else {
+        return;
+    };
+    if old_path == new_path
+        || !tokio::fs::try_exists(&old_path).await.unwrap_or(false)
+        || tokio::fs::try_exists(&new_path).await.unwrap_or(true)
+    {
+        return;
+    }
+    if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
+        error!(
+            "Couldn't move files of export format {old_slug:?} to {new_slug:?} in template {template_id}: {e}"
+        );
+    }
 }
 
 /// Safely combines a base path with a user input path.
@@ -145,6 +234,15 @@ pub fn safe_path_combine(base_path: &str, user_input: &str) -> Result<PathBuf, (
     if sanitized_input.is_empty() {
         return Err(());
     }
+    // `starts_with` compares components without resolving `..`, so only plain components are
+    // allowed (sanitize_path already drops the others, this keeps the invariant local).
+    if !Path::new(&sanitized_input)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(());
+    }
+
     let base = Path::new(base_path);
     let full_path = base.join(sanitized_input);
 
@@ -159,6 +257,103 @@ pub fn safe_path_combine(base_path: &str, user_input: &str) -> Result<PathBuf, (
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_valid_slug() {
+        assert!(is_valid_slug("pdf-print_v2.1"));
+        assert!(!is_valid_slug(""));
+        assert!(!is_valid_slug("a/b"));
+        assert!(!is_valid_slug("../../x"));
+        assert!(!is_valid_slug("a b"));
+        assert!(!is_valid_slug("."));
+        assert!(!is_valid_slug(".."));
+    }
+
+    fn format(slug: &str, name: &str) -> ExportFormat {
+        ExportFormat {
+            slug: slug.to_string(),
+            name: name.to_string(),
+            export_steps: vec![],
+            output_files: vec![],
+            preview_pdf_path: None,
+        }
+    }
+
+    #[test]
+    fn test_generate_slug() {
+        assert_eq!(generate_slug("print pdf", "Print"), "printpdf");
+        assert_eq!(generate_slug("a/b", "x"), "a-b");
+        assert_eq!(generate_slug("..", "My Format"), "My-Format");
+        assert_eq!(generate_slug("///", "!!!"), "format");
+    }
+
+    #[test]
+    fn test_normalize_export_format_slugs() {
+        let mut formats = HashMap::new();
+        for f in [
+            format("pdf", "Pdf"),
+            format("p df", "A"),
+            format("pdf ", "B"),
+            format("", "Epub"),
+        ] {
+            formats.insert(f.slug.clone(), f);
+        }
+
+        let renamed = normalize_export_format_slugs(&mut formats);
+
+        assert_eq!(formats.len(), 4);
+        assert!(
+            formats
+                .iter()
+                .all(|(k, f)| *k == f.slug && is_valid_slug(k))
+        );
+        assert_eq!(formats["pdf"].name, "Pdf");
+        assert_eq!(renamed.len(), 3);
+        assert!(formats.contains_key("Epub"));
+    }
+
+    #[test]
+    fn test_sanitize_path_never_leaves_parent_dir_components() {
+        for evil in [
+            "..",
+            "a/..",
+            "x/../..",
+            "....//",
+            ".....///..",
+            ".....///.....///.....///..",
+            "/../etc/passwd",
+            "a/./../b",
+        ] {
+            let sanitized = sanitize_path(evil);
+            assert!(
+                Path::new(&sanitized)
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_))),
+                "{evil:?} -> {sanitized:?}"
+            );
+        }
+        assert_eq!(sanitize_path(".....///.."), ".....");
+        assert_eq!(sanitize_path("/a/./b//c"), "a/b/c");
+    }
+
+    #[test]
+    fn test_checked_slug_rejects_rewritable_slugs() {
+        assert_eq!(checked_slug("pdf-print").unwrap(), "pdf-print");
+        for evil in [".....///..", "../..", "a/b", "..", ".", ""] {
+            assert!(checked_slug(evil).is_err(), "{evil:?}");
+        }
+    }
+
+    #[test]
+    fn test_safe_path_combine_stays_inside_base() {
+        let base_path = "/data/templates/template1/assets";
+        assert_eq!(safe_path_combine(base_path, ".."), Err(()));
+        for evil in ["a/..", "x/../..", ".....///..///other/assets/x"] {
+            let path = safe_path_combine(base_path, evil).unwrap();
+            assert!(path.starts_with(base_path), "{evil:?} -> {path:?}");
+            assert!(path.components().all(|c| c != Component::ParentDir));
+        }
+    }
 
     #[test]
     fn test_safe_path_combine_valid_path() {
@@ -200,23 +395,15 @@ mod tests {
     }
 }
 
-/// POST /api/templates/<template_id>/assets/file
+/// POST /api/templates/<_>/assets/file
 /// Creates a new asset in the global assets folder of the template
-#[post("/api/templates/<template_id>/assets/file", data = "<asset>")]
+#[post("/api/templates/<_>/assets/file", data = "<asset>")]
 pub async fn create_file_asset(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     asset: Form<NewAssetFile<'_>>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
     let mut file = asset.into_inner().file;
 
@@ -286,27 +473,17 @@ pub struct DeleteAssetRequest {
     pub paths: Vec<String>,
 }
 
-/// DELETE /api/templates/<template_id>/assets/<path>
+/// DELETE /api/templates/<_>/assets/<path>
 /// Deletes an asset in the global assets folder of the template
-#[delete("/api/templates/<template_id>/assets", data = "<paths>")]
+#[delete("/api/templates/<_>/assets", data = "<paths>")]
 pub async fn delete_assets(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     paths: Json<DeleteAssetRequest>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let base_path_raw = Path::new(&format!("data/templates/{}/assets", template_id))
-        .canonicalize()
-        .unwrap();
+    let base_path_raw = template_dir(&format!("data/templates/{}/assets", template_id))?;
     let base_path = base_path_raw.to_str().unwrap();
 
     for path in &paths.paths {
@@ -343,23 +520,15 @@ pub async fn delete_assets(
     Ok(().into())
 }
 
-/// POST /api/templates/<template_id>/assets/folder
+/// POST /api/templates/<_>/assets/folder
 /// Creates a new asset in the global assets folder of the template
-#[post("/api/templates/<template_id>/assets/folder", data = "<asset>")]
+#[post("/api/templates/<_>/assets/folder", data = "<asset>")]
 pub async fn create_folder_asset(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     asset: Json<NewAssetFolder>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
     let name = sanitize_path(&asset.name);
 
@@ -393,18 +562,11 @@ pub async fn create_folder_asset(
     }
 }
 
-/// GET /api/templates/<template_id>/assets
+/// GET /api/templates/<_>/assets
 /// List all global assets saved for the template
-#[get("/api/templates/<template_id>/assets")]
-pub async fn get_assets(_session: Session, template_id: String) -> APIResult<AssetList> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+#[get("/api/templates/<_>/assets")]
+pub async fn get_assets(auth: AuthorizedTemplate) -> APIResult<AssetList> {
+    let template_id = auth.id;
 
     let global_asset_path = PathBuf::from(format!("data/templates/{}/assets", template_id));
 
@@ -470,22 +632,14 @@ fn get_assets_recursive(
     Ok(assets)
 }
 
-/// GET /api/templates/<template_id>/assets/files/<path>
+/// GET /api/templates/<_>/assets/files/<path>
 /// Get an specific File asset in the global assets folder of the template
-#[get("/api/templates/<template_id>/assets/files/<path..>")]
+#[get("/api/templates/<_>/assets/files/<path..>")]
 pub async fn get_asset_file(
-    _session: Session,
-    template_id: String,
+    auth: Result<AuthorizedTemplate, ApiError>,
     path: PathBuf,
 ) -> Result<NamedFile, Status> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(Status::NotFound);
-        }
-    };
+    let template_id = auth.map_err(file_route_status)?.id;
 
     // Get the path to the global assets folder
     let path = match safe_path_combine(
@@ -514,28 +668,17 @@ pub struct UpdateAssetRequest {
     pub content: String,
 }
 
-/// PUT /api/templates/<template_id>/assets/files/<path>
+/// PUT /api/templates/<_>/assets/files/<path>
 /// Updates a text-based asset in the global assets folder of the template
 /// The asset must be a text-based file, e.g. .txt, .html, .css, .js
-#[put(
-    "/api/templates/<template_id>/assets/files/<path..>",
-    data = "<content>"
-)]
+#[put("/api/templates/<_>/assets/files/<path..>", data = "<content>")]
 pub async fn update_asset_file(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     path: PathBuf,
     content: Json<UpdateAssetRequest>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
     // Get the path to the global assets folder
     let path = match safe_path_combine(
@@ -567,25 +710,16 @@ pub async fn update_asset_file(
     }
 }
 
-/// POST /api/templates/<template_id>/assets/move
+/// POST /api/templates/<_>/assets/move
 /// Moves an asset in the global assets folder of the template
-#[post("/api/templates/<template_id>/assets/move", data = "<asset>")]
+#[post("/api/templates/<_>/assets/move", data = "<asset>")]
 pub async fn move_asset(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     asset: Json<MoveAssetRequest>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
-    let base_path = format!("data/templates/{}/assets", template_id);
-    let base_path = Path::new(&base_path).canonicalize().unwrap();
+    let template_id = auth.id;
+    let base_path = template_dir(&format!("data/templates/{}/assets", template_id))?;
 
     let old_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.old_path) {
         Ok(path) => path,
@@ -619,25 +753,21 @@ pub async fn move_asset(
     Ok(().into())
 }
 
-/// POST /api/templates/<template_id>/export_formats
+/// POST /api/templates/<_>/export_formats
 /// Adds a new export format to the template and creates its asset directory on disk.
-#[post("/api/templates/<template_id>/export_formats", data = "<data>")]
+#[post("/api/templates/<_>/export_formats", data = "<data>")]
 pub async fn add_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     pool: &State<PgPool>,
     data: Json<ExportFormat>,
 ) -> APIResult<ExportFormat> {
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
     // Get the format to be added
     let format = data.into_inner();
+    if !is_valid_slug(&format.slug) {
+        return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
+    }
 
     // Add folder in file system
     let base_path = format!("data/templates/{}/formats", template_id);
@@ -679,46 +809,35 @@ pub struct ExportFormatMetadata {
     pub preview_pdf_path: Option<String>,
 }
 
-/// UPDATE /api/templates/<template_id>/export_formats/<slug>
+/// UPDATE /api/templates/<_>/export_formats/<slug>
 /// Updates the export_format metadata
-#[post(
-    "/api/templates/<template_id>/export_formats/<slug>/metadata",
-    data = "<data>"
-)]
+#[post("/api/templates/<_>/export_formats/<slug>/metadata", data = "<data>")]
 pub async fn update_export_format_metadata(
-    _session: Session,
+    auth: AuthorizedTemplate,
     slug: String,
-    template_id: String,
     pool: &State<PgPool>,
     data: Json<ExportFormatMetadata>,
 ) -> APIResult<()> {
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
+    let old_slug = checked_slug(&slug)?;
+    let new_slug = checked_slug(&data.slug)?;
 
-    // Move files on disk if slug changed
-    if slug != data.slug {
+    // An export format without files has no directory to move. The files are moved first so a
+    // failing DB update (unknown format, slug conflict) can undo it, leaving both unchanged.
+    let mut moved = None;
+    if old_slug != new_slug {
+        // not canonicalized: the formats directory doesn't exist yet if no format has files
         let base_path = format!("data/templates/{}/formats", template_id);
-        let base_path = Path::new(&base_path).canonicalize().unwrap();
+        let (Ok(old_path), Ok(new_path)) = (
+            safe_path_combine(&base_path, &old_slug),
+            safe_path_combine(&base_path, &new_slug),
+        ) else {
+            return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
+        };
 
-        let old_path = match safe_path_combine(base_path.to_str().unwrap(), &slug) {
-            Ok(path) => path,
-            Err(_) => {
-                eprintln!("Error moving export Format, invalid slug.");
-                return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
-            }
-        };
-        let new_path = match safe_path_combine(base_path.to_str().unwrap(), &data.slug) {
-            Ok(path) => path,
-            Err(_) => {
-                eprintln!("Error moving export Format, invalid slug.");
-                return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
-            }
-        };
+        if !templates::export_format_exists(pool.inner(), template_id, &old_slug).await? {
+            return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
+        }
 
         if new_path.exists() {
             return Err(ApiErrorType::Conflict(
@@ -727,42 +846,46 @@ pub async fn update_export_format_metadata(
             .into());
         }
 
-        if let Err(e) = tokio::fs::rename(old_path, new_path).await {
-            eprintln!("Couldn't rename export format: {}", e);
-            return Err(ApiErrorType::InternalServerError.into());
+        if tokio::fs::try_exists(&old_path).await.unwrap_or(false) {
+            if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
+                eprintln!("Couldn't rename export format: {}", e);
+                return Err(ApiErrorType::InternalServerError.into());
+            }
+            moved = Some((old_path, new_path));
         }
     }
 
-    templates::update_export_format_metadata(
+    if let Err(e) = templates::update_export_format_metadata(
         pool.inner(),
         template_id,
-        &slug,
-        &data.slug,
+        &old_slug,
+        &new_slug,
         &data.name,
         data.preview_pdf_path.as_deref(),
     )
-    .await?;
+    .await
+    {
+        if let Some((old_path, new_path)) = moved
+            && let Err(e) = tokio::fs::rename(&new_path, &old_path).await
+        {
+            error!("Couldn't undo the move of export format {old_slug:?} to {new_slug:?}: {e}");
+        }
+        return Err(e.into());
+    }
 
     Ok(().into())
 }
 
-/// DELETE /api/templates/<template_id>/export_formats/<slug>
-/// Deletes export format with slug <slug> in template with <template_id>
-#[delete("/api/templates/<template_id>/export_formats/<slug>")]
+/// DELETE /api/templates/<_>/export_formats/<slug>
+/// Deletes export format with slug <slug> in the template
+#[delete("/api/templates/<_>/export_formats/<slug>")]
 pub async fn delete_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     pool: &State<PgPool>,
     slug: String,
 ) -> APIResult<()> {
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
-    let slug = sanitize_path(&slug);
+    let template_id = auth.id;
+    let slug = checked_slug(&slug)?;
 
     templates::delete_export_format(pool.inner(), template_id, &slug).await?;
 
@@ -789,23 +912,15 @@ pub async fn delete_export_format(
     }
 }
 
-/// GET /api/templates/<template_id>/export_formats/<slug>/assets
+/// GET /api/templates/<_>/export_formats/<slug>/assets
 /// List all assets of the export_format
-#[get("/api/templates/<template_id>/export_formats/<slug>/assets")]
+#[get("/api/templates/<_>/export_formats/<slug>/assets")]
 pub async fn get_assets_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
 ) -> APIResult<AssetList> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
-    let slug = sanitize_path(&slug);
+    let template_id = auth.id;
+    let slug = checked_slug(&slug)?;
 
     // Get all entries in the assets folder (via async fs) inside data/templates/<template_id>/assets
     let res = tokio::task::spawn_blocking(move || {
@@ -829,24 +944,16 @@ pub async fn get_assets_for_export_format(
     }
 }
 
-/// GET /api/templates/<template_id>/export_formats/<slug>/assets/files/<path>
+/// GET /api/templates/<_>/export_formats/<slug>/assets/files/<path>
 /// Get an specific File asset in the folder of the export format
-#[get("/api/templates/<template_id>/export_formats/<slug>/assets/files/<path..>")]
+#[get("/api/templates/<_>/export_formats/<slug>/assets/files/<path..>")]
 pub async fn get_asset_file_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: Result<AuthorizedTemplate, ApiError>,
     path: PathBuf,
     slug: String,
 ) -> Result<NamedFile, Status> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(Status::NotFound);
-        }
-    };
-    let slug = sanitize_path(&slug);
+    let template_id = auth.map_err(file_route_status)?.id;
+    let slug = checked_slug(&slug).map_err(|_| Status::NotFound)?;
 
     // Get the path to the export format folder
     let path = match safe_path_combine(
@@ -870,29 +977,21 @@ pub async fn get_asset_file_for_export_format(
     }
 }
 
-/// POST /api/templates/<template_id>/export_formats/<slug>/assets/file
+/// POST /api/templates/<_>/export_formats/<slug>/assets/file
 /// Creates a new asset in the export format folder
 #[post(
-    "/api/templates/<template_id>/export_formats/<slug>/assets/file",
+    "/api/templates/<_>/export_formats/<slug>/assets/file",
     data = "<asset>"
 )]
 pub async fn create_file_asset_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
     asset: Form<NewAssetFile<'_>>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     let mut file = asset.into_inner().file;
 
@@ -961,33 +1060,20 @@ pub async fn create_file_asset_for_export_format(
     }
 }
 
-/// DELETE /api/templates/<template_id>/export_formats/<slug>/assets
+/// DELETE /api/templates/<_>/export_formats/<slug>/assets
 /// Deletes an asset in the export format folder of the template
-#[delete(
-    "/api/templates/<template_id>/export_formats/<slug>/assets",
-    data = "<paths>"
-)]
+#[delete("/api/templates/<_>/export_formats/<slug>/assets", data = "<paths>")]
 pub async fn delete_assets_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     paths: Json<DeleteAssetRequest>,
     slug: String,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
-    let base_path_raw = Path::new(&format!("data/templates/{}/formats/{}", template_id, slug))
-        .canonicalize()
-        .unwrap();
+    let base_path_raw = template_dir(&format!("data/templates/{}/formats/{}", template_id, slug))?;
     let base_path = base_path_raw.to_str().unwrap();
 
     for path in &paths.paths {
@@ -1023,29 +1109,21 @@ pub async fn delete_assets_for_export_format(
     Ok(().into())
 }
 
-/// POST /api/templates/<template_id>/export_formats/<slug>/assets/folder
+/// POST /api/templates/<_>/export_formats/<slug>/assets/folder
 /// Creates a new asset in the export format folder of the template
 #[post(
-    "/api/templates/<template_id>/export_formats/<slug>/assets/folder",
+    "/api/templates/<_>/export_formats/<slug>/assets/folder",
     data = "<asset>"
 )]
 pub async fn create_folder_asset_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     asset: Json<NewAssetFolder>,
     slug: String,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     let name = sanitize_path(&asset.name);
 
@@ -1079,31 +1157,23 @@ pub async fn create_folder_asset_for_export_format(
     }
 }
 
-/// PUT /api/templates/<template_id>/export_formats/<slug>/assets/files/<path>
+/// PUT /api/templates/<_>/export_formats/<slug>/assets/files/<path>
 /// Updates a text-based asset in the export format folder of the template
 /// The asset must be a text-based file, e.g. .txt, .html, .css, .js
 #[put(
-    "/api/templates/<template_id>/export_formats/<slug>/assets/files/<path..>",
+    "/api/templates/<_>/export_formats/<slug>/assets/files/<path..>",
     data = "<content>"
 )]
 pub async fn update_asset_file_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     path: PathBuf,
     content: Json<UpdateAssetRequest>,
     slug: String,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     // Get the path to the global assets folder
     let path = match safe_path_combine(
@@ -1136,32 +1206,23 @@ pub async fn update_asset_file_for_export_format(
     }
 }
 
-/// POST /api/templates/<template_id>/export_formats/<slug>/assets/move
+/// POST /api/templates/<_>/export_formats/<slug>/assets/move
 /// Moves an asset in the export_format folder of the template
 #[post(
-    "/api/templates/<template_id>/export_formats/<slug>/assets/move",
+    "/api/templates/<_>/export_formats/<slug>/assets/move",
     data = "<asset>"
 )]
 pub async fn move_asset_for_export_format(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     asset: Json<MoveAssetRequest>,
     slug: String,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
-    let base_path = format!("data/templates/{}/formats/{}", template_id, slug);
-    let base_path = Path::new(&base_path).canonicalize().unwrap();
+    let base_path = template_dir(&format!("data/templates/{}/formats/{}", template_id, slug))?;
 
     let old_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.old_path) {
         Ok(path) => path,
@@ -1201,29 +1262,21 @@ pub struct MoveAssetRequest {
     pub new_path: String,
 }
 
-/// POST /api/templates/<template_id>/export_formats/<slug>/export_steps/
+/// POST /api/templates/<_>/export_formats/<slug>/export_steps/
 /// Creates new Export Step
 #[post(
-    "/api/templates/<template_id>/export_formats/<slug>/export_steps",
+    "/api/templates/<_>/export_formats/<slug>/export_steps",
     data = "<step>"
 )]
 pub async fn create_export_step(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
     step: Json<ExportStep>,
     pool: &State<PgPool>,
 ) -> APIResult<ExportStep> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     let mut step = step.into_inner();
     step.id = Some(uuid::Uuid::new_v4());
@@ -1242,28 +1295,20 @@ pub struct MoveExportStepRequest {
     pub move_after: Option<uuid::Uuid>,
 }
 
-/// POST /api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>/move
+/// POST /api/templates/<_>/export_formats/<slug>/export_steps/<step_id>/move
 /// Moves a export step to a specified position
 #[post(
-    "/api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>/move",
+    "/api/templates/<_>/export_formats/<slug>/export_steps/<step_id>/move",
     data = "<movedata>"
 )]
 pub async fn move_export_step(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
     step_id: String,
     movedata: Json<MoveExportStepRequest>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
     //Parse step_id to uuid
     let step_id = match Uuid::parse_str(&step_id) {
         Ok(step_id) => step_id,
@@ -1273,7 +1318,7 @@ pub async fn move_export_step(
         }
     };
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
     let move_after = movedata.move_after;
 
     let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
@@ -1304,30 +1349,22 @@ pub async fn move_export_step(
     Ok(().into())
 }
 
-/// PUT /api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>
+/// PUT /api/templates/<_>/export_formats/<slug>/export_steps/<step_id>
 /// Updates a export step
 #[post(
-    "/api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>",
+    "/api/templates/<_>/export_formats/<slug>/export_steps/<step_id>",
     data = "<step>"
 )]
 pub async fn update_export_step(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
     step_id: String,
     step: Json<ExportStep>,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     let parameter_step_id = match Uuid::parse_str(&step_id) {
         Ok(id) => id,
@@ -1367,24 +1404,17 @@ pub async fn update_export_step(
     Ok(().into())
 }
 
-/// DELETE /api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>
+/// DELETE /api/templates/<_>/export_formats/<slug>/export_steps/<step_id>
 /// Removes an export step from an export format's step list.
-#[delete("/api/templates/<template_id>/export_formats/<slug>/export_steps/<step_id>")]
+#[delete("/api/templates/<_>/export_formats/<slug>/export_steps/<step_id>")]
 pub async fn delete_export_step(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
     step_id: String,
     pool: &State<PgPool>,
 ) -> APIResult<()> {
     //Parse template_id and step_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
     let step_id = match Uuid::parse_str(&step_id) {
         Ok(step_id) => step_id,
@@ -1394,7 +1424,7 @@ pub async fn delete_export_step(
         }
     };
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
     steps.retain(|step| step.id != Some(step_id));
@@ -1403,25 +1433,17 @@ pub async fn delete_export_step(
     Ok(().into())
 }
 
-/// GET /api/templates/<template_id>/export_formats/<slug>/export_steps
+/// GET /api/templates/<_>/export_formats/<slug>/export_steps
 /// Returns the ordered list of export steps for the given export format.
-#[get("/api/templates/<template_id>/export_formats/<slug>/export_steps")]
+#[get("/api/templates/<_>/export_formats/<slug>/export_steps")]
 pub async fn get_export_steps(
-    _session: Session,
-    template_id: String,
+    auth: AuthorizedTemplate,
     slug: String,
     pool: &State<PgPool>,
 ) -> APIResult<Vec<ExportStep>> {
-    //Parse template_id to uuid
-    let template_id = match Uuid::parse_str(&template_id) {
-        Ok(template_id) => template_id,
-        Err(e) => {
-            eprintln!("Couldn't parse template id: {}", e);
-            return Err(ApiErrorType::UnparsableParameter("uuid".to_string()).into());
-        }
-    };
+    let template_id = auth.id;
 
-    let slug = sanitize_path(&slug);
+    let slug = checked_slug(&slug)?;
 
     let export_steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
     Ok(export_steps.into())
