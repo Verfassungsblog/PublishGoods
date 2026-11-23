@@ -1,6 +1,7 @@
 /target
 /config/local.toml
 /data/templates/
+/data/template-git/
 /data/projects/
 /data/temp/
 /data/templates-old/

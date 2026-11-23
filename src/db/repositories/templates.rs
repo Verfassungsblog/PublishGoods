@@ -7,6 +7,7 @@
 //! anonymous-struct `query!` macro and assemble the domain structs by hand.
 
 use super::DbError;
+use sqlx::PgConnection;
 use sqlx::PgPool;
 use sqlx::postgres::PgExecutor;
 use sqlx::types::Json;
@@ -105,6 +106,36 @@ pub async fn get(pool: &PgPool, id: Uuid) -> Result<Template, DbError> {
         owner_team_id: row.owner_team_id,
         export_formats,
     })
+}
+
+/// Ids of all templates.
+pub async fn list_ids(pool: &PgPool) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar("SELECT id FROM project_templates")
+        .fetch_all(pool)
+        .await?)
+}
+
+/// Ids of the templates owned by the teams `team_ids`, for a transaction that deletes those
+/// teams (and with them, by cascade, the templates). The team rows are locked first: creating a
+/// template takes a share lock on its team through the foreign key, so one that is created
+/// concurrently either is listed here or has to wait and then fails once the teams are gone.
+/// Without that, a template could be deleted without ever being reported, and its files would
+/// stay on disk.
+pub async fn list_ids_for_teams_being_deleted(
+    conn: &mut PgConnection,
+    team_ids: &[Uuid],
+) -> Result<Vec<Uuid>, DbError> {
+    // ordered, so transactions deleting overlapping sets of teams can't deadlock
+    sqlx::query("SELECT id FROM teams WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+        .bind(team_ids)
+        .execute(&mut *conn)
+        .await?;
+    Ok(
+        sqlx::query_scalar("SELECT id FROM project_templates WHERE owner_team_id = ANY($1)")
+            .bind(team_ids)
+            .fetch_all(&mut *conn)
+            .await?,
+    )
 }
 
 /// Checks whether a template with the given id exists.

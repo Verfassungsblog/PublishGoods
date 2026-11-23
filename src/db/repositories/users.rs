@@ -1,6 +1,6 @@
 //! `users` / `users_teams` / `user_login_attempts` / `teams`.
 
-use super::DbError;
+use super::{DbError, teams as teams_repo};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use sqlx::postgres::PgExecutor;
@@ -288,18 +288,35 @@ pub async fn update<'e>(exec: impl PgExecutor<'e>, user: &User) -> Result<User, 
 /// Deletes a user by id, together with every team they are the last member of (and everything
 /// those teams own), so no team is left behind that nobody can reach. Teams that have other
 /// members are kept. Fails with [`DbError::NotFound`] if no row with that id exists.
-pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
+///
+/// Returns the ids of the templates that were deleted with those teams: their files on disk are
+/// the caller's to remove, see `templates_editor::git::remove_files_in_background`.
+pub async fn delete(pool: &PgPool, id: Uuid) -> Result<Vec<Uuid>, DbError> {
     let mut tx = pool.begin().await?;
-    sqlx::query!(
-        "DELETE FROM teams
+    // Lock the user's teams before deciding which ones they are the last member of: joining a
+    // team takes a share lock on it through the foreign key, so a member added concurrently
+    // either is seen below or has to wait and then fails once the team is gone. Ordered, so
+    // transactions locking overlapping sets of teams can't deadlock.
+    sqlx::query(
+        "SELECT id FROM teams
          WHERE id IN (SELECT team_id FROM users_teams WHERE user_id = $1)
-           AND NOT EXISTS (
-               SELECT 1 FROM users_teams WHERE team_id = teams.id AND user_id <> $1
-           )",
-        id
+         ORDER BY id FOR UPDATE",
     )
+    .bind(id)
     .execute(&mut *tx)
     .await?;
+    let teams: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT team_id FROM users_teams
+         WHERE user_id = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM users_teams other
+               WHERE other.team_id = users_teams.team_id AND other.user_id <> $1
+           )",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let templates = teams_repo::delete_many(&mut tx, &teams).await?;
     let result = sqlx::query!("DELETE FROM users WHERE id = $1", id)
         .execute(&mut *tx)
         .await?;
@@ -307,7 +324,7 @@ pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
         return Err(DbError::NotFound("user"));
     }
     tx.commit().await?;
-    Ok(())
+    Ok(templates)
 }
 
 /// Records a failed login attempt and returns the number of attempts within the last
@@ -561,7 +578,15 @@ mod tests {
         .execute(&pool)
         .await?;
 
-        delete(&pool, alice.id).await.unwrap();
+        // templates of the teams that go are reported, so their files can be removed
+        let alice_template = crate::db::repositories::templates::insert(&pool, alice_team, "t", "")
+            .await
+            .unwrap();
+        crate::db::repositories::templates::insert(&pool, bob_team, "kept", "")
+            .await
+            .unwrap();
+
+        assert_eq!(delete(&pool, alice.id).await.unwrap(), vec![alice_template]);
         assert!(team_of("Alice").await.is_none());
         let project_left =
             sqlx::query_scalar!("SELECT COUNT(*) FROM projects WHERE id = $1", project)
@@ -573,7 +598,7 @@ mod tests {
         assert_eq!(team_of("Bob").await, Some(bob_team));
 
         // Bob was the last member of his team and of the Default team: both go
-        delete(&pool, bob.id).await.unwrap();
+        assert_eq!(delete(&pool, bob.id).await.unwrap().len(), 1);
         assert!(team_of("Bob").await.is_none());
         assert!(team_of("Default").await.is_none());
         Ok(())

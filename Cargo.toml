@@ -46,6 +46,7 @@ futures = "0.3.31"
 html5ever = "0.38.0"
 markup5ever = "0.38.0"
 markup5ever_rcdom = "0.38.0"
+git2 = { version = "0.21", default-features = false }
 dashmap = {version = "6.1", features = ["serde"] }
 yrs = "0.25.0"
 ws = { package = "rocket_ws", version = "0.1.1" }

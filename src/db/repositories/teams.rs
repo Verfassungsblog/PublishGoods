@@ -12,12 +12,12 @@
 //! has no such nested shape, so it derives `FromRow` and is fetched with the
 //! macro-checked `query_as!`.
 
-use super::DbError;
+use super::{DbError, templates};
 use crate::db::repositories::users::{TeamRole, UserProfile};
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
 use sqlx::postgres::{PgExecutor, PgRow};
 use sqlx::{FromRow, Row};
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -254,16 +254,32 @@ pub async fn rename<'e>(exec: impl PgExecutor<'e>, id: Uuid, name: &str) -> Resu
     Ok(())
 }
 
-/// Deletes a team by id (cascades `users_teams`). Fails with [`DbError::NotFound`] if no
-/// team with that id exists.
-pub async fn delete<'e>(exec: impl PgExecutor<'e>, id: Uuid) -> Result<(), DbError> {
-    let result = sqlx::query!("DELETE FROM teams WHERE id = $1", id)
-        .execute(exec)
+/// Deletes the teams `ids` inside the transaction `conn` belongs to, and returns the ids of the
+/// templates that were deleted with them: their files on disk are the caller's to remove, see
+/// `templates_editor::git::remove_files_in_background`. Fails with [`DbError::NotFound`] if one
+/// of the teams doesn't exist.
+#[must_use = "the files of the deleted templates must be removed"]
+pub async fn delete_many(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>, DbError> {
+    let templates = templates::list_ids_for_teams_being_deleted(&mut *conn, ids).await?;
+    let result = sqlx::query("DELETE FROM teams WHERE id = ANY($1)")
+        .bind(ids)
+        .execute(&mut *conn)
         .await?;
-    if result.rows_affected() == 0 {
+    if result.rows_affected() != ids.len() as u64 {
         return Err(DbError::NotFound("team"));
     }
-    Ok(())
+    Ok(templates)
+}
+
+/// Deletes a team by id (cascades `users_teams` and its templates), and returns the ids of the
+/// templates, see [`delete_many`]. Fails with [`DbError::NotFound`] if no team with that id
+/// exists.
+#[must_use = "the files of the deleted templates must be removed"]
+pub async fn delete(pool: &PgPool, id: Uuid) -> Result<Vec<Uuid>, DbError> {
+    let mut tx = pool.begin().await?;
+    let templates = delete_many(&mut tx, &[id]).await?;
+    tx.commit().await?;
+    Ok(templates)
 }
 
 /// Adds `user_id` to `team_id` with `role`.

@@ -172,11 +172,16 @@ async fn rocket() -> _ {
         }
     }
 
+    // Templates that predate git versioning get their initial commit (after the legacy
+    // migration above, which may have created template rows). Done before serving requests, so
+    // no change commit can create a repository first.
+    templates_editor::git::import_existing(&db_pool, &settings).await;
+
     info!("Loading Citation Locale Files & Styles...");
     let csl_data = Arc::new(CslData::new(&settings));
 
     info!("Starting cleanup worker...");
-    cleaner::worker();
+    cleaner::worker(settings.data_path.clone());
 
     let root_ca = Arc::new(load_root_ca(settings.ca_cert_path.clone()));
     let client_cert = load_client_cert(settings.client_cert_path.clone());

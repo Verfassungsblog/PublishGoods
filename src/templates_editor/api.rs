@@ -1,6 +1,8 @@
 use crate::db::repositories::templates::{self, Template};
 use crate::permissions::AuthorizedTemplate;
+use crate::settings::Settings;
 use crate::storage::ProjectTemplateV2;
+use crate::templates_editor::git;
 use crate::utils::api_helpers::{APIResult, ApiError, ApiErrorType};
 use rocket::State;
 use rocket::form::Form;
@@ -38,11 +40,26 @@ fn file_route_status(error: ApiError) -> Status {
 
 /// Canonicalizes one of a template's directories. A template has no files on disk until
 /// something is first written, so a missing directory is `ResourceNotFound`, not a panic.
-fn template_dir(path: &str) -> Result<PathBuf, ApiError> {
-    Path::new(path).canonicalize().map_err(|e| match e.kind() {
+fn template_dir(path: &Path) -> Result<PathBuf, ApiError> {
+    path.canonicalize().map_err(|e| match e.kind() {
         io::ErrorKind::NotFound => ApiErrorType::ResourceNotFound("asset".to_string()).into(),
         _ => ApiError::from(e),
     })
+}
+
+/// The global assets of a template.
+fn assets_dir(settings: &Settings, template_id: Uuid) -> PathBuf {
+    settings.template_dir(template_id).join("assets")
+}
+
+/// The directory all export formats of a template keep their files in.
+fn formats_dir(settings: &Settings, template_id: Uuid) -> PathBuf {
+    settings.template_dir(template_id).join("formats")
+}
+
+/// The files of one export format. `slug` must be valid, see [`checked_slug`].
+fn format_dir(settings: &Settings, template_id: Uuid, slug: &str) -> PathBuf {
+    formats_dir(settings, template_id).join(slug)
 }
 
 /// POST /api/templates/<_>
@@ -54,6 +71,7 @@ pub async fn update_template(
     auth: AuthorizedTemplate,
     template: Json<ProjectTemplateV2>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
 
@@ -72,6 +90,8 @@ pub async fn update_template(
     // them instead of making the whole template unsaveable.
     let renamed = normalize_export_format_slugs(&mut template.export_formats);
 
+    let lock = git::lock(template_id).await;
+
     templates::replace(
         pool.inner(),
         template_id,
@@ -82,8 +102,10 @@ pub async fn update_template(
     .await?;
 
     for (old_slug, new_slug) in renamed {
-        move_legacy_format_dir(template_id, &old_slug, &new_slug).await;
+        move_legacy_format_dir(settings, template_id, &old_slug, &new_slug).await;
     }
+
+    git::commit(pool.inner(), settings, template_id, lock, "Update template").await;
 
     Ok(().into())
 }
@@ -154,9 +176,13 @@ fn checked_slug(slug: &str) -> Result<String, ApiError> {
 
 /// An export format slug names a single directory and is used verbatim as the DB key, so it
 /// must be a single normal path component (not `.` or `..`) that survives [`sanitize_path`]
-/// unchanged.
+/// unchanged. Nor may it be a `.git` name, whose files are never versioned, see
+/// [`git::is_git_dir_name`].
 fn is_valid_slug(slug: &str) -> bool {
-    !slug.is_empty() && !slug.contains('/') && sanitize_path(slug) == slug
+    !slug.is_empty()
+        && !slug.contains('/')
+        && sanitize_path(slug) == slug
+        && !git::is_git_dir_name(slug)
 }
 
 /// Derives a valid slug from an invalid `slug`: the part of it [`sanitize_path`] keeps (the
@@ -207,8 +233,13 @@ fn normalize_export_format_slugs(
 /// Moves the files of a format whose invalid slug was replaced to the directory of its new
 /// slug. Best effort: the old directory is where [`sanitize_path`] put the files, which is
 /// usually already the new one. Never overwrites an existing directory.
-async fn move_legacy_format_dir(template_id: Uuid, old_slug: &str, new_slug: &str) {
-    let base = format!("data/templates/{template_id}/formats");
+async fn move_legacy_format_dir(
+    settings: &Settings,
+    template_id: Uuid,
+    old_slug: &str,
+    new_slug: &str,
+) {
+    let base = formats_dir(settings, template_id);
     let (Ok(old_path), Ok(new_path)) = (
         safe_path_combine(&base, old_slug),
         safe_path_combine(&base, new_slug),
@@ -229,7 +260,7 @@ async fn move_legacy_format_dir(template_id: Uuid, old_slug: &str, new_slug: &st
 }
 
 /// Safely combines a base path with a user input path.
-pub fn safe_path_combine(base_path: &str, user_input: &str) -> Result<PathBuf, ()> {
+pub fn safe_path_combine(base_path: impl AsRef<Path>, user_input: &str) -> Result<PathBuf, ()> {
     let sanitized_input = sanitize_path(user_input);
     if sanitized_input.is_empty() {
         return Err(());
@@ -243,7 +274,7 @@ pub fn safe_path_combine(base_path: &str, user_input: &str) -> Result<PathBuf, (
         return Err(());
     }
 
-    let base = Path::new(base_path);
+    let base = base_path.as_ref();
     let full_path = base.join(sanitized_input);
 
     // Sicherstellen, dass der resultierende Pfad im Basisverzeichnis bleibt
@@ -252,6 +283,289 @@ pub fn safe_path_combine(base_path: &str, user_input: &str) -> Result<PathBuf, (
     }
 
     Ok(full_path)
+}
+
+/// Whether a sanitized relative path has a `.git` component, see [`git::is_git_dir_name`].
+fn has_git_component(sanitized_path: &str) -> bool {
+    sanitized_path.split('/').any(git::is_git_dir_name)
+}
+
+/// Like [`safe_path_combine`], for paths a template file is written to (created, edited or
+/// moved to): rejects paths with a `.git` component, see [`git::is_git_dir_name`]. Such files
+/// would silently be left out of the template's history. Reading, deleting and moving away
+/// existing ones stays possible.
+fn safe_new_path_combine(base_path: impl AsRef<Path>, user_input: &str) -> Result<PathBuf, ()> {
+    // Check what is actually used: sanitizing can turn `.g!it` into `.git`.
+    if has_git_component(&sanitize_path(user_input)) {
+        return Err(());
+    }
+    safe_path_combine(base_path, user_input)
+}
+
+/// Records a change of the template: new version, and a commit of the current state to its git
+/// repository (a failing commit is only logged, see [`git::commit`]). The commit is made even if
+/// the version couldn't be bumped, so the repository doesn't miss a change that is on disk; the
+/// error is returned afterwards. `lock` is the template's lock, taken before the change was made.
+async fn record_change(
+    pool: &PgPool,
+    settings: &Settings,
+    template_id: Uuid,
+    lock: git::TemplateLock,
+    message: &str,
+) -> Result<(), ApiError> {
+    let touched = templates::touch_version(pool, template_id).await;
+    git::commit(pool, settings, template_id, lock, message).await;
+    touched?;
+    Ok(())
+}
+
+/// `Ok(name)` unless `name` (sanitized user input for a new file or folder) is empty or has a
+/// `.git` component, see [`git::is_git_dir_name`].
+fn checked_new_name(name: String) -> Result<String, ApiError> {
+    if name.is_empty() || has_git_component(&name) {
+        return Err(ApiErrorType::BadRequest("Invalid or reserved name".to_string()).into());
+    }
+    Ok(name)
+}
+
+/// The name `filename` is saved under on its `attempt`-th try (0 is the name itself): a number
+/// goes in front of the extension, `up.css` becomes `up._1.css`.
+fn numbered_name(filename: &str, attempt: u32) -> String {
+    if attempt == 0 {
+        return filename.to_string();
+    }
+    match filename.rsplit_once('.') {
+        Some((stem, extension)) => format!("{stem}._{attempt}.{extension}"),
+        None => format!("{filename}_{attempt}"),
+    }
+}
+
+/// The name an upload with the client-supplied file name `raw` is saved under: its last path
+/// component (some browsers send `C:\Users\x\style.css`), sanitized. Rocket's sanitized
+/// `FileName::as_str` would strip the extension, which assets are referenced by. Empty if
+/// nothing usable is left, see [`checked_new_name`].
+fn upload_file_name(raw: &str) -> String {
+    let last = raw.rsplit(['/', '\\']).next().unwrap_or_default();
+    sanitize_path(last)
+}
+
+/// Saves an uploaded file into the directory `prefix` of the template, under a numbered name if
+/// the file name is taken. `no_name` is the error for an upload without a file name.
+async fn save_upload(
+    pool: &PgPool,
+    settings: &Settings,
+    template_id: Uuid,
+    prefix: &str,
+    mut file: TempFile<'_>,
+    no_name: ApiErrorType,
+) -> APIResult<()> {
+    let dir = settings.template_dir(template_id).join(prefix);
+    let filename = match file.raw_name() {
+        Some(name) => name,
+        None => {
+            eprintln!("No file name provided");
+            return Err(no_name.into());
+        }
+    };
+    let filename = checked_new_name(upload_file_name(
+        filename.dangerous_unsafe_unsanitized_raw().as_str(),
+    ))?;
+
+    // Before looking for a free name, or another upload could take it meanwhile.
+    let lock = git::lock(template_id).await;
+    let (saved_as, path) = (0..)
+        .map(|attempt| numbered_name(&filename, attempt))
+        .map(|name| (format!("{prefix}/{name}"), dir.join(name)))
+        .find(|(_, path)| !path.exists())
+        .expect("an unbounded range");
+    match file.copy_to(&path).await {
+        Ok(_) => {
+            record_change(
+                pool,
+                settings,
+                template_id,
+                lock,
+                &format!("Add asset {saved_as}"),
+            )
+            .await?;
+            Ok(().into())
+        }
+        Err(e) => {
+            eprintln!("Error copying file: {}", e);
+            // The name was free under the lock, so whatever is there is the partial copy.
+            // Left behind, the next commit would record it and the renderer would use it.
+            if let Err(e) = tokio::fs::remove_file(&path).await
+                && e.kind() != io::ErrorKind::NotFound
+            {
+                eprintln!("Error removing partial upload {}: {}", path.display(), e);
+            }
+            Err(ApiErrorType::InternalServerError.into())
+        }
+    }
+}
+
+/// Creates the folder `name` (user input) in the directory `prefix` of the template. `exists` is
+/// the error for a folder that already exists.
+async fn create_folder(
+    pool: &PgPool,
+    settings: &Settings,
+    template_id: Uuid,
+    prefix: &str,
+    name: &str,
+    exists: ApiErrorType,
+) -> APIResult<()> {
+    let name = checked_new_name(sanitize_path(name))?;
+    let dir = settings.template_dir(template_id).join(prefix);
+    let lock = git::lock(template_id).await;
+
+    if let Err(e) = tokio::fs::create_dir(dir.join(&name)).await {
+        return Err(match e.kind() {
+            io::ErrorKind::AlreadyExists => exists.into(),
+            _ => {
+                eprintln!("Error creating folder: {}", e);
+                ApiErrorType::InternalServerError.into()
+            }
+        });
+    }
+    // Only a created folder is a change. git doesn't track empty folders, so it usually
+    // results in no commit.
+    record_change(
+        pool,
+        settings,
+        template_id,
+        lock,
+        &format!("Add folder {prefix}/{name}"),
+    )
+    .await?;
+    Ok(().into())
+}
+
+/// Replaces the content of the existing file `path` (user input) in the directory `prefix` of
+/// the template.
+async fn update_file(
+    pool: &PgPool,
+    settings: &Settings,
+    template_id: Uuid,
+    prefix: &str,
+    path: &Path,
+    content: String,
+) -> APIResult<()> {
+    let dir = settings.template_dir(template_id).join(prefix);
+    let rel = sanitize_path(&path.to_string_lossy());
+    let Ok(full_path) = safe_new_path_combine(&dir, &rel) else {
+        eprintln!("Error updating asset, invalid path.");
+        return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
+    };
+    let lock = git::lock(template_id).await;
+
+    if !full_path.exists() {
+        return Err(ApiErrorType::ResourceNotFound("asset".to_string()).into());
+    }
+    match tokio::fs::write(&full_path, content).await {
+        Ok(_) => {
+            record_change(
+                pool,
+                settings,
+                template_id,
+                lock,
+                &format!("Update asset {prefix}/{rel}"),
+            )
+            .await?;
+            Ok(().into())
+        }
+        Err(e) => {
+            eprintln!("Error updating asset: {}", e);
+            Err(ApiErrorType::InternalServerError.into())
+        }
+    }
+}
+
+/// Moves a file or folder inside the directory `prefix` of the template.
+async fn move_asset_in(
+    pool: &PgPool,
+    settings: &Settings,
+    template_id: Uuid,
+    prefix: &str,
+    asset: &MoveAssetRequest,
+) -> APIResult<()> {
+    let base_path = template_dir(&settings.template_dir(template_id).join(prefix))?;
+
+    let (Ok(old_path), Ok(new_path)) = (
+        safe_path_combine(&base_path, &asset.old_path),
+        safe_new_path_combine(&base_path, &asset.new_path),
+    ) else {
+        eprintln!("Error moving asset, invalid path.");
+        return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
+    };
+    let lock = git::lock(template_id).await;
+
+    // If not overwriting, ensure target doesn't exist
+    if !asset.overwrite && new_path.exists() {
+        return Err(ApiErrorType::Conflict("Target path already exists".to_string()).into());
+    }
+
+    if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
+        eprintln!("Error moving asset: {}", e);
+        return Err(ApiErrorType::InternalServerError.into());
+    }
+
+    let message = format!(
+        "Move asset {prefix}/{} to {prefix}/{}",
+        sanitize_path(&asset.old_path),
+        sanitize_path(&asset.new_path)
+    );
+    record_change(pool, settings, template_id, lock, &message).await?;
+    Ok(().into())
+}
+
+/// Deletes the files and folders at the user-supplied relative `paths` below the directory
+/// `prefix` of the template, stopping at the first failure. What was deleted until then is
+/// recorded as a change, if anything was; a request that succeeds always is, even without paths.
+/// `invalid_path` is the error for an unusable path.
+async fn delete_and_record(
+    pool: &PgPool,
+    settings: &Settings,
+    template_id: Uuid,
+    prefix: &str,
+    paths: &[String],
+    invalid_path: ApiErrorType,
+) -> Result<(), ApiError> {
+    let base_path = template_dir(&settings.template_dir(template_id).join(prefix))?;
+    let lock = git::lock(template_id).await;
+
+    let mut deleted = Vec::new();
+    let result = async {
+        for path in paths {
+            let Ok(full_path) = safe_path_combine(&base_path, path) else {
+                eprintln!("Error deleting asset, invalid path.");
+                return Err(invalid_path);
+            };
+            let removed = if full_path.is_dir() {
+                tokio::fs::remove_dir_all(&full_path).await
+            } else {
+                tokio::fs::remove_file(&full_path).await
+            };
+            if let Err(e) = removed {
+                eprintln!("Error deleting asset: {e}");
+                return Err(ApiErrorType::InternalServerError);
+            }
+            deleted.push(format!("{prefix}/{}", sanitize_path(path)));
+        }
+        Ok(())
+    }
+    .await;
+
+    if result.is_ok() || !deleted.is_empty() {
+        let message = format!("Delete {}", deleted.join(", "));
+        let recorded = record_change(pool, settings, template_id, lock, &message).await;
+        match (&result, recorded) {
+            (Ok(()), Err(e)) => return Err(e),
+            // the deletion error is the one to report
+            (Err(_), Err(e)) => eprintln!("Error recording a partial deletion: {e:?}"),
+            _ => {}
+        }
+    }
+    result.map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -337,6 +651,52 @@ mod tests {
     }
 
     #[test]
+    fn test_new_paths_reject_git_dir_components() {
+        let base = "/data/templates/t/assets";
+        for reserved in [".git/config", "a/.GIT/b", ".git", "a/.git."] {
+            assert_eq!(
+                safe_new_path_combine(base, reserved),
+                Err(()),
+                "{reserved:?}"
+            );
+            assert!(
+                checked_new_name(sanitize_path(reserved)).is_err(),
+                "{reserved:?}"
+            );
+        }
+        // other names git treats specially are ordinary template files
+        for name in [".gitignore", "a/.gitattributes", ".github/x", "a/b.css"] {
+            assert!(safe_new_path_combine(base, name).is_ok(), "{name:?}");
+            assert!(checked_new_name(sanitize_path(name)).is_ok(), "{name:?}");
+        }
+        assert!(checked_new_name(String::new()).is_err());
+        // existing files with such names can still be read, moved away and deleted
+        assert!(safe_path_combine(base, "a/.git/x").is_ok());
+        assert!(!is_valid_slug(".git"));
+        assert!(is_valid_slug(".gitignore"));
+    }
+
+    #[test]
+    fn test_numbered_name() {
+        assert_eq!(numbered_name("up.css", 0), "up.css");
+        assert_eq!(numbered_name("up.css", 1), "up._1.css");
+        assert_eq!(numbered_name("a.b.css", 2), "a.b._2.css");
+        assert_eq!(numbered_name("README", 3), "README_3");
+    }
+
+    #[test]
+    fn test_upload_file_name() {
+        assert_eq!(upload_file_name("style.css"), "style.css");
+        assert_eq!(upload_file_name("sub/x.css"), "x.css");
+        assert_eq!(upload_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(upload_file_name(r"C:\Users\x\font.woff2"), "font.woff2");
+        assert_eq!(upload_file_name("we ird$.png"), "weird.png");
+        // nothing usable left: rejected by `checked_new_name`
+        assert_eq!(upload_file_name("dir/"), "");
+        assert_eq!(upload_file_name(".."), "");
+    }
+
+    #[test]
     fn test_checked_slug_rejects_rewritable_slugs() {
         assert_eq!(checked_slug("pdf-print").unwrap(), "pdf-print");
         for evil in [".....///..", "../..", "a/b", "..", ".", ""] {
@@ -402,70 +762,18 @@ pub async fn create_file_asset(
     auth: AuthorizedTemplate,
     asset: Form<NewAssetFile<'_>>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
-    let mut file = asset.into_inner().file;
-
-    let filename = match file.raw_name() {
-        Some(name) => name,
-        None => {
-            eprintln!("No file name provided");
-            return Err(ApiErrorType::Other("No file name provided".to_string()).into());
-        }
-    };
-
-    let filename = sanitize_path(filename.dangerous_unsafe_unsanitized_raw().as_str());
-
-    println!("Filename: {}", filename);
-
-    let mut path;
-    let mut i = 0;
-
-    loop {
-        path = if i == 0 {
-            format!("data/templates/{}/assets/{}", template_id, filename)
-        } else {
-            let filename_splitted = filename.split('.').collect::<Vec<&str>>();
-
-            let new_filename = if filename_splitted.len() == 1 {
-                // File has no extension, add number to end
-                format!("{}_{}", filename, i)
-            } else {
-                // Get all parts except the last one
-                let filename_without_extension = filename_splitted
-                    .clone()
-                    .iter()
-                    .take(filename_splitted.len() - 1)
-                    .map(|s| format!("{}.", s))
-                    .collect::<String>();
-                format!(
-                    "{}_{}.{}",
-                    filename_without_extension,
-                    i,
-                    filename_splitted.last().unwrap()
-                )
-            };
-
-            format!("data/templates/{}/assets/{}", template_id, new_filename)
-        };
-        // Check if file already exists
-        if Path::new(&path).exists() {
-            i += 1;
-        } else {
-            break;
-        }
-    }
-    match file.copy_to(path).await {
-        Ok(_) => {
-            templates::touch_version(pool.inner(), template_id).await?;
-            Ok(().into())
-        }
-        Err(e) => {
-            eprintln!("Error copying file: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
-    }
+    save_upload(
+        pool.inner(),
+        settings,
+        template_id,
+        "assets",
+        asset.into_inner().file,
+        ApiErrorType::Other("No file name provided".to_string()),
+    )
+    .await
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -480,42 +788,19 @@ pub async fn delete_assets(
     auth: AuthorizedTemplate,
     paths: Json<DeleteAssetRequest>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
 
-    let base_path_raw = template_dir(&format!("data/templates/{}/assets", template_id))?;
-    let base_path = base_path_raw.to_str().unwrap();
-
-    for path in &paths.paths {
-        let path = match safe_path_combine(base_path, path) {
-            Ok(path) => path,
-            Err(_) => {
-                eprintln!("Error deleting asset, invalid path.");
-                return Err(ApiErrorType::Other("Invalid path".to_string()).into());
-            }
-        };
-
-        // Check if directory or file
-        if path.is_dir() {
-            match tokio::fs::remove_dir_all(path).await {
-                Ok(_) => (),
-                Err(_) => {
-                    eprintln!("Error deleting asset.");
-                    return Err(ApiErrorType::InternalServerError.into());
-                }
-            }
-        } else {
-            match tokio::fs::remove_file(path).await {
-                Ok(_) => (),
-                Err(_) => {
-                    eprintln!("Error deleting asset.");
-                    return Err(ApiErrorType::InternalServerError.into());
-                }
-            }
-        }
-    }
-
-    templates::touch_version(pool.inner(), template_id).await?;
+    delete_and_record(
+        pool.inner(),
+        settings,
+        template_id,
+        "assets",
+        &paths.paths,
+        ApiErrorType::Other("Invalid path".to_string()),
+    )
+    .await?;
 
     Ok(().into())
 }
@@ -527,65 +812,47 @@ pub async fn create_folder_asset(
     auth: AuthorizedTemplate,
     asset: Json<NewAssetFolder>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
-    let name = sanitize_path(&asset.name);
-
-    // Get the path to the global assets folder
-    let path = format!("data/templates/{}/assets/{}", template_id, name);
-
-    // Create the folder
-    let res = tokio::task::spawn_blocking(move || match fs::create_dir(&path) {
-        Ok(_) => Ok(().into()),
-        Err(e) => match e.kind() {
-            io::ErrorKind::AlreadyExists => {
-                Err(ApiErrorType::Other("Folder already exists".to_string()).into())
-            }
-            _ => {
-                eprintln!("Error creating folder: {}", e);
-                Err(ApiErrorType::InternalServerError.into())
-            }
-        },
-    })
-    .await;
-
-    match res {
-        Ok(res) => {
-            templates::touch_version(pool.inner(), template_id).await?;
-            res
-        }
-        Err(e) => {
-            eprintln!("Error creating folder: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
-    }
+    create_folder(
+        pool.inner(),
+        settings,
+        template_id,
+        "assets",
+        &asset.name,
+        ApiErrorType::Other("Folder already exists".to_string()),
+    )
+    .await
 }
 
 /// GET /api/templates/<_>/assets
 /// List all global assets saved for the template
 #[get("/api/templates/<_>/assets")]
-pub async fn get_assets(auth: AuthorizedTemplate) -> APIResult<AssetList> {
+pub async fn get_assets(
+    auth: AuthorizedTemplate,
+    settings: &State<Settings>,
+) -> APIResult<AssetList> {
     let template_id = auth.id;
 
-    let global_asset_path = PathBuf::from(format!("data/templates/{}/assets", template_id));
+    let global_asset_path = assets_dir(settings, template_id);
 
     if !tokio::fs::try_exists(&global_asset_path).await? {
         tokio::fs::create_dir_all(&global_asset_path).await?;
     }
 
-    // Get all entries in the global assets folder (via async fs) inside data/templates/<template_id>/assets
-    let res = tokio::task::spawn_blocking(move || {
-        let path = format!("data/templates/{}/assets", template_id);
-        match get_assets_recursive(&path, None) {
-            Ok(assets) => Ok(AssetList { assets }.into()),
-            Err(e) => {
-                eprintln!("Error getting assets: {}", e);
-                Err(ApiErrorType::InternalServerError.into())
-            }
-        }
-    })
-    .await;
+    // Get all entries in the global assets folder (via async fs) inside <data_path>/templates/<template_id>/assets
+    let res =
+        tokio::task::spawn_blocking(
+            move || match get_assets_recursive(&global_asset_path, None) {
+                Ok(assets) => Ok(AssetList { assets }.into()),
+                Err(e) => {
+                    eprintln!("Error getting assets: {}", e);
+                    Err(ApiErrorType::InternalServerError.into())
+                }
+            },
+        )
+        .await;
 
     match res {
         Ok(assets) => assets,
@@ -597,7 +864,7 @@ pub async fn get_assets(auth: AuthorizedTemplate) -> APIResult<AssetList> {
 }
 
 fn get_assets_recursive(
-    current_path: &str,
+    current_path: &Path,
     path_to_asset: Option<&String>,
 ) -> Result<Vec<Asset>, io::Error> {
     let mut assets: Vec<Asset> = Vec::new();
@@ -615,7 +882,7 @@ fn get_assets_recursive(
         if path.is_dir() {
             let folder = AssetFolder {
                 name: entry.file_name().to_string_lossy().to_string(),
-                assets: get_assets_recursive(&path.to_string_lossy(), Some(&path_to_asset))?,
+                assets: get_assets_recursive(&path, Some(&path_to_asset))?,
                 path: path_to_asset.clone(),
             };
             assets.push(Asset::Folder(folder));
@@ -638,15 +905,12 @@ fn get_assets_recursive(
 pub async fn get_asset_file(
     auth: Result<AuthorizedTemplate, ApiError>,
     path: PathBuf,
+    settings: &State<Settings>,
 ) -> Result<NamedFile, Status> {
     let template_id = auth.map_err(file_route_status)?.id;
 
     // Get the path to the global assets folder
-    let path = match safe_path_combine(
-        &format!("data/templates/{}/assets", template_id),
-        &path.to_string_lossy(),
-    ) {
-        //TODO use path to data directory from config
+    let path = match safe_path_combine(assets_dir(settings, template_id), &path.to_string_lossy()) {
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error getting asset, invalid path.");
@@ -677,37 +941,18 @@ pub async fn update_asset_file(
     path: PathBuf,
     content: Json<UpdateAssetRequest>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
-    // Get the path to the global assets folder
-    let path = match safe_path_combine(
-        &format!("data/templates/{}/assets", template_id),
-        &path.to_string_lossy(),
-    ) {
-        //TODO use path to data directory from config
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error updating asset, invalid path.");
-            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-        }
-    };
-
-    // Check if file exists
-    if !path.exists() {
-        return Err(ApiErrorType::ResourceNotFound("asset".to_string()).into());
-    }
-
-    templates::touch_version(pool.inner(), template_id).await?;
-
-    // Update the file
-    match tokio::fs::write(&path, content.into_inner().content).await {
-        Ok(_) => Ok(().into()),
-        Err(e) => {
-            eprintln!("Error updating asset: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
-    }
+    update_file(
+        pool.inner(),
+        settings,
+        template_id,
+        "assets",
+        &path,
+        content.into_inner().content,
+    )
+    .await
 }
 
 /// POST /api/templates/<_>/assets/move
@@ -717,40 +962,10 @@ pub async fn move_asset(
     auth: AuthorizedTemplate,
     asset: Json<MoveAssetRequest>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-    let base_path = template_dir(&format!("data/templates/{}/assets", template_id))?;
-
-    let old_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.old_path) {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error moving asset, invalid path.");
-            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-        }
-    };
-
-    let new_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.new_path) {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error moving asset, invalid path.");
-            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-        }
-    };
-
-    // If not overwriting, ensure target doesn't exist
-    if !asset.overwrite && new_path.exists() {
-        return Err(ApiErrorType::Conflict("Target path already exists".to_string()).into());
-    }
-
-    // Move the asset asynchronously
-    if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
-        eprintln!("Error moving asset: {}", e);
-        return Err(ApiErrorType::InternalServerError.into());
-    }
-
-    templates::touch_version(pool.inner(), template_id).await?;
-
-    Ok(().into())
+    move_asset_in(pool.inner(), settings, template_id, "assets", &asset).await
 }
 
 /// POST /api/templates/<_>/export_formats
@@ -760,6 +975,7 @@ pub async fn add_export_format(
     auth: AuthorizedTemplate,
     pool: &State<PgPool>,
     data: Json<ExportFormat>,
+    settings: &State<Settings>,
 ) -> APIResult<ExportFormat> {
     let template_id = auth.id;
 
@@ -770,16 +986,12 @@ pub async fn add_export_format(
     }
 
     // Add folder in file system
-    let base_path = format!("data/templates/{}/formats", template_id);
-    let base_path = Path::new(&base_path);
-
-    let new_path = match safe_path_combine(base_path.to_str().unwrap(), &format.slug) {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error creating export Format, invalid slug.");
-            return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
-        }
+    let Ok(new_path) = safe_path_combine(formats_dir(settings, template_id), &format.slug) else {
+        eprintln!("Error creating export Format, invalid slug.");
+        return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
     };
+
+    let lock = git::lock(template_id).await;
 
     if new_path.exists() {
         return Err(ApiErrorType::Conflict(
@@ -790,16 +1002,29 @@ pub async fn add_export_format(
 
     templates::insert_export_format(pool.inner(), template_id, &format).await?;
 
-    match tokio::fs::create_dir_all(new_path).await {
-        Ok(_) => {
-            templates::touch_version(pool.inner(), template_id).await?;
-            Ok(format.into())
+    if let Err(e) = tokio::fs::create_dir_all(new_path).await {
+        error!("Couldn't create folder for new export format: {e}");
+        // Not recorded, so don't keep the format either: the template would list one that has
+        // no folder, with nothing in its history about it, and adding it again would fail.
+        if let Err(e) =
+            templates::delete_export_format(pool.inner(), template_id, &format.slug).await
+        {
+            error!(
+                "Couldn't undo adding export format {:?} to template {template_id}: {e:?}",
+                format.slug
+            );
         }
-        Err(e) => {
-            eprintln!("Couldn't create folder for new export format: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
+        return Err(ApiErrorType::InternalServerError.into());
     }
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Add export format {}", format.slug),
+    )
+    .await?;
+    Ok(format.into())
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -817,17 +1042,19 @@ pub async fn update_export_format_metadata(
     slug: String,
     pool: &State<PgPool>,
     data: Json<ExportFormatMetadata>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
     let old_slug = checked_slug(&slug)?;
     let new_slug = checked_slug(&data.slug)?;
+    let lock = git::lock(template_id).await;
 
     // An export format without files has no directory to move. The files are moved first so a
     // failing DB update (unknown format, slug conflict) can undo it, leaving both unchanged.
     let mut moved = None;
     if old_slug != new_slug {
         // not canonicalized: the formats directory doesn't exist yet if no format has files
-        let base_path = format!("data/templates/{}/formats", template_id);
+        let base_path = formats_dir(settings, template_id);
         let (Ok(old_path), Ok(new_path)) = (
             safe_path_combine(&base_path, &old_slug),
             safe_path_combine(&base_path, &new_slug),
@@ -873,6 +1100,15 @@ pub async fn update_export_format_metadata(
         return Err(e.into());
     }
 
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Update export format {new_slug}"),
+    )
+    .await?;
+
     Ok(().into())
 }
 
@@ -883,33 +1119,42 @@ pub async fn delete_export_format(
     auth: AuthorizedTemplate,
     pool: &State<PgPool>,
     slug: String,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
     let slug = checked_slug(&slug)?;
+    let lock = git::lock(template_id).await;
 
-    templates::delete_export_format(pool.inner(), template_id, &slug).await?;
+    if !templates::export_format_exists(pool.inner(), template_id, &slug).await? {
+        return Err(ApiErrorType::ResourceNotFound("export_format".to_string()).into());
+    }
 
-    //Remove folder:
-    let base_path = format!("data/templates/{}/formats/", template_id);
-    let safe_path = safe_path_combine(base_path.as_str(), &slug);
-    match safe_path {
-        Ok(path) => match tokio::fs::remove_dir_all(path).await {
-            Ok(_) => {
-                templates::touch_version(pool.inner(), template_id).await?;
-                Ok(().into())
-            }
-            Err(e) => {
-                eprintln!("Couldn't delete physical folder for export format: {}", e);
-                Err(ApiErrorType::InternalServerError.into())
-            }
-        },
-        Err(_) => {
-            eprintln!(
-                "Couldn't delete physical folder for export format. Couldn't create safe_path"
-            );
-            Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into())
+    // The folder goes first (a format without files has none): if that fails, the format is
+    // still there and the request can be repeated. The other way around, the format would be
+    // gone while its folder is left behind, and its slug couldn't be used again.
+    let Ok(path) = safe_path_combine(formats_dir(settings, template_id), &slug) else {
+        eprintln!("Couldn't delete physical folder for export format. Couldn't create safe_path");
+        return Err(ApiErrorType::BadRequest("Invalid Slug".to_string()).into());
+    };
+    match tokio::fs::remove_dir_all(path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => {
+            error!("Couldn't delete physical folder for export format {slug:?}: {e}");
+            return Err(ApiErrorType::InternalServerError.into());
         }
     }
+
+    templates::delete_export_format(pool.inner(), template_id, &slug).await?;
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Delete export format {slug}"),
+    )
+    .await?;
+    Ok(().into())
 }
 
 /// GET /api/templates/<_>/export_formats/<slug>/assets
@@ -918,19 +1163,19 @@ pub async fn delete_export_format(
 pub async fn get_assets_for_export_format(
     auth: AuthorizedTemplate,
     slug: String,
+    settings: &State<Settings>,
 ) -> APIResult<AssetList> {
     let template_id = auth.id;
     let slug = checked_slug(&slug)?;
 
-    // Get all entries in the assets folder (via async fs) inside data/templates/<template_id>/assets
-    let res = tokio::task::spawn_blocking(move || {
-        let path = format!("data/templates/{}/formats/{}", template_id, slug);
-        match get_assets_recursive(&path, None) {
-            Ok(assets) => Ok(AssetList { assets }.into()),
-            Err(e) => {
-                eprintln!("Error getting assets: {}", e);
-                Err(ApiErrorType::InternalServerError.into())
-            }
+    let dir = format_dir(settings, template_id, &slug);
+
+    // Get all entries in the assets folder (via async fs) inside <data_path>/templates/<template_id>/assets
+    let res = tokio::task::spawn_blocking(move || match get_assets_recursive(&dir, None) {
+        Ok(assets) => Ok(AssetList { assets }.into()),
+        Err(e) => {
+            eprintln!("Error getting assets: {}", e);
+            Err(ApiErrorType::InternalServerError.into())
         }
     })
     .await;
@@ -951,16 +1196,16 @@ pub async fn get_asset_file_for_export_format(
     auth: Result<AuthorizedTemplate, ApiError>,
     path: PathBuf,
     slug: String,
+    settings: &State<Settings>,
 ) -> Result<NamedFile, Status> {
     let template_id = auth.map_err(file_route_status)?.id;
     let slug = checked_slug(&slug).map_err(|_| Status::NotFound)?;
 
     // Get the path to the export format folder
     let path = match safe_path_combine(
-        &format!("data/templates/{}/formats/{}", template_id, slug),
+        format_dir(settings, template_id, &slug),
         &path.to_string_lossy(),
     ) {
-        //TODO use path to data directory from config
         Ok(path) => path,
         Err(_) => {
             eprintln!("Error getting asset, invalid path.");
@@ -988,76 +1233,19 @@ pub async fn create_file_asset_for_export_format(
     slug: String,
     asset: Form<NewAssetFile<'_>>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
     let slug = checked_slug(&slug)?;
-
-    let mut file = asset.into_inner().file;
-
-    let filename = match file.raw_name() {
-        Some(name) => name,
-        None => {
-            eprintln!("No file name provided");
-            return Err(ApiErrorType::BadRequest("No file name provided".to_string()).into());
-        }
-    };
-
-    let filename = sanitize_path(filename.dangerous_unsafe_unsanitized_raw().as_str());
-
-    let mut path;
-    let mut i = 0;
-
-    loop {
-        path = if i == 0 {
-            format!(
-                "data/templates/{}/formats/{}/{}",
-                template_id, slug, filename
-            )
-        } else {
-            let filename_splitted = filename.split('.').collect::<Vec<&str>>();
-
-            let new_filename = if filename_splitted.len() == 1 {
-                // File has no extension, add number to end
-                format!("{}_{}", filename, i)
-            } else {
-                // Get all parts except the last one
-                let filename_without_extension = filename_splitted
-                    .clone()
-                    .iter()
-                    .take(filename_splitted.len() - 1)
-                    .map(|s| format!("{}.", s))
-                    .collect::<String>();
-                format!(
-                    "{}_{}.{}",
-                    filename_without_extension,
-                    i,
-                    filename_splitted.last().unwrap()
-                )
-            };
-
-            format!(
-                "data/templates/{}/formats/{}/{}",
-                template_id, slug, new_filename
-            )
-        };
-        // Check if file already exists
-        if Path::new(&path).exists() {
-            i += 1;
-        } else {
-            break;
-        }
-    }
-    match file.copy_to(path).await {
-        Ok(_) => {
-            templates::touch_version(pool.inner(), template_id).await?;
-            Ok(().into())
-        }
-        Err(e) => {
-            eprintln!("Error copying file: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
-    }
+    save_upload(
+        pool.inner(),
+        settings,
+        template_id,
+        &format!("formats/{slug}"),
+        asset.into_inner().file,
+        ApiErrorType::BadRequest("No file name provided".to_string()),
+    )
+    .await
 }
 
 /// DELETE /api/templates/<_>/export_formats/<slug>/assets
@@ -1068,43 +1256,20 @@ pub async fn delete_assets_for_export_format(
     paths: Json<DeleteAssetRequest>,
     slug: String,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
     let slug = checked_slug(&slug)?;
 
-    let base_path_raw = template_dir(&format!("data/templates/{}/formats/{}", template_id, slug))?;
-    let base_path = base_path_raw.to_str().unwrap();
-
-    for path in &paths.paths {
-        let path = match safe_path_combine(base_path, path) {
-            Ok(path) => path,
-            Err(_) => {
-                eprintln!("Error deleting asset, invalid path.");
-                return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-            }
-        };
-
-        // Check if directory or file
-        if path.is_dir() {
-            match tokio::fs::remove_dir_all(path).await {
-                Ok(_) => (),
-                Err(e) => {
-                    eprintln!("Error deleting asset: {} ", e);
-                    return Err(ApiErrorType::InternalServerError.into());
-                }
-            }
-        } else {
-            match tokio::fs::remove_file(path).await {
-                Ok(_) => (),
-                Err(e) => {
-                    eprintln!("Error deleting asset: {}", e);
-                    return Err(ApiErrorType::InternalServerError.into());
-                }
-            }
-        }
-    }
-    templates::touch_version(pool.inner(), template_id).await?;
+    delete_and_record(
+        pool.inner(),
+        settings,
+        template_id,
+        &format!("formats/{slug}"),
+        &paths.paths,
+        ApiErrorType::BadRequest("Invalid path".to_string()),
+    )
+    .await?;
 
     Ok(().into())
 }
@@ -1120,41 +1285,19 @@ pub async fn create_folder_asset_for_export_format(
     asset: Json<NewAssetFolder>,
     slug: String,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
     let slug = checked_slug(&slug)?;
-
-    let name = sanitize_path(&asset.name);
-
-    // Get the path to the global assets folder
-    let path = format!("data/templates/{}/formats/{}/{}", template_id, slug, name);
-
-    // Create the folder
-    let res = tokio::task::spawn_blocking(move || match fs::create_dir(&path) {
-        Ok(_) => Ok(().into()),
-        Err(e) => match e.kind() {
-            io::ErrorKind::AlreadyExists => {
-                Err(ApiErrorType::Conflict("Folder already exists".to_string()).into())
-            }
-            _ => {
-                eprintln!("Error creating folder: {}", e);
-                Err(ApiErrorType::InternalServerError.into())
-            }
-        },
-    })
-    .await;
-
-    match res {
-        Ok(res) => {
-            templates::touch_version(pool.inner(), template_id).await?;
-            res
-        }
-        Err(e) => {
-            eprintln!("Error creating folder: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
-    }
+    create_folder(
+        pool.inner(),
+        settings,
+        template_id,
+        &format!("formats/{slug}"),
+        &asset.name,
+        ApiErrorType::Conflict("Folder already exists".to_string()),
+    )
+    .await
 }
 
 /// PUT /api/templates/<_>/export_formats/<slug>/assets/files/<path>
@@ -1170,40 +1313,19 @@ pub async fn update_asset_file_for_export_format(
     content: Json<UpdateAssetRequest>,
     slug: String,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
     let slug = checked_slug(&slug)?;
-
-    // Get the path to the global assets folder
-    let path = match safe_path_combine(
-        &format!("data/templates/{}/formats/{}", template_id, slug),
-        &path.to_string_lossy(),
-    ) {
-        //TODO use path to data directory from config
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error updating asset, invalid path.");
-            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-        }
-    };
-
-    // Check if file exists
-    if !path.exists() {
-        return Err(ApiErrorType::ResourceNotFound("asset".to_string()).into());
-    }
-
-    // Update the file
-    match tokio::fs::write(&path, content.into_inner().content).await {
-        Ok(_) => {
-            templates::touch_version(pool.inner(), template_id).await?;
-            Ok(().into())
-        }
-        Err(e) => {
-            eprintln!("Error updating asset: {}", e);
-            Err(ApiErrorType::InternalServerError.into())
-        }
-    }
+    update_file(
+        pool.inner(),
+        settings,
+        template_id,
+        &format!("formats/{slug}"),
+        &path,
+        content.into_inner().content,
+    )
+    .await
 }
 
 /// POST /api/templates/<_>/export_formats/<slug>/assets/move
@@ -1217,42 +1339,18 @@ pub async fn move_asset_for_export_format(
     asset: Json<MoveAssetRequest>,
     slug: String,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
-
     let slug = checked_slug(&slug)?;
-
-    let base_path = template_dir(&format!("data/templates/{}/formats/{}", template_id, slug))?;
-
-    let old_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.old_path) {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error moving asset, invalid path.");
-            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-        }
-    };
-
-    let new_path = match safe_path_combine(base_path.to_str().unwrap(), &asset.new_path) {
-        Ok(path) => path,
-        Err(_) => {
-            eprintln!("Error moving asset, invalid path.");
-            return Err(ApiErrorType::BadRequest("Invalid path".to_string()).into());
-        }
-    };
-
-    // If not overwriting, ensure target doesn't exist
-    if !asset.overwrite && new_path.exists() {
-        return Err(ApiErrorType::Conflict("Target path already exists".to_string()).into());
-    }
-
-    if let Err(e) = tokio::fs::rename(&old_path, &new_path).await {
-        eprintln!("Error moving asset: {}", e);
-        return Err(ApiErrorType::InternalServerError.into());
-    }
-
-    templates::touch_version(pool.inner(), template_id).await?;
-
-    Ok(().into())
+    move_asset_in(
+        pool.inner(),
+        settings,
+        template_id,
+        &format!("formats/{slug}"),
+        &asset,
+    )
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -1273,10 +1371,13 @@ pub async fn create_export_step(
     slug: String,
     step: Json<ExportStep>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<ExportStep> {
     let template_id = auth.id;
 
     let slug = checked_slug(&slug)?;
+
+    let lock = git::lock(template_id).await;
 
     let mut step = step.into_inner();
     step.id = Some(uuid::Uuid::new_v4());
@@ -1284,7 +1385,14 @@ pub async fn create_export_step(
     let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
     steps.push(step.clone());
     templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
-    templates::touch_version(pool.inner(), template_id).await?;
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Add export step to format {slug}"),
+    )
+    .await?;
 
     Ok(step.into())
 }
@@ -1307,6 +1415,7 @@ pub async fn move_export_step(
     step_id: String,
     movedata: Json<MoveExportStepRequest>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
     //Parse step_id to uuid
@@ -1320,6 +1429,7 @@ pub async fn move_export_step(
 
     let slug = checked_slug(&slug)?;
     let move_after = movedata.move_after;
+    let lock = git::lock(template_id).await;
 
     let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
 
@@ -1345,7 +1455,14 @@ pub async fn move_export_step(
     steps.insert(new_index, step);
 
     templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
-    templates::touch_version(pool.inner(), template_id).await?;
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Reorder export steps of format {slug}"),
+    )
+    .await?;
     Ok(().into())
 }
 
@@ -1361,6 +1478,7 @@ pub async fn update_export_step(
     step_id: String,
     step: Json<ExportStep>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     let template_id = auth.id;
 
@@ -1374,6 +1492,7 @@ pub async fn update_export_step(
         }
     };
 
+    let lock = git::lock(template_id).await;
     let step = step.into_inner();
     let step_id = match step.id {
         Some(id) => id,
@@ -1400,7 +1519,14 @@ pub async fn update_export_step(
     }
 
     templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
-    templates::touch_version(pool.inner(), template_id).await?;
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Update export step of format {slug}"),
+    )
+    .await?;
     Ok(().into())
 }
 
@@ -1412,6 +1538,7 @@ pub async fn delete_export_step(
     slug: String,
     step_id: String,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> APIResult<()> {
     //Parse template_id and step_id to uuid
     let template_id = auth.id;
@@ -1425,11 +1552,19 @@ pub async fn delete_export_step(
     };
 
     let slug = checked_slug(&slug)?;
+    let lock = git::lock(template_id).await;
 
     let mut steps = templates::get_export_steps(pool.inner(), template_id, &slug).await?;
     steps.retain(|step| step.id != Some(step_id));
     templates::update_export_steps(pool.inner(), template_id, &slug, &steps).await?;
-    templates::touch_version(pool.inner(), template_id).await?;
+    record_change(
+        pool.inner(),
+        settings,
+        template_id,
+        lock,
+        &format!("Delete export step from format {slug}"),
+    )
+    .await?;
     Ok(().into())
 }
 

@@ -276,13 +276,19 @@ pub async fn leave_team(team_id: &str, session: Session, pool: &State<PgPool>) -
 ///
 /// Deletes a team. Requires the requesting user to be an `owner` of the team.
 #[delete("/api/teams/<_>")]
-pub async fn delete_team(auth: AuthorizedTeam<OwnerRole>, pool: &State<PgPool>) -> APIResult<()> {
+pub async fn delete_team(
+    auth: AuthorizedTeam<OwnerRole>,
+    pool: &State<PgPool>,
+    settings: &State<Settings>,
+) -> APIResult<()> {
     let team_id = auth.id;
     let pool = pool.inner();
 
     require_not_default_team(pool, team_id).await?;
 
-    teams_repo::delete(pool, team_id).await?;
+    // The templates go with the team, their files are removed once that has happened.
+    let templates = teams_repo::delete(pool, team_id).await?;
+    crate::templates_editor::git::remove_files_in_background(settings, templates);
     Ok(APIResponse::from(()))
 }
 
@@ -639,6 +645,7 @@ pub async fn decline_my_invitation(
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use crate::db::repositories::templates;
     use crate::db::repositories::users;
     use crate::session::session_storage::SessionStorage;
     use crate::settings::{ExportServer, Settings};
@@ -696,12 +703,16 @@ mod integration_tests {
     }
 
     async fn test_client(pool: PgPool) -> Client {
+        test_client_with(pool, dummy_settings()).await
+    }
+
+    async fn test_client_with(pool: PgPool, settings: Settings) -> Client {
         // Force the debug profile so Rocket doesn't demand a configured secret_key outside
         // the debug profile (e.g. when tests are built with `cargo test --release`).
         let figment = rocket::Config::figment().select(rocket::Config::DEBUG_PROFILE);
         let rocket = rocket::custom(figment)
             .manage(pool)
-            .manage(dummy_settings())
+            .manage(settings)
             .manage(SessionStorage::new())
             .manage(Mailer {
                 sender: tokio::sync::mpsc::channel(16).0,
@@ -1036,6 +1047,54 @@ mod integration_tests {
             teams_repo::get(&pool, team.id).await,
             Err(DbError::NotFound("team"))
         ));
+        Ok(())
+    }
+
+    #[sqlx::test]
+    async fn deleting_a_team_removes_the_files_of_its_templates(pool: PgPool) -> sqlx::Result<()> {
+        use crate::templates_editor::git;
+
+        let settings = Settings {
+            data_path: std::env::temp_dir()
+                .join(format!("vb-teams-test-{}", Uuid::new_v4()))
+                .to_string_lossy()
+                .into_owned(),
+            ..dummy_settings()
+        };
+        let default_team = users::ensure_default_team(&pool).await.unwrap();
+        let alice = seed_user(&pool, "alice20@example.com", "Alice", default_team).await;
+        let team = teams_repo::create(&pool, "Team", alice).await.unwrap().id;
+        let doomed = templates::insert(&pool, team, "doomed", "").await.unwrap();
+        let kept = templates::insert(&pool, default_team, "kept", "")
+            .await
+            .unwrap();
+        for id in [doomed, kept] {
+            std::fs::create_dir_all(settings.template_dir(id).join("assets")).unwrap();
+            std::fs::write(settings.template_dir(id).join("assets/a.css"), "a").unwrap();
+            let lock = git::lock(id).await;
+            git::commit(&pool, &settings, id, lock, "Add").await;
+            assert!(settings.template_git_dir(id).is_dir());
+        }
+
+        let client = test_client_with(pool.clone(), settings.clone()).await;
+        login(&client, "alice20@example.com").await;
+        let response = client.delete(format!("/api/teams/{team}")).dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
+
+        // the files are removed in the background
+        for _ in 0..100 {
+            if !settings.template_dir(doomed).exists()
+                && !settings.template_git_dir(doomed).exists()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(!settings.template_dir(doomed).exists());
+        assert!(!settings.template_git_dir(doomed).exists());
+        assert!(settings.template_dir(kept).is_dir());
+        assert!(settings.template_git_dir(kept).is_dir());
+        let _ = std::fs::remove_dir_all(&settings.data_path);
         Ok(())
     }
 

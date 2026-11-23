@@ -1,6 +1,7 @@
 use crate::db::repositories::{teams, templates};
 use crate::permissions::{AuthorizedTemplate, ResourceType, has_permission};
 use crate::session::session_guard::Session;
+use crate::settings::Settings;
 use rocket::State;
 use rocket::http::Status;
 use serde::Serialize;
@@ -113,14 +114,18 @@ pub async fn form_create_template(
     session: Session,
     template: rocket::form::Form<CreateTemplate>,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
 ) -> Result<rocket::response::Redirect, Status> {
     let team_id = Uuid::parse_str(&template.team_id).map_err(|_| Status::BadRequest)?;
     has_permission(pool, ResourceType::Team, team_id, session.user_id, None)
         .await
         .map_err(|_| Status::NotFound)?;
-    templates::insert(pool.inner(), team_id, &template.name, &template.description)
-        .await
-        .map_err(|_| Status::InternalServerError)?;
+    let template_id =
+        templates::insert(pool.inner(), team_id, &template.name, &template.description)
+            .await
+            .map_err(|_| Status::InternalServerError)?;
+    let lock = super::git::lock(template_id).await;
+    super::git::commit(pool.inner(), settings, template_id, lock, "Create template").await;
     Ok(rocket::response::Redirect::to(format!(
         "/templates?team_id={team_id}"
     )))

@@ -1,7 +1,9 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 use std::env;
+use std::path::{Path, PathBuf};
 use url::Url;
+use uuid::Uuid;
 
 /// Stores settings read from config files.
 #[derive(Debug, Deserialize, Clone)]
@@ -113,6 +115,26 @@ impl Settings {
         }
 
         Ok(settings)
+    }
+
+    /// Directory all template directories are in.
+    pub fn templates_dir(&self) -> PathBuf {
+        Path::new(&self.data_path).join("templates")
+    }
+
+    /// Directory all template repositories are in.
+    pub fn template_git_root(&self) -> PathBuf {
+        Path::new(&self.data_path).join("template-git")
+    }
+
+    /// Directory of a template, the working tree of its git repository.
+    pub fn template_dir(&self, template_id: Uuid) -> PathBuf {
+        self.templates_dir().join(template_id.to_string())
+    }
+
+    /// Where the git repository of a template lives, outside of its [`Self::template_dir`].
+    pub fn template_git_dir(&self, template_id: Uuid) -> PathBuf {
+        self.template_git_root().join(format!("{template_id}.git"))
     }
 
     pub fn get_instance_url(&self) -> Url {

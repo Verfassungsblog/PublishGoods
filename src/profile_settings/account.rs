@@ -5,6 +5,7 @@ use crate::db::repositories::users::{self, User};
 use crate::projects::api::Patch;
 use crate::session::session_guard::Session;
 use crate::session::session_storage::SessionStorage;
+use crate::settings::Settings;
 use crate::utils::api_helpers::{APIResponse, APIResult, ApiErrorType};
 use crate::utils::hash_password;
 use rocket::State;
@@ -106,6 +107,7 @@ pub async fn delete_own_account(
     confirm: Json<DeleteOwnAccount>,
     session: Session,
     pool: &State<PgPool>,
+    settings: &State<Settings>,
     session_storage: &State<SessionStorage>,
 ) -> APIResult<()> {
     let user = users::get(pool.inner(), session.user_id).await?;
@@ -116,7 +118,8 @@ pub async fn delete_own_account(
         );
     }
 
-    users::delete(pool.inner(), session.user_id).await?;
+    let templates = users::delete(pool.inner(), session.user_id).await?;
+    crate::templates_editor::git::remove_files_in_background(settings, templates);
     session_storage.remove_session(session.id.clone());
 
     Ok(APIResponse::from(()))

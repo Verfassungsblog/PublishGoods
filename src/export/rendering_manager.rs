@@ -250,12 +250,16 @@ impl RenderingManager {
             bibliography: bib,
         };
 
+        let uploads_dir = PathBuf::from(format!(
+            "{}/projects/{}/uploads",
+            rendering_manager.settings.data_path, request.project_id
+        ));
         Self::prepare_and_send(
             rendering_manager,
             RenderingJob {
                 request_id: request.request_id,
                 project_data,
-                uploads_dir: PathBuf::from(format!("data/projects/{}/uploads", request.project_id)),
+                uploads_dir,
                 sections: request.sections,
                 export_formats: request.export_formats,
                 result_dir: None,
@@ -527,9 +531,9 @@ impl RenderingManager {
                             *status = RenderingStatus::TransmittingTemplate
                         }
 
-                        let template_files = match TemplateContents::from_path(PathBuf::from(
-                            format!("data/templates/{}/", req.template_id),
-                        ))
+                        let template_files = match TemplateContents::from_path(
+                            rendering_manager.settings.template_dir(req.template_id),
+                        )
                         .await
                         {
                             Ok(res) => res,
@@ -578,7 +582,11 @@ impl RenderingManager {
                                 // Finished, update status and save files to file system, generate zip if necessary
                                 let individual_files_only = result_dir.is_some();
                                 let res_dir = result_dir.clone().unwrap_or_else(|| {
-                                    PathBuf::from(format!("data/temp/{}", uuid::Uuid::new_v4()))
+                                    PathBuf::from(format!(
+                                        "{}/temp/{}",
+                                        rendering_manager.settings.data_path,
+                                        uuid::Uuid::new_v4()
+                                    ))
                                 });
                                 if let Err(e) = tokio::fs::create_dir_all(&res_dir).await {
                                     error!("Couldn't create dir: {}", e);
