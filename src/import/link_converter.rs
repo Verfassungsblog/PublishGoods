@@ -1,30 +1,18 @@
+use crate::import::http_client;
 use crate::settings::Settings;
+use std::time::Duration;
 
 pub async fn get_translation(link: &str, settings: &Settings) -> Option<Vec<hayagriva::Entry>> {
-    let translation = send_translation_request(link, settings).await;
-    match translation {
-        Some(translation) => send_export_translation_request(translation, settings).await,
-        None => None,
-    }
+    let translation = send_translation_request(link, settings).await?;
+    send_export_translation_request(translation, settings).await
 }
 
 async fn send_translation_request(link: &str, settings: &Settings) -> Option<serde_json::Value> {
     let target = format!("{}/web", settings.zotero_translation_server);
 
-    let client = match reqwest::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(
-            settings.zotero_translation_timeout,
-        ))
-        .build()
-    {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Error creating client: {}", e);
-            return None;
-        }
-    };
-    let res = match client
+    let res = match http_client()
         .post(&target)
+        .timeout(Duration::from_secs(settings.zotero_translation_timeout))
         .body(link.to_string())
         .header("Content-Type", "text/plain")
         .send()
@@ -54,20 +42,9 @@ async fn send_export_translation_request(
         settings.zotero_translation_server
     );
 
-    let client = match reqwest::ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(
-            settings.zotero_translation_timeout,
-        ))
-        .build()
-    {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Error creating client: {}", e);
-            return None;
-        }
-    };
-    let res = match client
+    let res = match http_client()
         .post(&target)
+        .timeout(Duration::from_secs(settings.zotero_translation_timeout))
         .json(&entry)
         .header("Content-Type", "application/json")
         .send()
@@ -99,22 +76,6 @@ async fn send_export_translation_request(
 
 #[cfg(test)]
 pub mod test {
-
-    /*
-    Skip test because it fails on GitHub Actions
-    #[tokio::test]
-     async fn test_send_translation_request(){
-         let settings = Settings::new().unwrap();
-         let link = "https://verfassungsblog.de/polishing-broken-tribunal/";
-         let res = send_translation_request(link, &settings).await;
-         println!("{:?}", res);
-
-         let res = send_export_translation_request(res.unwrap(), &settings).await;
-         println!("{:?}", res);
-         assert!(res.is_some());
-     }
-
-     */
     use crate::import::link_converter::send_translation_request;
     use crate::settings::Settings;
 

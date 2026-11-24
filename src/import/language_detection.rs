@@ -1,25 +1,7 @@
-use crate::import::wordpress::Post;
-use crate::storage::project_storage::sections::Section;
-use crate::storage::project_storage::sections::content::current::{BlockData, decode_yjs_content};
+use crate::storage::project_storage::sections::content::current::{BlockData, NewContentBlock};
 use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
 use std::sync::OnceLock;
-use std::time::SystemTime;
-
-/// Attempts to detect the language of a WordPress post's content.
-///
-/// This function uses a language detector with low-accuracy mode to analyze the rendered content
-/// of the post and returns the detected language in BCP-47 format.
-///
-/// # Arguments
-/// * `post` - Reference to a WordPress post containing the content to analyze
-///
-/// # Returns
-/// * `Some(Language)` - The detected language in BCP-47 format
-/// * `None` - If the language could not be detected or could not be mapped to a BCP-47 code
-pub fn detect_language_for_post(post: &Post) -> Option<language::Language> {
-    debug!("Trying to detect language for post");
-    detect_language_for_text(&post.content.rendered)
-}
+use std::time::Instant;
 
 /// Building the detector loads the models of all languages, so it is only done once.
 fn language_detector() -> &'static LanguageDetector {
@@ -29,63 +11,32 @@ fn language_detector() -> &'static LanguageDetector {
 
 /// Attempts to detect the language of an arbitrary text and returns it in BCP-47 format.
 pub fn detect_language_for_text(text: &str) -> Option<language::Language> {
-    let start_time = SystemTime::now();
+    let start_time = Instant::now();
 
     let detected_lang = language_detector().detect_language_of(text);
 
     debug!(
         "Language detection took {} ms.",
-        start_time.elapsed().unwrap().as_millis()
+        start_time.elapsed().as_millis()
     );
 
-    match detected_lang {
-        Some(lang) => language_to_bcp47(lang),
-        None => None,
-    }
+    detected_lang.and_then(language_to_bcp47)
 }
 
-/// Attempts to detect the primary language of a section's content.
+/// Attempts to detect the primary language of a section's content blocks.
 ///
-/// This function analyzes the text content of paragraph blocks within the given section
-/// to determine its language. It uses a low-accuracy mode for faster processing.
-///
-/// # Arguments
-/// * `section` - The section whose language should be detected
-///
-/// # Returns
-/// * `Some(Language)` - The detected language as a BCP-47 language tag
-/// * `None` - If the language could not be detected or is not supported
-pub fn detect_language_for_section(section: &Section) -> Option<language::Language> {
+/// Only the text of paragraph, heading and quote blocks is analyzed.
+pub fn detect_language_for_blocks(blocks: &[NewContentBlock]) -> Option<language::Language> {
     debug!("Trying to detect language for section");
 
-    let blocks = match decode_yjs_content(&section.content) {
-        Ok(blocks) => blocks,
-        Err(e) => {
-            error!(
-                "Could not decode yrs update during language detection: {}",
-                e
-            );
-            return None;
-        }
-    };
-
     let mut content_to_analyze = String::new();
-
     for block in blocks {
-        match block.data {
-            BlockData::Paragraph { text } => {
-                content_to_analyze.push_str(&text);
-                content_to_analyze.push(' ');
-            }
-            BlockData::Heading { text, .. } => {
-                content_to_analyze.push_str(&text);
-                content_to_analyze.push(' ');
-            }
-            BlockData::Quote { text, .. } => {
-                content_to_analyze.push_str(&text);
-                content_to_analyze.push(' ');
-            }
-            _ => {}
+        if let BlockData::Paragraph { text }
+        | BlockData::Heading { text, .. }
+        | BlockData::Quote { text, .. } = &block.data
+        {
+            content_to_analyze.push_str(text);
+            content_to_analyze.push(' ');
         }
     }
 
@@ -93,13 +44,9 @@ pub fn detect_language_for_section(section: &Section) -> Option<language::Langua
         return None;
     }
 
-    let detector = LanguageDetectorBuilder::from_all_languages().build();
-    let detected_lang = detector.detect_language_of(&content_to_analyze);
-    match detected_lang {
-        Some(lang) => language_to_bcp47(lang),
-        None => None,
-    }
+    detect_language_for_text(&content_to_analyze)
 }
+
 /// Converts a [`Language`] to a BCP-47 compliant [`language::Language`].
 ///
 /// This function maps language codes from the lingua crate's format to BCP-47 language tags

@@ -224,10 +224,6 @@ pub async fn get_wordpress_categories(
         Ok(categories) => categories,
         Err(e) => {
             return match e {
-                WordpressAPIError::SerdeParsingError => {
-                    Err(ApiErrorType::InternalServerError.into())
-                }
-                WordpressAPIError::ReqwestError => Err(ApiErrorType::InternalServerError.into()),
                 WordpressAPIError::InvalidURL => {
                     info!("Invalid url for wordpress api: {}", base_url);
                     Err(ApiErrorType::BadRequest("Invalid URL".to_string()).into())
@@ -237,10 +233,7 @@ pub async fn get_wordpress_categories(
                     let empty: CategoryTree = vec![].into();
                     Ok(APIResponse::from(empty))
                 }
-                WordpressAPIError::Unsupported(_) => Err(ApiErrorType::InternalServerError.into()),
-                WordpressAPIError::UnexpectedResponse => {
-                    Err(ApiErrorType::InternalServerError.into())
-                }
+                _ => Err(ApiErrorType::InternalServerError.into()),
             };
         }
     };

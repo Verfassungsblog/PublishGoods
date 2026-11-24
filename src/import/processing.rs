@@ -12,10 +12,9 @@ use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use pandoc::{InputFormat, InputKind, OutputFormat, OutputKind, PandocOutput};
 
 use crate::db::repositories::{bibliography, persons, projects};
+use crate::import::http_client;
 #[cfg(feature = "language_detection")]
-use crate::import::language_detection::{
-    detect_language_for_post, detect_language_for_section, detect_language_for_text,
-};
+use crate::import::language_detection::{detect_language_for_blocks, detect_language_for_text};
 use crate::import::link_converter;
 use crate::import::wordpress::{
     Post, PostDataType, WordpressAPI, WordpressAPIContext, WordpressAPIError, WpAuthorIds, WpBio,
@@ -31,9 +30,7 @@ use crate::utils::dedup::dedup_vec;
 use crate::utils::timeout::{limit_from_seconds, with_timeout};
 use log::{debug, error, warn};
 #[cfg(not(feature = "language_detection"))]
-use no_language_detection::{
-    detect_language_for_post, detect_language_for_section, detect_language_for_text,
-};
+use no_language_detection::{detect_language_for_blocks, detect_language_for_text};
 use rocket::http::ContentType;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
@@ -249,6 +246,37 @@ impl ImportProcessor {
 
         by_key
     }
+
+    /// Converts the entries collected by [`Self::collect_bib_entries_with_parents`], giving each
+    /// a fresh UUID and remapping their parents onto those UUIDs. Returns the key → UUID mapping
+    /// together with the converted entries.
+    fn convert_bib_entries(
+        by_key: &HashMap<String, hayagriva::Entry>,
+    ) -> (HashMap<String, uuid::Uuid>, Vec<BibEntryV3>) {
+        let uuid_map: HashMap<String, uuid::Uuid> = by_key
+            .keys()
+            .map(|key| (key.clone(), uuid::Uuid::new_v4()))
+            .collect();
+
+        let converted = by_key
+            .iter()
+            .map(|(key, entry)| {
+                let mut converted = BibEntryV3::from(entry);
+                let entry_uuid = uuid_map[key];
+                converted.key = entry_uuid;
+                converted.parents = entry
+                    .parents()
+                    .iter()
+                    .filter_map(|p| uuid_map.get(p.key()).copied())
+                    .filter(|&p_uuid| p_uuid != entry_uuid)
+                    .collect();
+                converted
+            })
+            .collect();
+
+        (uuid_map, converted)
+    }
+
     /// Updates the import status of a job in the job archive.
     ///
     /// Acquires a write lock on the job archive and sets the status of the specified job ID to the given `new_status`.
@@ -395,25 +423,6 @@ impl ImportProcessor {
             _ => unreachable!(),
         };
 
-        match projects::exists(&self.pool, job.project_id).await {
-            Ok(true) => {}
-            Ok(false) => {
-                self.update_import_status(
-                    &job.id,
-                    ImportStatus::Failed(ImportError::ProjectNotFound),
-                );
-                return;
-            }
-            Err(e) => {
-                error!("Couldn't check if project {} exists: {}", job.project_id, e);
-                self.update_import_status(
-                    &job.id,
-                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
-                );
-                return;
-            }
-        }
-
         let total_num = job_data.len();
         for (num, link) in job_data.iter().enumerate() {
             debug!("Importing wordpress URL: {}", link);
@@ -448,25 +457,6 @@ impl ImportProcessor {
             ImportJobData::FileImport(data) => data,
             _ => unreachable!(),
         };
-
-        match projects::exists(&self.pool, job.project_id).await {
-            Ok(true) => {}
-            Ok(false) => {
-                self.update_import_status(
-                    &job.id,
-                    ImportStatus::Failed(ImportError::ProjectNotFound),
-                );
-                return;
-            }
-            Err(e) => {
-                error!("Couldn't check if project {} exists: {}", job.project_id, e);
-                self.update_import_status(
-                    &job.id,
-                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
-                );
-                return;
-            }
-        }
 
         // Import bib entries from file if present
         if let Some(bib_file) = job_data.bib_file {
@@ -542,25 +532,6 @@ impl ImportProcessor {
             _ => unreachable!(),
         };
 
-        match projects::exists(&self.pool, job.project_id).await {
-            Ok(true) => {}
-            Ok(false) => {
-                self.update_import_status(
-                    &job.id,
-                    ImportStatus::Failed(ImportError::ProjectNotFound),
-                );
-                return;
-            }
-            Err(e) => {
-                error!("Couldn't check if project {} exists: {}", job.project_id, e);
-                self.update_import_status(
-                    &job.id,
-                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
-                );
-                return;
-            }
-        }
-
         // Load all posts matching filter (except categories)
         let api = match WordpressAPI::new(job_data.wp_host) {
             Ok(api) => api,
@@ -575,7 +546,6 @@ impl ImportProcessor {
 
         self.update_import_status(&job.id, ImportStatus::RequestWPPosts);
 
-        let mut posts: Vec<Post> = vec![];
         let data = match api
             .get_posts(
                 WordpressAPIContext::View,
@@ -602,49 +572,39 @@ impl ImportProcessor {
             }
         };
 
-        match data.data {
-            PostDataType::PostPreviews(_) => {
-                unreachable!()
-            }
-            PostDataType::FullPosts(data) => {
-                posts = data;
-            }
-        }
+        let PostDataType::FullPosts(mut posts) = data.data else {
+            unreachable!()
+        };
 
-        // Add co authors if any
         for post in posts.iter_mut() {
-            let _ = api.add_coauthors(post).await;
-            let _ = api.add_resolved_tags(post).await;
+            api.enrich_post(post).await;
         }
 
         let number_of_posts = posts.len();
 
-        for (num, mut post) in posts.into_iter().enumerate() {
+        let media = MediaStore::for_project(&self.settings, job.project_id);
+        let options = ContentImportOptions {
+            convert_footnotes_to_endnotes: job.convert_footnotes_to_endnotes,
+            shift_headings_up: job.shift_headings_up,
+            convert_links: job.convert_links,
+            import_author_names: job.import_author_names,
+            person_project_id: Some(job.project_id),
+        };
+        for (num, post) in posts.into_iter().enumerate() {
             self.update_import_status(
                 &job.id,
                 ImportStatus::Processing(ProcessingDetails::new(num + 1, Some(number_of_posts))),
             );
 
-            let additional_author_names = if job.import_author_names {
-                self.resolve_wp_authors(&mut post, &api, Some(job.project_id))
-                    .await
-                    .authors
-            } else {
-                vec![]
-            };
-
-            if let Err(e) = self
-                .import_wp_post(
-                    post,
-                    job.project_id,
-                    job.convert_footnotes_to_endnotes,
-                    job.shift_headings_up,
-                    job.convert_links,
-                    additional_author_names,
-                )
-                .await
-            {
-                eprintln!("Error processing post for import: {:?}", e);
+            let result = async {
+                let imported = self
+                    .build_wp_post_with_authors(post, &api, &media, options)
+                    .await?;
+                self.persist_imported(job.project_id, imported).await
+            }
+            .await;
+            if let Err(e) = result {
+                error!("Error processing post for import: {:?}", e);
                 self.update_import_status(&job.id, ImportStatus::Failed(e));
                 return;
             }
@@ -663,6 +623,25 @@ impl ImportProcessor {
     /// # Arguments
     /// * `job` - The `ImportJob` to be processed, containing configuration and import data.
     async fn process_job(&self, job: ImportJob) {
+        match projects::exists(&self.pool, job.project_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::ProjectNotFound),
+                );
+                return;
+            }
+            Err(e) => {
+                error!("Couldn't check if project {} exists: {}", job.project_id, e);
+                self.update_import_status(
+                    &job.id,
+                    ImportStatus::Failed(ImportError::DatabaseError(e.to_string())),
+                );
+                return;
+            }
+        }
+
         match job.import_data {
             ImportJobData::WordpressLinks(_) => self.process_wordpress_links(job).await,
             ImportJobData::FileImport(_) => self.process_file_import(job).await,
@@ -754,14 +733,9 @@ impl ImportProcessor {
 
         let parsed_url = url::Url::parse(&url)
             .map_err(|_| ImportError::WordPressApiError(WordpressAPIError::InvalidURL))?;
-        let host = match parsed_url.host() {
-            Some(host) => host,
-            None => {
-                return Err(ImportError::WordPressApiError(
-                    WordpressAPIError::InvalidURL,
-                ));
-            }
-        };
+        let host = parsed_url.host().ok_or(ImportError::WordPressApiError(
+            WordpressAPIError::InvalidURL,
+        ))?;
 
         let api = WordpressAPI::new(host.to_string())?;
         let path = parsed_url.path();
@@ -807,10 +781,8 @@ impl ImportProcessor {
                 _ => unreachable!(),
             };
 
-            // Add co authors if any
             for post in posts.iter_mut() {
-                let _ = api.add_coauthors(post).await;
-                let _ = api.add_resolved_tags(post).await;
+                api.enrich_post(post).await;
             }
 
             for post in posts {
@@ -1032,13 +1004,15 @@ impl ImportProcessor {
             if content.is_empty() {
                 continue;
             }
-            let lang = wp_bio.lang.or_else(|| {
-                if cfg!(feature = "language_detection") {
-                    detect_language_for_text(&content)
-                } else {
-                    None
+            let (content, lang) = match wp_bio.lang {
+                Some(lang) => (content, Some(lang)),
+                None => {
+                    detect_language_off_runtime(content, |content| {
+                        detect_language_for_text(content)
+                    })
+                    .await
                 }
-            });
+            };
             bios.push(Biography { lang, content });
         }
         let bios = (!bios.is_empty()).then_some(bios);
@@ -1126,29 +1100,9 @@ impl ImportProcessor {
         Ok(id)
     }
 
-    /// Imports a WordPress post into a project as a new section.
-    ///
-    /// This function takes a WordPress post along with additional metadata and configuration flags,
-    /// constructs a `Section` struct containing the imported content and metadata,
-    /// then asynchronously imports the HTML content into the given project.
-    ///
-    /// - Extracts the subtitle from the post's advanced custom fields (ACF) if present.
-    /// - Collects and attaches DOI identifiers from the ACF, preferring `crossref_doi` over `doi`.
-    /// - If the `language_detection` feature is enabled, attempts to detect the post's language using the rendered HTML content.
-    /// - Assembles section metadata including title, authors, identifiers, publishing dates, web URL, and language.
-    /// - Finally, passes the section and the rendered HTML to `import_html_from_wp`, propagating any import errors.
-    ///
-    /// # Arguments
-    /// * `post` - The WordPress post to import. Can include custom ACF fields and co-authors.
-    /// * `project_id` - The UUID of the project this post should be imported into.
-    /// * `endnotes` - Whether to convert inline footnotes to endnotes in the imported content.
-    /// * `shift_headings_up` - Whether to increase the level of all headings in the imported content by one.
-    /// * `convert_links` - Whether to convert any internal WordPress links to project-internal links.
-    /// * `imported_authors` - List of author identifiers or names to set as authors for this section.
-    ///
-    /// # Errors
-    /// Returns an [`ImportError`] if the import process fails, for example when the project is not found,
-    /// importing the HTML fails, or the input contains unsupported content types.
+    /// Converts a WordPress post into a section and persists it into `project_id`, without
+    /// resolving its authors. Test helper around [`Self::build_wp_post`].
+    #[cfg(test)]
     async fn import_wp_post(
         &self,
         post: Post,
@@ -1173,7 +1127,7 @@ impl ImportProcessor {
         self.persist_imported(project_id, imported).await
     }
 
-    /// Like [`Self::import_wp_post`], but returns the section instead of persisting it.
+    /// Converts a WordPress post into a section in memory, without persisting it.
     async fn build_wp_post(
         &self,
         post: Post,
@@ -1184,40 +1138,24 @@ impl ImportProcessor {
         imported_authors: Vec<PersonUuidOrString>,
         author_persons: Vec<Person>,
     ) -> Result<ImportedSection, ImportError> {
-        let subtitle = match &post.acf {
-            None => None,
-            Some(acf) => acf.subheadline.clone(),
-        };
+        let subtitle = post.acf.as_ref().and_then(|acf| acf.subheadline.clone());
 
-        let mut identifiers = vec![];
-
-        if let Some(acf) = &post.acf {
-            if let Some(crossref_doi) = &acf.crossref_doi
-                && !crossref_doi.trim().is_empty()
-            {
-                identifiers.push(Identifier {
-                    id: Some(uuid::Uuid::new_v4()),
-                    name: "DOI".to_string(),
-                    value: crossref_doi.clone(),
-                    identifier_type: IdentifierType::DOI,
-                });
-            } else if let Some(doi) = &acf.doi
-                && !doi.trim().is_empty()
-            {
-                identifiers.push(Identifier {
-                    id: Some(uuid::Uuid::new_v4()),
-                    name: "DOI".to_string(),
-                    value: doi.clone(),
-                    identifier_type: IdentifierType::DOI,
-                });
-            }
-        }
-
-        let lang = if cfg!(feature = "language_detection") {
-            detect_language_for_post(&post)
-        } else {
-            None
-        };
+        // Prefer the Crossref DOI over the manually entered one.
+        let doi = post.acf.as_ref().and_then(|acf| {
+            [&acf.crossref_doi, &acf.doi]
+                .into_iter()
+                .flatten()
+                .find(|doi| !doi.trim().is_empty())
+        });
+        let identifiers: Vec<Identifier> = doi
+            .map(|doi| Identifier {
+                id: Some(uuid::Uuid::new_v4()),
+                name: "DOI".to_string(),
+                value: doi.clone(),
+                identifier_type: IdentifierType::DOI,
+            })
+            .into_iter()
+            .collect();
 
         let mut authors = imported_authors;
         if let Some(co_authors) = &post.coauthors {
@@ -1270,7 +1208,8 @@ impl ImportProcessor {
                 identifiers,
                 published: Some(post.date.date()),
                 last_changed: Some(post.modified),
-                lang,
+                // Detected from the content blocks in `build_section_from_html`.
+                lang: None,
                 custom_fields,
             },
         };
@@ -1278,10 +1217,11 @@ impl ImportProcessor {
         debug!("{:?}", section);
 
         let mut imported = self
-            .build_section_from_wp_html(
+            .build_section_from_html(
                 section,
                 post.content.rendered.clone(),
                 media,
+                extract_wp_footnotes,
                 endnotes,
                 shift_headings_up,
                 convert_links,
@@ -1318,10 +1258,8 @@ impl ImportProcessor {
                 ));
             }
         };
-        // Add co authors if any
         for post in posts.iter_mut() {
-            let _ = api.add_coauthors(post).await;
-            let _ = api.add_resolved_tags(post).await;
+            api.enrich_post(post).await;
         }
 
         if posts.len() != 1 {
@@ -1347,81 +1285,45 @@ impl ImportProcessor {
             }
         };
 
-        let mut file_content = String::new();
-        let mut marks: Vec<String> = vec![];
-
-        match content_type.to_string().as_str() {
+        let file_content = match content_type.to_string().as_str() {
             "text/x-tex" | "application/x-tex" => {
                 debug!("Processing LaTeX file");
-                if let Err(e) = file.read_to_string(&mut file_content).await {
+                let mut latex = String::new();
+                if let Err(e) = file.read_to_string(&mut latex).await {
                     warn!("Couldn't read file to import: {}", e);
                     return Err(ImportError::InvalidFile);
                 }
-                (file_content, marks) = preprocess::latex(file_content);
-                file_content = self
-                    .convert_with_pandoc(InputKind::Pipe(file_content), InputFormat::Latex)
+                let (latex, marks) = preprocess::latex(latex);
+                let html = self
+                    .convert_with_pandoc(InputKind::Pipe(latex), InputFormat::Latex)
                     .await?;
-                file_content = postprocess::latex(file_content, marks);
+                postprocess::latex(html, marks)
             }
-            "application/vnd.oasis.opendocument.text" => {
-                debug!("Processing ODT file");
-                file_content = self
-                    .convert_with_pandoc(
-                        InputKind::Files(vec![PathBuf::from(file_path)]),
-                        InputFormat::Other("ODT".to_string()),
-                    )
-                    .await?;
+            other => {
+                let input_format = match other {
+                    "application/vnd.oasis.opendocument.text" => {
+                        InputFormat::Other("ODT".to_string())
+                    }
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+                        InputFormat::Docx
+                    }
+                    "application/msword" => InputFormat::Other("DOC".to_string()),
+                    "application/epub+zip" => InputFormat::Epub,
+                    "application/rtf" => InputFormat::Rtf,
+                    "text/markdown" | "text/x-markdown" => InputFormat::Markdown,
+                    _ => {
+                        warn!("Unsupported file type: {}", content_type);
+                        return Err(ImportError::UnsupportedFileType);
+                    }
+                };
+                debug!("Processing {} file", other);
+                self.convert_with_pandoc(
+                    InputKind::Files(vec![PathBuf::from(file_path)]),
+                    input_format,
+                )
+                .await?
             }
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
-                debug!("Processing DOCX file");
-                file_content = self
-                    .convert_with_pandoc(
-                        InputKind::Files(vec![PathBuf::from(file_path)]),
-                        InputFormat::Docx,
-                    )
-                    .await?;
-            }
-            "application/msword" => {
-                debug!("Processing DOC file");
-                file_content = self
-                    .convert_with_pandoc(
-                        InputKind::Files(vec![PathBuf::from(file_path)]),
-                        InputFormat::Other("DOC".to_string()),
-                    )
-                    .await?;
-            }
-            "application/epub+zip" => {
-                debug!("Processing EPUB file");
-                file_content = self
-                    .convert_with_pandoc(
-                        InputKind::Files(vec![PathBuf::from(file_path)]),
-                        InputFormat::Epub,
-                    )
-                    .await?;
-            }
-            "application/rtf" => {
-                debug!("Processing RTF file");
-                file_content = self
-                    .convert_with_pandoc(
-                        InputKind::Files(vec![PathBuf::from(file_path)]),
-                        InputFormat::Rtf,
-                    )
-                    .await?;
-            }
-            "text/markdown" | "text/x-markdown" => {
-                debug!("Processing Markdown file");
-                file_content = self
-                    .convert_with_pandoc(
-                        InputKind::Files(vec![PathBuf::from(file_path)]),
-                        InputFormat::Markdown,
-                    )
-                    .await?;
-            }
-            _ => {
-                warn!("Unsupported file type: {}", content_type);
-                return Err(ImportError::UnsupportedFileType);
-            }
-        }
+        };
 
         self.import_html_from_pandoc(
             file_content,
@@ -1430,8 +1332,7 @@ impl ImportProcessor {
             shift_headings_up,
             convert_links,
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     async fn convert_with_pandoc(
@@ -1453,17 +1354,14 @@ impl ImportProcessor {
         .await;
 
         match task {
-            Ok(res) => match res {
-                Ok(res) => match res {
-                    PandocOutput::ToFile(_) => Err(ImportError::PandocError),
-                    PandocOutput::ToBuffer(res) => Ok(res),
-                    PandocOutput::ToBufferRaw(_) => Err(ImportError::PandocError),
-                },
-                Err(e) => {
-                    warn!("Couldn't convert import file with pandoc: {}", e);
-                    Err(ImportError::PandocError)
-                }
-            },
+            Ok(Ok(PandocOutput::ToBuffer(html))) => Ok(html),
+            Ok(Ok(PandocOutput::ToFile(_) | PandocOutput::ToBufferRaw(_))) => {
+                Err(ImportError::PandocError)
+            }
+            Ok(Err(e)) => {
+                warn!("Couldn't convert import file with pandoc: {}", e);
+                Err(ImportError::PandocError)
+            }
             Err(e) => {
                 warn!("Couldn't run pandoc: {}", e);
                 Err(ImportError::PandocError)
@@ -1476,8 +1374,7 @@ impl ImportProcessor {
     /// section of `project_id` in the database.
     ///
     /// Downloads referenced media and resolves external links into citations before
-    /// building the final blocks (see the phase comments in the body for the
-    /// sync/async/sync split, which keeps non-`Send` DOM handles off await points).
+    /// building the final blocks (see [`Self::build_section_from_html`]).
     ///
     /// # Errors
     /// Returns [`ImportError::HtmlConversionFailed`] if the input can't be parsed, or
@@ -1494,10 +1391,11 @@ impl ImportProcessor {
     ) -> Result<(), ImportError> {
         let media = MediaStore::for_project(&self.settings, project_id);
         let imported = self
-            .build_section_from_wp_html(
+            .build_section_from_html(
                 section,
                 input,
                 &media,
+                extract_wp_footnotes,
                 endnotes,
                 shift_headings,
                 convert_links,
@@ -1507,18 +1405,20 @@ impl ImportProcessor {
         self.persist_imported(project_id, imported).await
     }
 
-    /// Like [`Self::import_html_from_wp`], but returns the section and cited bibliography
-    /// entries instead of persisting them. Media is downloaded into `media`.
-    async fn build_section_from_wp_html(
+    /// Sanitizes HTML into editor content blocks of `section` and returns it together with the
+    /// cited bibliography entries, without persisting anything. Media is downloaded into
+    /// `media`; `extract_footnotes` recognizes the footnote dialect of the HTML source.
+    async fn build_section_from_html(
         &self,
         mut section: Section,
         input: String,
         media: &MediaStore,
+        extract_footnotes: FootnoteExtractor,
         endnotes: bool,
         shift_headings: bool,
         convert_links: bool,
     ) -> Result<ImportedSection, ImportError> {
-        debug!("Importing html from wp");
+        debug!("Importing html");
 
         // Phase 1 (sync): parse and collect the URLs that need asynchronous work (images/media to download). The
         // html5ever handles are `Rc`-based (`!Send`) and must not be held across an `.await`,
@@ -1548,7 +1448,7 @@ impl ImportProcessor {
         let blocks = {
             let dom = parse_dom(&input);
             let top_nodes = top_level_nodes(&dom);
-            let footnotes = extract_wp_footnotes(&top_nodes, &link_map, &media_map);
+            let footnotes = extract_footnotes(&top_nodes, &link_map, &media_map);
 
             let mut blocks: Vec<NewContentBlock> = vec![];
             for node in &top_nodes {
@@ -1565,15 +1465,15 @@ impl ImportProcessor {
             blocks
         };
 
+        let (blocks, lang) =
+            detect_language_off_runtime(blocks, |blocks| detect_language_for_blocks(blocks)).await;
+        section.metadata.lang = lang;
+
         debug!("Converting contentblocks to yrs.");
         let doc = convert_contentblocks_to_yrs(blocks);
         section.content = doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
-
-        if cfg!(feature = "language_detection") {
-            section.metadata.lang = detect_language_for_section(&section);
-        }
 
         Ok(ImportedSection {
             section,
@@ -1584,9 +1484,6 @@ impl ImportProcessor {
 
     /// Sanitizes pandoc-produced HTML into editor content blocks, builds a new `Section`
     /// from them, and persists it as a new section of `project_id` in the database.
-    ///
-    /// Like [`Self::import_html_from_wp`], downloads referenced media and resolves external
-    /// links into citations before building the final blocks.
     ///
     /// # Errors
     /// Returns [`ImportError::HtmlConversionFailed`] if `input` looks like a full HTML
@@ -1605,28 +1502,7 @@ impl ImportProcessor {
             return Err(ImportError::HtmlConversionFailed);
         }
 
-        let (media_srcs, hrefs) = {
-            let dom = parse_dom(&input);
-            let top_nodes = top_level_nodes(&dom);
-            if top_nodes.is_empty() && !input.trim().is_empty() {
-                error!("Couldn't parse html from import after pandoc: no parseable nodes");
-                return Err(ImportError::HtmlConversionFailed);
-            }
-            let mut media = Vec::new();
-            collect_media_srcs(&top_nodes, &mut media);
-            let mut hrefs = Vec::new();
-            if convert_links {
-                collect_convertible_hrefs(&top_nodes, &mut hrefs);
-            }
-            (dedup_vec(media), dedup_vec(hrefs))
-        };
-
-        let media = MediaStore::for_project(&self.settings, project_id);
-        let media_map = self.download_all_media(&media_srcs, &media).await;
-        let (link_map, bib_entries) = self.resolve_all_links(&hrefs).await;
-        self.persist_bib_entries(project_id, bib_entries).await;
-
-        let mut section = Section {
+        let section = Section {
             id: Some(uuid::Uuid::new_v4()),
             css_classes: vec![],
             sub_sections: vec![],
@@ -1647,45 +1523,19 @@ impl ImportProcessor {
             },
         };
 
-        let blocks = {
-            let dom = parse_dom(&input);
-            let top_nodes = top_level_nodes(&dom);
-            let footnotes = extract_pandoc_footnotes(&top_nodes, &link_map, &media_map);
-
-            let mut blocks: Vec<NewContentBlock> = vec![];
-            for node in &top_nodes {
-                blocks.extend(node_to_blocks(
-                    &section,
-                    node,
-                    &footnotes,
-                    endnotes,
-                    shift_headings,
-                    &link_map,
-                    &media_map,
-                ));
-            }
-            blocks
-        };
-
-        debug!("Converted HTML to ContentBlocks: {:?}", blocks);
-        let doc = convert_contentblocks_to_yrs(blocks);
-        section.content = doc
-            .transact()
-            .encode_state_as_update_v1(&StateVector::default());
-
-        if cfg!(feature = "language_detection") {
-            section.metadata.lang = detect_language_for_section(&section);
-        }
-
-        crate::db::repositories::sections::insert_at_end(
-            &self.pool,
-            &self.settings,
-            project_id,
-            None,
-            &section,
-        )
-        .await?;
-        Ok(())
+        let media = MediaStore::for_project(&self.settings, project_id);
+        let imported = self
+            .build_section_from_html(
+                section,
+                input,
+                &media,
+                extract_pandoc_footnotes,
+                endnotes,
+                shift_headings,
+                convert_links,
+            )
+            .await?;
+        self.persist_imported(project_id, imported).await
     }
 
     /// Downloads all referenced external media into the project's uploads directory.
@@ -1704,13 +1554,12 @@ impl ImportProcessor {
         if srcs.is_empty() {
             return map;
         }
-        let client = media_client(self.settings.import_media_download_timeout);
 
         // Download concurrently (bounded), rather than serializing every network round-trip.
         // Owned `String`s are moved into each task so the futures don't borrow `srcs`.
         let results: Vec<(String, Option<(String, String)>)> = futures::stream::iter(srcs.to_vec())
             .map(|src| async move {
-                let local = self.download_media(client, &src, media).await;
+                let local = self.download_media(&src, media).await;
                 (src, local)
             })
             .buffer_unordered(8)
@@ -1732,13 +1581,15 @@ impl ImportProcessor {
     ///
     /// Returns `(api_url, filename)` on success, where `api_url` is the URL (below
     /// `media.url_prefix`) used to reference the stored file.
-    async fn download_media(
-        &self,
-        client: &reqwest::Client,
-        url: &str,
-        media: &MediaStore,
-    ) -> Option<(String, String)> {
-        let response = client.get(url).send().await.ok()?;
+    async fn download_media(&self, url: &str, media: &MediaStore) -> Option<(String, String)> {
+        let response = http_client()
+            .get(url)
+            .timeout(std::time::Duration::from_secs(
+                self.settings.import_media_download_timeout,
+            ))
+            .send()
+            .await
+            .ok()?;
         if !response.status().is_success() {
             return None;
         }
@@ -1801,26 +1652,8 @@ impl ImportProcessor {
         let main_entry = entries.first()?;
         let main_key = main_entry.key().to_string();
         let by_key = Self::collect_bib_entries_with_parents(entries);
-
-        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
-        for key in by_key.keys() {
-            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
-        }
+        let (uuid_map, converted_entries) = Self::convert_bib_entries(&by_key);
         let main_uuid = *uuid_map.get(&main_key)?;
-
-        let mut converted_entries = vec![];
-        for (key, entry) in by_key.iter() {
-            let mut converted = BibEntryV3::from(entry);
-            let entry_uuid = *uuid_map.get(key).unwrap();
-            converted.key = entry_uuid;
-            converted.parents = entry
-                .parents()
-                .iter()
-                .filter_map(|p| uuid_map.get(p.key()).copied())
-                .filter(|&p_uuid| p_uuid != entry_uuid)
-                .collect();
-            converted_entries.push(converted);
-        }
 
         Some((
             format!("<citation data-key=\"{}\">C</citation>", main_uuid),
@@ -1882,26 +1715,10 @@ impl ImportProcessor {
         // Recursively collect all entries + their parents.
         let by_key = Self::collect_bib_entries_with_parents(bib.iter().cloned());
 
-        // Build UUID mapping (v4, per import)
-        let mut uuid_map: HashMap<String, uuid::Uuid> = HashMap::new();
-        for key in by_key.keys() {
-            uuid_map.insert(key.clone(), uuid::Uuid::new_v4());
-        }
-
+        let (uuid_map, converted_entries) = Self::convert_bib_entries(&by_key);
         debug!("Generated UUID Map: {:?}", uuid_map);
 
-        // Convert and resolve parents
-        for (key, entry) in by_key.iter() {
-            let mut converted = BibEntryV3::from(entry);
-            let entry_uuid = *uuid_map.get(key).unwrap();
-            converted.key = entry_uuid;
-            converted.parents = entry
-                .parents()
-                .iter()
-                .filter_map(|p| uuid_map.get(p.key()).copied())
-                .filter(|&p_uuid| p_uuid != entry_uuid)
-                .collect();
-
+        for converted in converted_entries {
             debug!("Converted Entry: {:?}", converted);
 
             bibliography::insert(
@@ -1961,18 +1778,6 @@ struct Ctx<'a> {
     /// When true, block/table structure is preserved (used for `Raw` blocks); otherwise only
     /// inline formatting is kept (used for paragraph/heading/quote/list text).
     keep_structural: bool,
-}
-
-/// Returns a process-wide shared HTTP client for media downloads, built once and reused
-/// across all imports (avoids rebuilding a connection pool per post).
-fn media_client(timeout_secs: u64) -> &'static reqwest::Client {
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    })
 }
 
 /// Parses `input` as an HTML fragment in `<body>` context. Parsing an in-memory string never
@@ -2531,6 +2336,14 @@ fn collect_convertible_hrefs(nodes: &[Handle], out: &mut Vec<String>) {
     }
 }
 
+/// Collects a source's footnote bodies keyed by footnote id (see [`extract_wp_footnotes`] and
+/// [`extract_pandoc_footnotes`]).
+type FootnoteExtractor = fn(
+    &[Handle],
+    &HashMap<String, String>,
+    &HashMap<String, (String, String)>,
+) -> HashMap<String, String>;
+
 /// Extracts WordPress footnote-plugin footnotes into a map keyed by reference id.
 fn extract_wp_footnotes(
     top: &[Handle],
@@ -3007,6 +2820,11 @@ fn media_raw_block(
 /// Contains preprocessing methods that get called, BEFORE pandoc is executed.
 mod preprocess {
     use regex::Regex;
+    use std::sync::LazyLock;
+
+    static CITATION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\\(cite|footcite|footcitetext|fullcite|footfullcite)(?:\[[^\]]*?\])?(?:\[[^\]]*?\])?\{(.*?)\}").unwrap()
+    });
 
     /// Preprocessing for latex input
     /// Replaces all endnotes with footnotes since endnotes are not supported by pandoc
@@ -3014,8 +2832,7 @@ mod preprocess {
     pub fn latex(mut input: String) -> (String, Vec<String>) {
         let mut marks = Vec::new();
 
-        let re = Regex::new(r"\\(cite|footcite|footcitetext|fullcite|footfullcite)(?:\[[^\]]*?\])?(?:\[[^\]]*?\])?\{(.*?)\}").unwrap();
-        input = re
+        input = CITATION
             .replace_all(&input, |caps: &regex::Captures| {
                 let key = &caps[2];
                 marks.push(key.to_string());
@@ -3029,12 +2846,13 @@ mod preprocess {
 
 mod postprocess {
     use regex::Regex;
+    use std::sync::LazyLock;
+
+    static CITATION_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"vb-cite-(\d+)").unwrap());
 
     pub fn latex(mut input: String, marks: Vec<String>) -> String {
-        let re = Regex::new(r"vb-cite-(\d+)").unwrap();
-
         // Replace temporary citation marks with actual citations
-        input = re
+        input = CITATION_MARK
             .replace_all(&input, |caps: &regex::Captures| {
                 let num = match caps[1].parse::<usize>() {
                     Ok(num) => num,
@@ -3054,26 +2872,46 @@ mod postprocess {
     }
 }
 
-/// Authors of a WordPress post, as resolved by [`ImportProcessor::resolve_wp_authors`].
+/// Runs the CPU-heavy language detection on the blocking thread pool, so it doesn't stall the
+/// async runtime. Returns `input` together with the detected language (`None` if the feature is
+/// disabled or detection fails).
+async fn detect_language_off_runtime<T, F>(input: T, detect: F) -> (T, Option<language::Language>)
+where
+    T: Send + Sync + 'static,
+    F: FnOnce(&T) -> Option<language::Language> + Send + 'static,
+{
+    if !cfg!(feature = "language_detection") {
+        return (input, None);
+    }
+    let input = std::sync::Arc::new(input);
+    let task_input = input.clone();
+    let lang = match spawn_blocking(move || detect(&task_input)).await {
+        Ok(lang) => lang,
+        Err(e) => {
+            warn!("Language detection failed: {}", e);
+            None
+        }
+    };
+    let input = std::sync::Arc::into_inner(input).expect("detection task has finished");
+    (input, lang)
+}
+
 /// Stand-ins for the language detection so the `cfg!(feature = "language_detection")` call sites
 /// still type-check when the feature (and with it the `lingua` dependency) is disabled.
 #[cfg(not(feature = "language_detection"))]
 mod no_language_detection {
-    use super::{Post, Section};
-
-    pub fn detect_language_for_post(_post: &Post) -> Option<language::Language> {
-        None
-    }
+    use super::NewContentBlock;
 
     pub fn detect_language_for_text(_text: &str) -> Option<language::Language> {
         None
     }
 
-    pub fn detect_language_for_section(_section: &Section) -> Option<language::Language> {
+    pub fn detect_language_for_blocks(_blocks: &[NewContentBlock]) -> Option<language::Language> {
         None
     }
 }
 
+/// Authors of a WordPress post, as resolved by [`ImportProcessor::resolve_wp_authors`].
 #[derive(Debug, Default)]
 struct ResolvedAuthors {
     authors: Vec<PersonUuidOrString>,
@@ -3557,10 +3395,11 @@ mod tests {
             url_prefix: "/unused".to_string(),
         };
         let imported = processor
-            .build_section_from_wp_html(
+            .build_section_from_html(
                 empty_section(),
                 "<p>Hello</p>".to_string(),
                 &media,
+                extract_wp_footnotes,
                 false,
                 false,
                 false,
